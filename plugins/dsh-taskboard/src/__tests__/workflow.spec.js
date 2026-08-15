@@ -180,6 +180,7 @@ describe('taskboard execution workflow', () => {
       executionMode: 'auto'
     }), diagnosticCreateResponse)
     create.mockRejectedValueOnce(new Error('secret internal detail'))
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     const diagnosticRunResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${diagnosticCreateResponse.body.item.id}/run`), diagnosticRunResponse)
     expect(diagnosticRunResponse.status).toBe(500)
@@ -188,6 +189,8 @@ describe('taskboard execution workflow', () => {
     expect(logError).toHaveBeenCalledWith('request failed [%s]', expect.stringMatching(/^[0-9a-f]{8}$/), expect.objectContaining({
       message: 'secret internal detail'
     }))
+    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/^\[dsh-taskboard\] request failed \[[0-9a-f]{8}\]: Error: secret internal detail\n$/))
+    stderr.mockRestore()
     create.mockClear()
     workspaceMocks.prepare.mockClear()
     workspaceMocks.discard.mockClear()

@@ -19,6 +19,7 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
+import process from 'node:process'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-workspace'
@@ -114,6 +115,28 @@ async function saveBoards (file: BoardsFile, backupCurrent = true): Promise<void
 function send (res: import('node:http').ServerResponse, status: number, body: unknown): void {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' })
   res.end(JSON.stringify(body))
+}
+
+/** Host 诊断只保留错误链，移除常见凭证与本机绝对路径，并限制单条长度。 */
+function diagnosticError (value: unknown): string {
+  const parts: string[] = []
+  const seen = new Set<unknown>()
+  let current: unknown = value
+  while (current !== undefined && current !== null && !seen.has(current) && parts.length < 4) {
+    seen.add(current)
+    if (current instanceof Error) {
+      parts.push(`${current.name}: ${current.message}`)
+      current = current.cause
+    } else {
+      parts.push(String(current))
+      break
+    }
+  }
+  return parts.join(' <- ')
+    .replace(/\/Users\/[^/\s]+\//g, '/Users/<redacted>/')
+    .replace(/\b(Bearer\s+|(?:api[-_]?key|token|secret)\s*[:=]\s*)[^\s,;]+/gi, '$1<redacted>')
+    .replace(/[\r\n]+/g, ' ')
+    .slice(0, 2_000)
 }
 
 /** 确保某项目存在看板（同步 workspace 注册表） */
@@ -999,6 +1022,7 @@ export function apply (ctx: Context): void {
         }
         const errorId = randomUUID().slice(0, 8)
         logger.error('request failed [%s]', errorId, err)
+        process.stderr.write(`[dsh-taskboard] request failed [${errorId}]: ${diagnosticError(err)}\n`)
         send(res, 500, { error: `任务看板内部错误（诊断编号：${errorId}）` })
       }
     },
