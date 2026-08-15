@@ -222,8 +222,9 @@ describe('taskboard execution workflow', () => {
     expect(create).toHaveBeenCalledOnce()
     expect(create.mock.calls[0][0].agentOptions).toEqual({ provider: 'test', model: 'test-model' })
     expect(create.mock.calls[0][0].meta.agentPreset).toBe('standard')
+    expect(create.mock.calls[0][0].meta.cwd).toBe(`${dataDir}/worktrees/${itemId}`)
     expect(mountPreset).toHaveBeenCalledOnce()
-    expect(attachSession).toHaveBeenCalledOnce()
+    expect(attachSession).not.toHaveBeenCalled()
     expect(followup).toHaveBeenCalledOnce()
     expect(workspaceMocks.prepare).toHaveBeenCalledOnce()
 

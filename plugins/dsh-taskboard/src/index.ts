@@ -809,7 +809,6 @@ export function apply (ctx: Context): void {
               const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
               let handle: AgentHandle | undefined
               let workspaceCreatedNow: WorkItem['taskWorkspace']
-              let registeredWorkspace: Awaited<ReturnType<typeof ctx.workspaceRegistry.resolveByPath>>
               try {
                 // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
                 item.executionState = 'running'
@@ -831,9 +830,6 @@ export function apply (ctx: Context): void {
                   : await resolveTaskAgent(ctx, sessionId, item.agentPreset)
                 if (handle !== undefined) {
                   agentHandles.set(sessionId, handle)
-                  registeredWorkspace = await ctx.workspaceRegistry.resolveByPath(board.projectPath)
-                  if (registeredWorkspace === undefined) throw new Error(`workspace not found for ${board.projectPath}`)
-                  await registeredWorkspace.attachSession(SessionId(sessionId))
                 }
                 item.sessionId = sessionId
                 item.agentPreset = agent.session.header.agentPreset
@@ -853,7 +849,6 @@ export function apply (ctx: Context): void {
                 const index = board.items.findIndex(candidate => candidate.id === item.id)
                 if (index >= 0) board.items[index] = previous
                 await saveBoards(file).catch(() => {})
-                if (registeredWorkspace !== undefined) await registeredWorkspace.detachSession(SessionId(sessionId)).catch(() => {})
                 if (handle !== undefined) {
                   await handle.dispose().catch(() => {})
                   agentHandles.delete(sessionId)
