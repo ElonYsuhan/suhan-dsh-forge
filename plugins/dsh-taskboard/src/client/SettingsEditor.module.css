@@ -114,7 +114,11 @@
   font-size: 13px;
   padding: 6px 10px;
 }
-.input:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.input:focus { border-color: var(--dsw-alias-brand-primary); }
+.panel :is(button, input):focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
 .colorInput {
   flex: none;
   width: 44px;

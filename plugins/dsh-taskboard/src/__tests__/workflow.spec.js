@@ -15,6 +15,7 @@ const checkpointMocks = vi.hoisted(() => ({
 }))
 
 const workspaceMocks = vi.hoisted(() => ({
+  resolve: vi.fn(async cwd => cwd),
   prepare: vi.fn(async (cwd, itemId) => ({
     root: cwd,
     path: `${cwd}/worktrees/${itemId}`,
@@ -38,9 +39,10 @@ vi.mock('../gitCheckpoint.ts', () => ({
   restoreGitCheckpoint: checkpointMocks.restore
 }))
 
-vi.mock('../taskWorkspace.ts', () => ({
+vi.mock('../taskWorkspace.ts', async importOriginal => ({
+  ...await importOriginal(),
   prepareTaskWorkspace: workspaceMocks.prepare,
-  resolveGitRoot: vi.fn(async cwd => cwd),
+  resolveGitRoot: workspaceMocks.resolve,
   commitTaskWorkspace: workspaceMocks.commit,
   integrateTaskWorkspace: workspaceMocks.integrate,
   discardTaskWorkspace: workspaceMocks.discard,
@@ -66,6 +68,7 @@ function request (method, url, body) {
   return {
     method,
     url,
+    headers: body === undefined ? {} : { 'content-type': 'application/json' },
     async * [Symbol.asyncIterator] () {
       yield * chunks
     }
@@ -145,6 +148,24 @@ describe('taskboard execution workflow', () => {
     const boardsResponse = response()
     await route(request('GET', '/taskboard/boards'), boardsResponse)
     expect(boardsResponse.status).toBe(200)
+
+    const preconditionCreateResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '非 Git 工作区错误提示',
+      desc: '',
+      priority: 'medium',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), preconditionCreateResponse)
+    const { TaskWorkspacePreconditionError } = await import('../taskWorkspace.ts')
+    workspaceMocks.resolve.mockRejectedValueOnce(new TaskWorkspacePreconditionError('当前工作区不是 Git 仓库。'))
+    const preconditionRunResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${preconditionCreateResponse.body.item.id}/run`), preconditionRunResponse)
+    expect(preconditionRunResponse.status).toBe(409)
+    expect(preconditionRunResponse.body.error).toContain('不是 Git 仓库')
+    expect(workspaceMocks.prepare).not.toHaveBeenCalled()
 
     const createResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {

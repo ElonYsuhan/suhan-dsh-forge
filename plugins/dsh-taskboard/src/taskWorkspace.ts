@@ -11,6 +11,14 @@ import type { TaskWorkspace } from './shared/types.ts'
 
 const execFileAsync = promisify(execFile)
 
+/** 无法安全创建独立任务 worktree 的可恢复前置条件错误。 */
+export class TaskWorkspacePreconditionError extends Error {
+  constructor (message: string) {
+    super(message)
+    this.name = 'TaskWorkspacePreconditionError'
+  }
+}
+
 async function git (cwd: string, args: string[]): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd,
@@ -31,7 +39,11 @@ function branchName (itemId: string): string {
 
 /** 返回规范化 Git 根目录，供调度器使用同一把仓库锁。 */
 export async function resolveGitRoot (projectPath: string): Promise<string> {
-  return resolve((await git(projectPath, ['rev-parse', '--show-toplevel'])).trim())
+  try {
+    return resolve((await git(projectPath, ['rev-parse', '--show-toplevel'])).trim())
+  } catch {
+    throw new TaskWorkspacePreconditionError('当前工作区不是 Git 仓库。任务执行需要独立 Git worktree；请先初始化 Git、创建首次提交后重试。')
+  }
 }
 
 /** 为任务创建独立分支和 worktree。主工作区必须干净，避免漏掉用户未提交基线。 */
@@ -42,17 +54,31 @@ export async function prepareTaskWorkspace (
 ): Promise<TaskWorkspace> {
   const root = await resolveGitRoot(projectPath)
   if (await status(root) !== '') {
-    throw new Error('项目主工作区存在未提交改动；为保证并行任务互不覆盖，请先提交或暂存这些改动')
+    throw new TaskWorkspacePreconditionError('项目主工作区存在未提交改动；为保证并行任务互不覆盖，请先提交这些改动后重试。')
   }
   const targetBranch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
-  if (targetBranch === '') throw new Error('项目当前处于 detached HEAD，无法确定自动集成目标分支')
+  if (targetBranch === '') throw new TaskWorkspacePreconditionError('项目当前处于 detached HEAD，无法确定自动集成目标分支；请先切换到目标分支。')
   const baseCommit = (await git(root, ['rev-parse', 'HEAD'])).trim()
   const repositoryKey = createHash('sha256').update(root).digest('hex').slice(0, 16)
   const path = resolve(storageRoot, repositoryKey, itemId)
   const branch = branchName(itemId)
   await mkdir(resolve(storageRoot, repositoryKey), { recursive: true })
-  await git(root, ['worktree', 'add', '-b', branch, path, baseCommit])
-  return { root, path, branch, baseCommit, targetBranch }
+  try {
+    await git(path, ['rev-parse', '--show-toplevel'])
+    const existingBranch = (await git(path, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
+    if (existingBranch === branch) {
+      return { root, path, branch, baseCommit: (await git(path, ['rev-parse', 'HEAD'])).trim(), targetBranch }
+    }
+  } catch {
+    // 不存在完整 worktree 时，继续检查是否只留下了任务分支。
+  }
+  const branchExists = await git(root, ['show-ref', '--verify', '--quiet', `refs/heads/${branch}`])
+    .then(() => true, () => false)
+  await git(root, branchExists
+    ? ['worktree', 'add', path, branch]
+    : ['worktree', 'add', '-b', branch, path, baseCommit])
+  const taskBaseCommit = branchExists ? (await git(path, ['rev-parse', 'HEAD'])).trim() : baseCommit
+  return { root, path, branch, baseCommit: taskBaseCommit, targetBranch }
 }
 
 /** 把任务 worktree 的全部变化压成一条任务提交；无文件变化也生成审计提交。 */

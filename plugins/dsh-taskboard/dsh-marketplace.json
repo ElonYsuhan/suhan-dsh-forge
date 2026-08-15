@@ -20,7 +20,7 @@
       "Local DSH web profile HTTP route prefix /taskboard only"
     ],
     "filesystem": [
-      "Read/write taskboard data file (default package-local datas/boards.json, overridable via DSH_TASKBOARD_DATA)",
+      "Read/write persistent taskboard state and its recovery backup under $DSH_HOME/storages/dsh-taskboard (overridable via DSH_TASKBOARD_DATA); read the legacy package-local data file once for non-destructive migration",
       "Create/remove isolated per-task Git worktrees under the taskboard runtime data directory",
       "Update a registered workspace only during serialized final integration; preserve source branches when integration conflicts"
     ],

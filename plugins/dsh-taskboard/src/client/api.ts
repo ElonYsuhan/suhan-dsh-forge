@@ -30,25 +30,29 @@ export interface ItemInput {
   desc: string
   priority: Priority
   labels: string[]
-  parentId?: string | undefined
-  iteration?: string | undefined
+  parentId?: string | null | undefined
+  iteration?: string | null | undefined
   status: string
   executionMode: ExecutionMode
+}
+
+async function jsonResponse<T> (res: Response, fallback: string): Promise<T> {
+  const body = await res.json().catch(() => ({})) as Partial<T> & { error?: string }
+  if (!res.ok) throw new Error(body.error ?? `${fallback} (${res.status})`)
+  return body as T
 }
 
 /** 项目看板列表（同步 workspace 注册表） */
 export async function fetchBoards (): Promise<BoardsResponse> {
   const res = await fetch('/taskboard/boards')
-  if (!res.ok) throw new Error(`taskboard: boards failed (${res.status})`)
-  return res.json() as Promise<BoardsResponse>
+  return jsonResponse<BoardsResponse>(res, 'taskboard: boards failed')
 }
 
 /** 只在打开历史面板时加载，避免常规轮询携带不断增长的归档数据。 */
 export async function fetchHistory (key: string, offset = 0, limit = 50): Promise<HistoryResponse> {
   const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/history?${query.toString()}`)
-  if (!res.ok) throw new Error(`taskboard: history failed (${res.status})`)
-  return res.json() as Promise<HistoryResponse>
+  return jsonResponse<HistoryResponse>(res, 'taskboard: history failed')
 }
 
 /** 新建工作项 */
@@ -58,8 +62,9 @@ export async function createItem (key: string, input: ItemInput): Promise<WorkIt
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input)
   })
-  if (!res.ok) throw new Error(`taskboard: create failed (${res.status})`)
-  return (await res.json() as { item: WorkItem }).item
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: create failed')
+  if (body.item === undefined) throw new Error('taskboard: create response missing item')
+  return body.item
 }
 
 /** 更新工作项（含拖拽流转） */
@@ -69,8 +74,9 @@ export async function updateItem (key: string, id: string, patch: Partial<ItemIn
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(patch)
   })
-  if (!res.ok) throw new Error(`taskboard: update failed (${res.status})`)
-  return (await res.json() as { item: WorkItem }).item
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: update failed')
+  if (body.item === undefined) throw new Error('taskboard: update response missing item')
+  return body.item
 }
 
 /** 删除结果；执行过的任务会先尝试回退。 */
@@ -85,9 +91,7 @@ export async function deleteItem (key: string, id: string): Promise<DeleteItemRe
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}`, {
     method: 'DELETE'
   })
-  const body = await res.json().catch(() => ({})) as DeleteItemResult & { error?: string }
-  if (!res.ok) throw new Error(body.error ?? `taskboard: delete failed (${res.status})`)
-  return body
+  return jsonResponse<DeleteItemResult>(res, 'taskboard: delete failed')
 }
 
 /** 执行工作项：创建/复用 agent 会话并下发任务 */
@@ -95,8 +99,9 @@ export async function runItem (key: string, id: string): Promise<WorkItem> {
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/run`, {
     method: 'POST'
   })
-  if (!res.ok) throw new Error(`taskboard: run failed (${res.status})`)
-  return (await res.json() as { item: WorkItem }).item
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: run failed')
+  if (body.item === undefined) throw new Error('taskboard: run response missing item')
+  return body.item
 }
 
 /** 强制停止任务，恢复执行前 Git 基线并归档会话与卡片。 */
@@ -123,11 +128,9 @@ async function executeAction (key: string, id: string, action: string): Promise<
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/${action}`, {
     method: 'POST'
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { error?: string }
-    throw new Error(body.error ?? `taskboard: ${action} failed (${res.status})`)
-  }
-  return (await res.json() as { item: WorkItem }).item
+  const body = await jsonResponse<{ item?: WorkItem }>(res, `taskboard: ${action} failed`)
+  if (body.item === undefined) throw new Error(`taskboard: ${action} response missing item`)
+  return body.item
 }
 
 /** 保存看板设置（自定义环节/类型） */
@@ -137,6 +140,7 @@ export async function saveSettings (key: string, settings: { columns?: ColumnDef
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(settings)
   })
-  if (!res.ok) throw new Error(`taskboard: settings failed (${res.status})`)
-  return (await res.json() as { board: Board }).board
+  const body = await jsonResponse<{ board?: Board }>(res, 'taskboard: settings failed')
+  if (body.board === undefined) throw new Error('taskboard: settings response missing board')
+  return body.board
 }

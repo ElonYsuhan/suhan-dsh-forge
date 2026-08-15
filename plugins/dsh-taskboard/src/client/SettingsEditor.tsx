@@ -4,6 +4,7 @@
 import { useState, type FormEvent } from 'react'
 import type { Board, ColumnDef, ItemTypeDef } from '../shared/types.ts'
 import css from './SettingsEditor.module.css'
+import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Settings surface props. */
 export interface SettingsEditorProps {
@@ -24,6 +25,7 @@ function nextId (): string {
  * @param props - the board and callbacks.
  */
 export function SettingsEditor ({ board, onCancel, onSave }: SettingsEditorProps) {
+  const panelRef = useDialogFocus<HTMLFormElement>(onCancel)
   const [columns, setColumns] = useState<ColumnDef[]>(board.columns.map(c => ({ ...c })))
   const [itemTypes, setItemTypes] = useState<ItemTypeDef[]>(board.itemTypes.map(t => ({ ...t })))
   const [error, setError] = useState<string | null>(null)
@@ -72,10 +74,13 @@ export function SettingsEditor ({ board, onCancel, onSave }: SettingsEditorProps
     <div className={css.mask} onClick={onCancel}>
       <form
         className={css.panel}
+        ref={panelRef}
         role='dialog'
+        aria-modal='true'
         aria-label='看板设置'
         onClick={ev => ev.stopPropagation()}
         onSubmit={handleSubmit}
+        tabIndex={-1}
       >
         <header className={css.head}>
           <h3 className={css.title}>看板设置</h3>

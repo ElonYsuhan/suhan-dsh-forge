@@ -1,14 +1,13 @@
 /**
  * 需求看板插件，host 半：多项目看板 REST 服务。
  *
- * - 项目来源：DSH workspace 注册表（ctx.workspaceRegistry）+ 手动添加路径
- * - 数据落盘：datas/boards.json（version 2，按 projectKey 分看板）
+ * - 项目来源：DSH workspace 注册表（ctx.workspaceRegistry）
+ * - 数据落盘：$DSH_HOME/storages/dsh-taskboard/boards.json（version 2）
  * - 任务执行：POST /boards/:key/items/:id/run 创建/复用 agent 会话并 followup，
  *   工作项记录 sessionId（任务 ↔ 聊天页档案）
  *
  * 路由（prefix /taskboard）：
  *   GET    /boards                         全部项目看板（同步 workspace 注册表）
- *   POST   /boards                         { path, title? } 手动注册项目
  *   GET    /boards/:key/items              工作项列表
  *   POST   /boards/:key/items              新建工作项
  *   PATCH  /boards/:key/items/:id          更新（含拖拽流转 → timeline.moved）
@@ -18,9 +17,8 @@
  *   PUT    /boards/:key/settings           { columns?, itemTypes? } 自定义环节/类型
  */
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-workspace'
@@ -31,8 +29,11 @@ import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { restoreGitCheckpoint } from './gitCheckpoint.ts'
-import { createBoard, executionModeOf, executionStateOf, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type ItemTypeDef, type TimelineEntry, type WorkItem } from './shared/types.ts'
-import { commitTaskWorkspace, deleteTaskBranch, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot } from './taskWorkspace.ts'
+import { HttpError, readJsonBody } from './http.ts'
+import { createBoard, executionModeOf, executionStateOf, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type TimelineEntry, type WorkItem } from './shared/types.ts'
+import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
+import { commitTaskWorkspace, deleteTaskBranch, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError } from './taskWorkspace.ts'
+import { createItemFromBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
  * Host services this plugin requires. Cordis only resolves `ctx` property
@@ -41,10 +42,9 @@ import { commitTaskWorkspace, deleteTaskBranch, discardTaskWorkspace, integrateT
  */
 export const inject = ['webServer', 'workspaceRegistry', 'sessions', 'agents', 'agentDefaultModel', 'agentPresets', 'tools']
 
-/** 数据文件：默认 <pkg>/datas/boards.json；DSH_TASKBOARD_DATA 覆盖（兼容 v1 语义） */
-const DATA_FILE = process.env.DSH_TASKBOARD_DATA !== undefined
-  ? resolve(process.env.DSH_TASKBOARD_DATA)
-  : resolve(dirname(fileURLToPath(import.meta.url)), '..', 'datas', 'boards.json')
+/** 数据文件：默认 $DSH_HOME/storages/dsh-taskboard/boards.json；环境变量可覆盖。 */
+const DATA_PATHS = taskboardDataPaths(import.meta.url)
+const DATA_FILE = DATA_PATHS.dataFile
 
 /** 任务 worktree 位于运行数据目录，不进入项目仓库或发布包。 */
 const WORKTREES_ROOT = resolve(dirname(DATA_FILE), 'worktrees')
@@ -60,6 +60,10 @@ const operationLocks = new Map<string, Promise<void>>()
 
 /** 原子文件写入仍需顺序化，避免较慢的旧快照最后落盘。 */
 let saveTail: Promise<void> = Promise.resolve()
+
+interface LifecycleState {
+  active: boolean
+}
 
 async function withLock<T> (key: string, action: () => Promise<T>): Promise<T> {
   const previous = operationLocks.get(key) ?? Promise.resolve()
@@ -78,36 +82,32 @@ async function withLock<T> (key: string, action: () => Promise<T>): Promise<T> {
 
 async function loadBoards (): Promise<BoardsFile> {
   if (cache !== null) return cache
-  try {
-    cache = JSON.parse(await readFile(DATA_FILE, 'utf8')) as BoardsFile
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+  const stored = await readStoredBoards(DATA_PATHS)
+  if (stored === null) {
     cache = { version: 2, boards: {} }
     await saveBoards(cache)
+  } else {
+    cache = stored.file
+    if (stored.source !== 'primary') await saveBoards(cache, stored.source !== 'backup')
   }
   return cache
 }
 
 /** 原子落盘（tmp + rename） */
-async function saveBoards (file: BoardsFile): Promise<void> {
+async function saveBoards (file: BoardsFile, backupCurrent = true): Promise<void> {
   cache = file
   const serialized = JSON.stringify(file, null, 2)
   const write = saveTail.then(async () => {
     await mkdir(dirname(DATA_FILE), { recursive: true })
     const tmp = `${DATA_FILE}.${randomUUID()}.tmp`
     await writeFile(tmp, serialized, 'utf8')
+    if (backupCurrent) await copyFile(DATA_FILE, `${DATA_FILE}.bak`).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    })
     await rename(tmp, DATA_FILE)
   })
   saveTail = write.catch(() => {})
   await write
-}
-
-/** 读取请求体 JSON */
-async function readBody (req: import('node:http').IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = []
-  for await (const chunk of req) chunks.push(chunk as Buffer)
-  if (chunks.length === 0) return {}
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
 }
 
 /** JSON 响应 */
@@ -126,15 +126,10 @@ function ensureBoard (file: BoardsFile, key: string, path: string, title: string
   return board
 }
 
-/** 类型守卫：普通对象 */
-function isObject (value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
-}
-
 /** 读取单个工作项（不存在抛错） */
 function findItem (board: Board, id: string): WorkItem {
   const item = board.items.find(i => i.id === id)
-  if (item === undefined) throw new Error(`item not found: ${id}`)
+  if (item === undefined) throw new HttpError(404, '工作项不存在')
   return item
 }
 
@@ -294,7 +289,6 @@ function executionPrompt (board: Board, item: WorkItem): string {
       ? '- 工具返回“结束本轮执行”后必须立即结束当前 turn；会话完全停稳后看板才会开放人工审核，不能自行进入下一环节。'
       : '- 每个 turn 最多完成一个环节。工具返回“结束本轮执行”后必须立即停止；会话停稳后看板才会流转，插件会另发下一环节的新 turn。',
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
-    '- 完成交付物和全部质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")。',
     '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
     '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。'
   ].filter(line => line !== '').join('\n')
@@ -308,15 +302,18 @@ function publishReviewAfterAgentIdle (
   agent: Agent,
   sessionId: string,
   stageStatus: string,
-  note: string
+  note: string,
+  lifecycle: LifecycleState
 ): void {
   const waitAndPublish = async (): Promise<void> => {
     await agent.whenIdle()
+    if (!lifecycle.active) return
     const file = await loadBoards()
     for (const board of Object.values(file.boards)) {
       const item = board.items.find(candidate => candidate.sessionId === sessionId && !candidate.archived)
       if (item === undefined) continue
       await withLock(`item:${board.projectKey}:${item.id}`, async () => {
+        if (!lifecycle.active) return
         if (item.archived || executionStateOf(item) !== 'running' || item.status !== stageStatus) return
         item.executionState = 'awaiting-review'
         item.reviewSummary = note
@@ -340,15 +337,18 @@ function advanceAutoStageAfterAgentIdle (
   agent: Agent,
   sessionId: string,
   stageStatus: string,
-  note: string
+  note: string,
+  lifecycle: LifecycleState
 ): void {
   const waitAndAdvance = async (): Promise<void> => {
     await agent.whenIdle()
+    if (!lifecycle.active) return
     const file = await loadBoards()
     for (const board of Object.values(file.boards)) {
       const item = board.items.find(candidate => candidate.sessionId === sessionId && !candidate.archived)
       if (item === undefined) continue
       await withLock(`item:${board.projectKey}:${item.id}`, async () => {
+        if (!lifecycle.active) return
         if (item.archived || executionStateOf(item) !== 'running' || item.status !== stageStatus) return
         const next = nextColumn(board, item)
         if (next === undefined) {
@@ -374,9 +374,10 @@ function advanceAutoStageAfterAgentIdle (
 }
 
 /** Agent 报告提交成功后，等待当前 turn 落盘并释放 live handle。 */
-function retireDeliveredAgent (ctx: Context, sessionId: string, agent: Agent): void {
+function retireDeliveredAgent (ctx: Context, sessionId: string, agent: Agent, lifecycle: LifecycleState): void {
   (async () => {
     await agent.whenIdle()
+    if (!lifecycle.active) return
     await ctx.sessions.flush(agent.session)
     const handle = agentHandles.get(sessionId)
     if (handle !== undefined) {
@@ -479,10 +480,16 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
  * @param ctx - host context（webServer / workspaceRegistry / sessions / agents / tools）。
  */
 export function apply (ctx: Context): void {
+  const lifecycle: LifecycleState = { active: true }
+  cache = null
+
   ctx.effect(() => async () => {
+    lifecycle.active = false
     const handles = [...agentHandles.values()]
     agentHandles.clear()
     await Promise.allSettled(handles.map(async handle => handle.dispose()))
+    await saveTail.catch(() => {})
+    cache = null
   }, 'taskboard: agent handles')
 
   // Agent 只能通过这个工具改变工作项执行状态。
@@ -567,18 +574,18 @@ export function apply (ctx: Context): void {
           await saveBoards(file)
           throw error
         }
-        if (exec.agent !== undefined) retireDeliveredAgent(ctx, sessionId, exec.agent)
+        if (exec.agent !== undefined) retireDeliveredAgent(ctx, sessionId, exec.agent, lifecycle)
         return `交付完成：代码提交 ${commitRef}；会话和卡片已归档。`
       }
 
       const note = summary ?? `${columnLabel(foundBoard, item.status)}环节完成`
       if (executionModeOf(item) === 'review') {
         if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
-        publishReviewAfterAgentIdle(exec.agent, sessionId, item.status, note)
+        publishReviewAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
         return '已记录当前环节产出。请结束本轮执行；会话完全停稳后看板才会进入待审核状态。'
       }
       if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
-      advanceAutoStageAfterAgentIdle(exec.agent, sessionId, item.status, note)
+      advanceAutoStageAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
       return '已记录当前环节产出。请立即结束本轮执行；会话完全停稳后才会流转，并由看板开启下一环节的新 turn。'
       })
     }
@@ -593,9 +600,9 @@ export function apply (ctx: Context): void {
         const parts = url.pathname.split('/').filter(Boolean)
         // parts: ['taskboard', 'boards', key?, 'items', id?, 'run'?]
         const method = req.method ?? 'GET'
-        const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readBody(req) : {}
+        const body = ['POST', 'PUT', 'PATCH'].includes(method) ? await readJsonBody(req) : {}
 
-        // ── 项目看板列表 / 手动注册 ───────────────────────────────
+        // ── 项目看板列表 ─────────────────────────────────────────
         if (parts[1] === 'boards' && parts.length === 2 && method === 'GET') {
           const file = await loadBoards()
           // 同步 workspace 注册表：已注册项目自动获得看板
@@ -615,19 +622,6 @@ export function apply (ctx: Context): void {
           send(res, 200, { workspaces, boards: activeBoards })
           return
         }
-        if (parts[1] === 'boards' && parts.length === 2 && method === 'POST') {
-          if (!isObject(body) || typeof body.path !== 'string') {
-            send(res, 400, { error: 'body.path (string) required' })
-            return
-          }
-          const ws = await ctx.workspaceRegistry.create(body.path, typeof body.title === 'string' ? body.title : undefined)
-          const file = await loadBoards()
-          const board = ensureBoard(file, ws.id, ws.path, ws.title)
-          await saveBoards(file)
-          send(res, 200, { workspace: { id: ws.id, path: ws.path, title: ws.title }, board })
-          return
-        }
-
         // ── 具体项目看板（parts[2] = key）────────────────────────
         const key = parts[2]
         if (key === undefined) {
@@ -637,7 +631,7 @@ export function apply (ctx: Context): void {
         const file = await loadBoards()
         const board = file.boards[key]
         if (board === undefined) {
-          send(res, 404, { error: `board not found: ${key}` })
+          send(res, 404, { error: '看板不存在' })
           return
         }
 
@@ -656,14 +650,9 @@ export function apply (ctx: Context): void {
 
         // ── 设置：自定义环节 / 类型 ────────────────────────────────
         if (parts.length === 4 && parts[3] === 'settings' && method === 'PUT') {
-          if (isObject(body)) {
-            if (Array.isArray(body.columns)) {
-              board.columns = (body.columns as ColumnDef[]).filter(c => isObject(c) && typeof c.id === 'string' && typeof c.label === 'string')
-            }
-            if (Array.isArray(body.itemTypes)) {
-              board.itemTypes = (body.itemTypes as ItemTypeDef[]).filter(t => isObject(t) && typeof t.key === 'string' && typeof t.label === 'string')
-            }
-          }
+          const settings = validateSettings(board, body)
+          board.columns = settings.columns
+          board.itemTypes = settings.itemTypes
           board.updatedAt = new Date().toISOString()
           await saveBoards(file)
           send(res, 200, { board })
@@ -679,31 +668,10 @@ export function apply (ctx: Context): void {
           }
           // POST 新建
           if (parts.length === 4 && method === 'POST') {
-            if (!isObject(body) || typeof body.title !== 'string' || body.title.trim() === '') {
-              send(res, 400, { error: 'body.title (non-empty string) required' })
-              return
-            }
-            const now = new Date().toISOString()
-            const item: WorkItem = {
-              id: randomUUID(),
-              type: typeof body.type === 'string' ? body.type : 'task',
-              title: body.title.trim(),
-              desc: typeof body.desc === 'string' ? body.desc : '',
-              priority: typeof body.priority === 'string' ? body.priority as WorkItem['priority'] : 'medium',
-              labels: Array.isArray(body.labels) ? (body.labels as string[]).filter(l => typeof l === 'string') : [],
-              status: typeof body.status === 'string' ? body.status : board.columns[0]?.id ?? 'todo',
-              parentId: typeof body.parentId === 'string' ? body.parentId : undefined,
-              iteration: typeof body.iteration === 'string' ? body.iteration : undefined,
-              executionMode: body.executionMode === 'review' ? 'review' : 'auto',
-              executionState: 'idle',
-              timeline: [],
-              createdAt: now,
-              updatedAt: now,
-              archived: false
-            }
+            const item = createItemFromBody(board, body)
             pushTimeline(item, { action: 'created', to: item.status, note: `类型：${item.type}` })
             board.items.push(item)
-            board.updatedAt = now
+            board.updatedAt = item.updatedAt
             await saveBoards(file)
             send(res, 200, { item })
             return
@@ -711,29 +679,33 @@ export function apply (ctx: Context): void {
           // PATCH 更新（含拖拽流转）
           if (parts.length === 5 && method === 'PATCH') {
             const item = findItem(board, parts[4] ?? '')
-            if (!isObject(body)) {
-              send(res, 400, { error: 'body object required' })
+            const patch = validateItemPatch(board, item, body)
+            const changesExecutionData = patch.title !== undefined || patch.desc !== undefined || patch.type !== undefined ||
+              patch.priority !== undefined || patch.labels !== undefined || patch.parentId !== undefined ||
+              patch.iteration !== undefined || patch.executionMode !== undefined || patch.status !== undefined
+            if (changesExecutionData && executionActive(executionStateOf(item))) {
+              send(res, 409, { error: '执行中的工作项不能编辑或手动改变环节' })
               return
             }
-            if (typeof body.title === 'string') item.title = body.title.trim()
-            if (typeof body.desc === 'string') item.desc = body.desc
-            if (typeof body.type === 'string') item.type = body.type
-            if (typeof body.priority === 'string') item.priority = body.priority as WorkItem['priority']
-            if (Array.isArray(body.labels)) item.labels = (body.labels as string[]).filter(l => typeof l === 'string')
-            if (typeof body.parentId === 'string') item.parentId = body.parentId
-            if (typeof body.iteration === 'string') item.iteration = body.iteration
-            if (body.executionMode === 'auto' || body.executionMode === 'review') item.executionMode = body.executionMode
-            if (typeof body.status === 'string' && body.status !== item.status) {
-              if (executionActive(executionStateOf(item))) {
-                send(res, 409, { error: '执行中的工作项只能通过审核流程改变环节' })
-                return
-              }
-              pushTimeline(item, { action: 'moved', from: item.status, to: body.status })
-              item.status = body.status
+            if (patch.title !== undefined) item.title = patch.title
+            if (patch.desc !== undefined) item.desc = patch.desc
+            if (patch.type !== undefined) item.type = patch.type
+            if (patch.priority !== undefined) item.priority = patch.priority
+            if (patch.labels !== undefined) item.labels = patch.labels
+            if (patch.parentId !== undefined) {
+              if (patch.parentId === null) delete item.parentId
+              else item.parentId = patch.parentId
             }
-            if (isObject(body.meta) && typeof body.meta.note === 'string') {
-              pushTimeline(item, { action: 'note', note: body.meta.note })
+            if (patch.iteration !== undefined) {
+              if (patch.iteration === null) delete item.iteration
+              else item.iteration = patch.iteration
             }
+            if (patch.executionMode !== undefined) item.executionMode = patch.executionMode
+            if (patch.status !== undefined && patch.status !== item.status) {
+              pushTimeline(item, { action: 'moved', from: item.status, to: patch.status })
+              item.status = patch.status
+            }
+            if (patch.note !== undefined) pushTimeline(item, { action: 'note', note: patch.note })
             item.updatedAt = new Date().toISOString()
             board.updatedAt = item.updatedAt
             await saveBoards(file)
@@ -756,21 +728,21 @@ export function apply (ctx: Context): void {
                   await live.whenIdle()
                   await ctx.sessions.flush(live.session)
                 }
-                if (item.taskWorkspace !== undefined) {
-                  await discardTaskWorkspace(item.taskWorkspace)
-                  rolledBack = true
-                } else if (item.gitCheckpoint !== undefined) {
-                  await restoreGitCheckpoint(item.gitCheckpoint)
-                  rolledBack = true
-                } else {
-                  warning = '旧任务没有执行前回退基线：Agent 和会话已关闭，卡片已删除，但旧文件改动未自动撤销'
-                }
                 const handle = agentHandles.get(sid)
                 if (handle !== undefined) {
                   await handle.dispose()
                   agentHandles.delete(sid)
                 }
                 await ctx.workspaceRegistry.archiveSession(SessionId(sid))
+              }
+              if (item.taskWorkspace !== undefined) {
+                await discardTaskWorkspace(item.taskWorkspace)
+                rolledBack = true
+              } else if (item.gitCheckpoint !== undefined) {
+                await restoreGitCheckpoint(item.gitCheckpoint)
+                rolledBack = true
+              } else if (sid !== undefined) {
+                warning = '旧任务没有执行前回退基线：Agent 和会话已关闭，卡片已删除，但旧文件改动未自动撤销'
               }
               item.executionState = 'idle'
               item.archived = true
@@ -803,7 +775,8 @@ export function apply (ctx: Context): void {
             await withLock(`item:${board.projectKey}:${itemId}`, async () => {
               const item = findItem(board, itemId)
               const state = executionStateOf(item)
-              if (executionActive(state)) {
+              const interruptedBootstrap = state === 'running' && item.sessionId === undefined
+              if (executionActive(state) && !interruptedBootstrap) {
                 send(res, 409, { error: '工作项已有进行中的执行，请打开关联会话查看状态' })
                 return
               }
@@ -811,6 +784,7 @@ export function apply (ctx: Context): void {
               const firstRun = item.sessionId === undefined
               const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
               let handle: AgentHandle | undefined
+              let workspaceCreatedNow: WorkItem['taskWorkspace']
               let registeredWorkspace: Awaited<ReturnType<typeof ctx.workspaceRegistry.resolveByPath>>
               try {
                 // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
@@ -818,11 +792,14 @@ export function apply (ctx: Context): void {
                 item.reviewSummary = undefined
                 touch(board, item)
                 await saveBoards(file)
-                if (firstRun) {
+                if (firstRun && item.taskWorkspace === undefined) {
                   const root = await resolveGitRoot(board.projectPath)
-                  item.taskWorkspace = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id, WORKTREES_ROOT))
+                  workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id, WORKTREES_ROOT))
+                  item.taskWorkspace = workspaceCreatedNow
                   item.integrationState = 'pending'
                   item.gitCheckpoint = undefined
+                  touch(board, item)
+                  await saveBoards(file)
                 }
                 const agentCwd = item.taskWorkspace?.path ?? board.projectPath
                 const agent = firstRun
@@ -849,7 +826,6 @@ export function apply (ctx: Context): void {
                 followup(agent, executionPrompt(board, item))
                 send(res, 200, { item })
               } catch (error) {
-                const createdWorkspace = item.taskWorkspace
                 const index = board.items.findIndex(candidate => candidate.id === item.id)
                 if (index >= 0) board.items[index] = previous
                 await saveBoards(file).catch(() => {})
@@ -858,7 +834,7 @@ export function apply (ctx: Context): void {
                   await handle.dispose().catch(() => {})
                   agentHandles.delete(sessionId)
                 }
-                if (firstRun && createdWorkspace !== undefined) await discardTaskWorkspace(createdWorkspace).catch(() => {})
+                if (workspaceCreatedNow !== undefined) await discardTaskWorkspace(workspaceCreatedNow).catch(() => {})
                 throw error
               }
             })
@@ -871,11 +847,11 @@ export function apply (ctx: Context): void {
             await withLock(`item:${board.projectKey}:${itemId}`, async () => {
             const item = findItem(board, itemId)
             const sessionId = item.sessionId
-            if (sessionId === undefined || (item.taskWorkspace === undefined && item.gitCheckpoint === undefined)) {
+            if (item.taskWorkspace === undefined && item.gitCheckpoint === undefined) {
               send(res, 409, { error: '工作项没有可回退的执行会话或 Git 基线' })
               return
             }
-            const agent = ctx.agents.get(SessionId(sessionId))
+            const agent = sessionId === undefined ? undefined : ctx.agents.get(SessionId(sessionId))
             try {
               if (agent !== undefined) {
                 agent.cancel({ kind: 'user' })
@@ -884,12 +860,14 @@ export function apply (ctx: Context): void {
               }
               if (item.taskWorkspace !== undefined) await discardTaskWorkspace(item.taskWorkspace)
               else if (item.gitCheckpoint !== undefined) await restoreGitCheckpoint(item.gitCheckpoint)
-              const handle = agentHandles.get(sessionId)
-              if (handle !== undefined) {
-                await handle.dispose()
-                agentHandles.delete(sessionId)
+              if (sessionId !== undefined) {
+                const handle = agentHandles.get(sessionId)
+                if (handle !== undefined) {
+                  await handle.dispose()
+                  agentHandles.delete(sessionId)
+                }
+                await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
               }
-              await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
               item.executionState = 'idle'
               item.archived = true
               item.reviewSummary = undefined
@@ -1006,7 +984,19 @@ export function apply (ctx: Context): void {
 
         send(res, 404, { error: 'not found' })
       } catch (err) {
-        send(res, 500, { error: err instanceof Error ? err.message : String(err) })
+        if (err instanceof HttpError) {
+          send(res, err.status, { error: err.message })
+          return
+        }
+        if (err instanceof TaskWorkspacePreconditionError) {
+          send(res, 409, { error: err.message })
+          return
+        }
+        if (err instanceof TaskboardDataError) {
+          send(res, 503, { error: '看板数据无法安全读取；原文件和备份均已保留，请检查存储文件。' })
+          return
+        }
+        send(res, 500, { error: 'taskboard: internal server error' })
       }
     },
   }), 'taskboard: route')

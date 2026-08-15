@@ -40,7 +40,7 @@ const STATE_LABEL: Record<string, string> = {
 export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, onDragEnd, onSelect }: ItemCardProps) {
   const executionState = executionStateOf(item)
   const locked = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing'
-  const handleDragStart = (ev: DragEvent<HTMLElement>): void => {
+  const handleDragStart = (ev: DragEvent<HTMLButtonElement>): void => {
     if (locked) {
       ev.preventDefault()
       return
@@ -51,7 +51,8 @@ export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, o
   }
 
   return (
-    <article
+    <button
+      type='button'
       className={`${css.card} ${dragging ? css.cardDragging : ''}`}
       draggable={!locked}
       onDragStart={handleDragStart}
@@ -81,6 +82,6 @@ export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, o
           {item.labels.map(label => <span key={label} className={css.label}>{label}</span>)}
         </div>
       )}
-    </article>
+    </button>
   )
 }

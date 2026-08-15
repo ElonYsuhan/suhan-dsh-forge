@@ -85,7 +85,12 @@
 }
 .input:focus,
 .textarea:focus,
-.select:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.select:focus { border-color: var(--dsw-alias-brand-primary); }
+.panel :is(button, input, select, textarea):focus-visible,
+.trigger:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
 .textarea { resize: vertical; min-height: 48px; }
 
 .error {

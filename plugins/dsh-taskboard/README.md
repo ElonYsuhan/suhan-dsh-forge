@@ -14,7 +14,7 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
   - **自动提交与集成**：人工确认交付后由插件生成单任务提交；同一仓库的最终集成在短时互斥锁内先 rebase 最新目标分支，再以 `ff-only` 更新主工作区
   - **冲突编排**：无法自动集成时保留源提交和分支、归档原任务，并自动创建关联的「处理集成冲突」任务
   - **agent 工具 `taskboard_progress`**：汇报环节完成、阻塞和待交付；看板每 3 秒刷新执行状态
-  - 数据落盘 `datas/boards.json`；任务 worktree 位于同一运行数据目录的 `worktrees/`
+  - 数据落盘 `$DSH_HOME/storages/dsh-taskboard/boards.json`；任务 worktree 位于同一运行数据目录的 `worktrees/`
 
 ## 工作项模型
 
@@ -52,7 +52,7 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
 
 ## 并行与 Git 前置条件
 
-- 启动新任务时项目必须位于正常分支且主工作区干净；否则拒绝启动，要求先提交或暂存人工改动。
+- 启动新任务时项目必须位于正常分支且主工作区干净；否则拒绝启动，要求先提交或 stash 人工改动。
 - 不同任务的 Agent 和文件写入完全隔离；只有最终集成会短暂串行。
 - 集成时若用户切换目标分支、修改主工作区或其他进程推进分支，插件停止自动集成并创建冲突处理任务，绝不覆盖现场。
 - 冲突处理任务基于最新目标分支创建新 worktree，并按指令使用 `git cherry-pick --no-commit <sourceCommit>` 重放变化；解决后仍由插件统一提交。
@@ -84,7 +84,7 @@ dsh plugin --profile web add @suhan-dsh/taskboard
 ```bash
 pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard run pack
-dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.1.tgz
+dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.2.tgz
 ```
 
 插件包已通过 `package.json#dsh.bundle.patch` 声明 `cordis.patch.yml`。若当前 DSH 预览版未自动挂载 bundle，可在 `~/.dsh/profiles/web/cordis.patch.yml` 追加：
@@ -110,9 +110,25 @@ CHOKIDAR_USEPOLLING=1
 
 ## 数据
 
-- 文件：`datas/boards.json`（本地运行状态，不进入 Git 或发布包）
-- 任务隔离目录：`datas/worktrees/`（运行时创建；成功、删除或强制关闭后清理，冲突时保留源 Git 分支）
-- 迁移：设置 `DSH_TASKBOARD_DATA=<绝对路径>` 覆盖存储位置
+- 文件：`$DSH_HOME/storages/dsh-taskboard/boards.json`（默认 `$DSH_HOME=~/.dsh`，不随插件升级或重装删除）
+- 任务隔离目录：`$DSH_HOME/storages/dsh-taskboard/worktrees/`（运行时创建；成功、删除或强制关闭后清理，冲突时保留源 Git 分支）
+- 数据损坏恢复：每次原子写入前保留 `boards.json.bak`；主文件结构损坏时自动读取最近一份有效备份，原文件不删除
+- 旧版迁移：稳定文件不存在且旧包目录仍存在时，Host 会读取一次 `datas/boards.json` 并复制到稳定目录；旧文件保留，不自动删除
+- 自定义：设置 `DSH_TASKBOARD_DATA=<绝对路径>` 覆盖存储位置；显式覆盖时不读取旧默认路径
+
+### 从 0.1.1 升级
+
+`0.1.1` 把数据写在 npm 包目录，包管理器升级时可能先替换该目录。请在安装 `0.1.2` 前执行一次备份迁移；命令只在目标文件尚不存在时复制，不覆盖已有稳定数据：
+
+```bash
+mkdir -p "${DSH_HOME:-$HOME/.dsh}/storages/dsh-taskboard"
+test -e "${DSH_HOME:-$HOME/.dsh}/storages/dsh-taskboard/boards.json" || \
+  cp "${DSH_HOME:-$HOME/.dsh}/profiles/web/node_modules/@suhan-dsh/taskboard/datas/boards.json" \
+     "${DSH_HOME:-$HOME/.dsh}/storages/dsh-taskboard/boards.json"
+dsh plugin --profile web add @suhan-dsh/taskboard@0.1.2
+```
+
+全新安装会直接创建稳定数据目录，不需要迁移。刷新页面、重启 DSH、升级、卸载后重装都不会清空该目录。
 
 卸载插件只停止 Agent handle，不主动删除历史看板数据。运行中任务的 worktree 会保留，以便重新安装后恢复或人工处理。
 

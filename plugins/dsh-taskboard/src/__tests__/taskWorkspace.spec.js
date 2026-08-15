@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { commitTaskWorkspace, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace } from '../taskWorkspace.ts'
+import { commitTaskWorkspace, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError } from '../taskWorkspace.ts'
 
 const execFileAsync = promisify(execFile)
 const tempDirs = []
@@ -31,6 +31,17 @@ afterEach(async () => {
 })
 
 describe('task worktree integration', () => {
+  it('reports a safe precondition error for a non-Git workspace', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'dsh-taskboard-non-git-'))
+    tempDirs.push(root)
+
+    await expect(resolveGitRoot(root)).rejects.toEqual(expect.objectContaining({
+      name: 'TaskWorkspacePreconditionError',
+      message: expect.stringContaining('不是 Git 仓库')
+    }))
+    await expect(resolveGitRoot(root)).rejects.toBeInstanceOf(TaskWorkspacePreconditionError)
+  })
+
   it('runs independent tasks in parallel and linearly integrates both commits', async () => {
     const root = await repository()
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-storage-'))
@@ -86,6 +97,22 @@ describe('task worktree integration', () => {
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-dirty-'))
     tempDirs.push(storage)
     await writeFile(join(root, 'shared.txt'), 'dirty\n')
-    await expect(prepareTaskWorkspace(root, 'task-dirty', storage)).rejects.toThrow('未提交改动')
+    await expect(prepareTaskWorkspace(root, 'task-dirty', storage)).rejects.toEqual(expect.objectContaining({
+      name: 'TaskWorkspacePreconditionError',
+      message: expect.stringContaining('未提交改动')
+    }))
+  })
+
+  it('recovers the deterministic worktree after a host restart during bootstrap', async () => {
+    const root = await repository()
+    const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-recovery-'))
+    tempDirs.push(storage)
+    const original = await prepareTaskWorkspace(root, 'task-recovery', storage)
+    await writeFile(join(original.path, 'partial.txt'), 'preserved partial work\n')
+
+    const recovered = await prepareTaskWorkspace(root, 'task-recovery', storage)
+    expect(recovered).toEqual(original)
+    expect(await readFile(join(recovered.path, 'partial.txt'), 'utf8')).toBe('preserved partial work\n')
+    await discardTaskWorkspace(recovered)
   })
 })

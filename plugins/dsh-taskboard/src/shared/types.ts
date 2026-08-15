@@ -138,7 +138,7 @@ export interface WorkItem {
 
 /** 单个项目的看板 */
 export interface Board {
-  /** 项目 key（= DSH workspace id；手动添加时也走 workspace 注册） */
+  /** 项目 key（= DSH workspace id） */
   projectKey: string
   /** 项目路径（workspace.path） */
   projectPath: string

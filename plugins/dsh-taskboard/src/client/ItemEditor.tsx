@@ -5,6 +5,7 @@ import { useState, type FormEvent } from 'react'
 import { PRIORITIES, executionModeOf, type Board, type ExecutionMode, type Priority, type WorkItem } from '../shared/types.ts'
 import type { ItemInput } from './api.ts'
 import css from './ItemEditor.module.css'
+import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Editor surface props. */
 export interface ItemEditorProps {
@@ -22,6 +23,7 @@ export interface ItemEditorProps {
  * @param props - the item under edit, the board (类型/环节/父级选项), and callbacks.
  */
 export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: ItemEditorProps) {
+  const panelRef = useDialogFocus<HTMLFormElement>(onCancel)
   const [title, setTitle] = useState(item?.title ?? '')
   const [type, setType] = useState(item?.type ?? board.itemTypes[0]?.key ?? 'task')
   const [desc, setDesc] = useState(item?.desc ?? '')
@@ -44,8 +46,8 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
       desc: desc.trim(),
       priority,
       labels: labels.split(/[、,，]/).map(s => s.trim()).filter(s => s !== ''),
-      parentId: parentId === '' ? undefined : parentId,
-      iteration: iteration.trim() === '' ? undefined : iteration.trim(),
+      parentId: parentId === '' ? null : parentId,
+      iteration: iteration.trim() === '' ? null : iteration.trim(),
       status,
       executionMode
     })
@@ -55,10 +57,13 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
     <div className={css.mask} onClick={onCancel}>
       <form
         className={css.panel}
+        ref={panelRef}
         role='dialog'
+        aria-modal='true'
         aria-label={item === null ? '新建工作项' : '编辑工作项'}
         onClick={ev => ev.stopPropagation()}
         onSubmit={handleSubmit}
+        tabIndex={-1}
       >
         <header className={css.head}>
           <h3 className={css.title}>{item === null ? '新建工作项' : '编辑工作项'}</h3>
@@ -87,7 +92,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
             value={title}
             onChange={ev => setTitle(ev.target.value)}
             placeholder='工作项标题'
-            autoFocus
+            data-dialog-initial-focus
             required
             data-testid='taskboard-editor-title'
           />

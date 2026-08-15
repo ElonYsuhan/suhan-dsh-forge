@@ -3,6 +3,7 @@
  */
 import { executionModeOf, executionStateOf, type Board, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemDetail.module.css'
+import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Detail panel surface props. */
 export interface ItemDetailProps {
@@ -53,6 +54,7 @@ function formatTime (iso: string): string {
  * @param props - the item, its board, and action callbacks.
  */
 export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession }: ItemDetailProps) {
+  const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
   const executionMode = executionModeOf(item)
@@ -63,9 +65,11 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
     <div className={css.mask} onClick={onClose}>
       <aside
         className={css.detail}
+        ref={detailRef}
         role='dialog'
         aria-modal='true'
         aria-label='工作项详情'
+        tabIndex={-1}
         onClick={event => event.stopPropagation()}
       >
         <div className={css.summary}>
@@ -133,7 +137,7 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
             )}
             <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
             <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
-            {item.sessionId !== undefined && item.gitCheckpoint !== undefined && (
+            {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
               <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
             )}
           </div>

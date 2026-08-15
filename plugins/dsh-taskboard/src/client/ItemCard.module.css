@@ -1,11 +1,20 @@
 /* 工作项卡片。 */
 .card {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  text-align: left;
   border: 1px solid var(--dsw-alias-border-l1);
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-3);
   padding: 9px 11px;
   cursor: grab;
   transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease, opacity .12s ease;
+}
+.card:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
 }
 .card:hover {
   transform: translateY(-1px);

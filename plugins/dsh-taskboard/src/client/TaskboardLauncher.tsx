@@ -137,6 +137,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const load = useCallback(async (): Promise<void> => {
     try {
       const res = await fetchBoards()
+      setError(null)
       setData(res)
       const keys = Object.keys(res.boards)
       const remembered = window.localStorage.getItem(CURRENT_KEY)
@@ -211,6 +212,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       const result = await fetchHistory(currentKey, offset)
       setHistoryItems(previous => append ? [...previous, ...result.items] : result.items)
       setHistoryTotal(result.total)
+      setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -236,6 +238,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       patchBoardItem(currentKey, updated)
       setSelectedId(updated.id)
       setEditor(null)
+      setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -246,6 +249,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     try {
       const updated = await updateItem(currentKey, itemId, { status })
       patchBoardItem(currentKey, updated)
+      setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -270,6 +274,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       })
       setDeleteTarget(null)
       setSelectedId(null)
+      setError(null)
       setNotice(result.warning ?? (result.rolledBack
         ? '任务已停止，执行产生的改动已回退；会话已归档，卡片已删除'
         : '卡片已删除'))
@@ -299,6 +304,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       })
       setForceCloseTarget(null)
       setSelectedId(null)
+      setError(null)
       setNotice('任务已强制关闭；Agent 已停止，工作区改动已回退，会话和卡片已归档')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -312,6 +318,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     setRunning(true)
     try {
       const updated = await runItem(currentKey, selected.id)
+      setError(null)
       setNotice(`已下发到会话：${updated.sessionId ?? ''}（可随时打开查看）`)
       patchBoardItem(currentKey, updated)
     } catch (err) {
@@ -332,6 +339,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
           : await confirmDelivery(currentKey, selected.id)
       patchBoardItem(currentKey, updated)
       setDeliveryTarget(null)
+      setError(null)
       setNotice(action === 'approve'
         ? '已批准，Agent 将在原会话继续下一环节'
         : action === 'reject'
@@ -354,6 +362,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
         ? prev
         : { ...prev, boards: { ...prev.boards, [currentKey]: updatedBoard } })
       setSettingsOpen(false)
+      setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }

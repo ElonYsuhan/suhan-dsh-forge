@@ -2,10 +2,11 @@
  * 聊天页「＋待办」：composer 工具行左端的小控件，点击弹出创建表单，
  * 把任务直接建到所选项目的看板待办环节。
  */
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { createItem, fetchBoards, type BoardsResponse } from './api.ts'
 import css from './TodoCreateButton.module.css'
+import { useDialogFocus } from './useDialogFocus.ts'
 
 /** 当前聊天会话所属项目。 */
 export interface TodoCreateInjected {
@@ -26,6 +27,8 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
   const [title, setTitle] = useState('')
   const [desc, setDesc] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const closeDialog = useCallback(() => setOpen(false), [])
+  const panelRef = useDialogFocus<HTMLFormElement>(closeDialog, open)
 
   useEffect(() => {
     if (!open) return
@@ -78,17 +81,20 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
       </button>
 
       {open && (
-        <div className={css.mask} onClick={() => setOpen(false)}>
+        <div className={css.mask} onClick={closeDialog}>
           <form
             className={css.panel}
+            ref={panelRef}
             role='dialog'
+            aria-modal='true'
             aria-label='创建待办任务'
             onClick={ev => ev.stopPropagation()}
             onSubmit={handleSubmit}
+            tabIndex={-1}
           >
             <header className={css.head}>
               <h3 className={css.title}>创建待办任务</h3>
-              <button type='button' className={css.closeBtn} onClick={() => setOpen(false)} aria-label='关闭'>✕</button>
+              <button type='button' className={css.closeBtn} onClick={closeDialog} aria-label='关闭'>✕</button>
             </header>
 
             <label className={css.field}>
@@ -112,7 +118,7 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
                 value={title}
                 onChange={ev => setTitle(ev.target.value)}
                 placeholder='待办任务标题'
-                autoFocus
+                data-dialog-initial-focus
                 required
                 data-testid='taskboard-todo-title'
               />
@@ -126,7 +132,7 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
             {error !== null && <div className={css.error} role='alert'>{error}</div>}
 
             <footer className={css.foot}>
-              <button type='button' className={css.cancelBtn} onClick={() => setOpen(false)}>取消</button>
+              <button type='button' className={css.cancelBtn} onClick={closeDialog}>取消</button>
               <button type='submit' className={css.saveBtn} disabled={title.trim() === '' || projectKey === ''}>创建</button>
             </footer>
           </form>
