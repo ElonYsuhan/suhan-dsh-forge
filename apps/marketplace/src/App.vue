@@ -64,34 +64,24 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
         <span class="brand-mark" aria-hidden="true">S</span>
         <span>
           <strong>Suhan DSH Forge</strong>
-          <small>PLUGIN ATELIER</small>
+          <small>插件管理平台</small>
         </span>
       </a>
       <nav aria-label="主导航">
-        <a class="nav-active" href="#plugins">插件广场</a>
-        <a href="#standards">质量规范</a>
+        <a class="nav-active" href="#plugins">插件列表</a>
+        <a href="#standards">质量门禁</a>
       </nav>
-      <span class="forge-status"><i aria-hidden="true"></i> Forge 在线</span>
+      <span class="forge-status"><i aria-hidden="true"></i> Forge 正常</span>
     </header>
 
     <main id="main">
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <p class="eyebrow">DEEPSEEK HARNESS · PLUGIN ECOSYSTEM</p>
-          <h1 id="hero-title">给好工具一个<br><em>被发现的舞台。</em></h1>
-          <p class="hero-intro">为 DSH 打造的插件陈列室。每一件作品都经过结构校验、类型检查、自动化测试与真实安装门禁。</p>
-          <a class="primary-link" href="#plugins">探索插件 <span aria-hidden="true">↓</span></a>
+      <section class="page-head" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">DEEPSEEK HARNESS · 插件管理</p>
+          <h1 id="page-title">插件管理平台</h1>
+          <p class="lead">统一查看、筛选和安装经过 Forge 门禁的 DSH 插件。</p>
         </div>
-        <div class="hero-art" aria-hidden="true">
-          <span class="orbit orbit-one"></span>
-          <span class="orbit orbit-two"></span>
-          <div class="forge-core">
-            <span>DSH</span>
-            <strong>01</strong>
-          </div>
-          <span class="art-note note-top">CRAFTED / TESTED</span>
-          <span class="art-note note-bottom">SUHAN · 2026</span>
-        </div>
+        <a class="primary-link" href="#plugins">浏览插件</a>
       </section>
 
       <section class="metrics" aria-label="平台概览">
@@ -104,10 +94,10 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
       <section id="plugins" class="catalog" aria-labelledby="catalog-title">
         <div class="section-heading">
           <div>
-            <p class="eyebrow">CURATED COLLECTION</p>
-            <h2 id="catalog-title">插件广场</h2>
+            <p class="eyebrow">PLUGIN CATALOG</p>
+            <h2 id="catalog-title">插件列表</h2>
           </div>
-          <p>不是数量竞赛。这里只展示经过 Forge 门禁、可以被理解和信任的 DSH 插件。</p>
+          <p>展示已通过结构校验、类型检查、自动测试与安装冒烟门禁的插件。</p>
         </div>
 
         <div class="catalog-tools">
@@ -132,14 +122,13 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
         <p class="result-count" aria-live="polite">找到 {{ visiblePlugins.length }} 个插件</p>
 
         <ul v-if="visiblePlugins.length" class="plugin-grid">
-          <li v-for="(plugin, index) in visiblePlugins" :key="plugin.id">
+          <li v-for="plugin in visiblePlugins" :key="plugin.id">
             <article class="plugin-card">
               <div class="card-topline">
-                <span class="card-index">NO. {{ String(index + 1).padStart(2, '0') }}</span>
+                <span class="package-name">{{ plugin.packageName }}</span>
                 <span class="status"><i aria-hidden="true"></i>{{ ['published', 'public'].includes(plugin.status) ? '已发布' : '内部精选' }}</span>
               </div>
               <div class="plugin-symbol" aria-hidden="true">{{ plugin.displayName['en-US']?.slice(0, 1) ?? 'D' }}</div>
-              <p class="package-name">{{ plugin.packageName }}</p>
               <h3>{{ plugin.displayName['zh-CN'] }}</h3>
               <p class="summary">{{ plugin.summary['zh-CN'] }}</p>
               <ul class="tags" aria-label="插件标签">
@@ -148,7 +137,7 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
               <div class="card-footer">
                 <span>v{{ plugin.version }}</span>
                 <span>{{ qualityCount(plugin) }}/3 质量项</span>
-                <button type="button" @click="openPlugin(plugin, $event)">查看详情 <span aria-hidden="true">↗</span></button>
+                <button type="button" @click="openPlugin(plugin, $event)">查看详情</button>
               </div>
             </article>
           </li>
@@ -162,9 +151,14 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
       </section>
 
       <section id="standards" class="standards" aria-labelledby="standards-title">
-        <p class="eyebrow">THE FORGE STANDARD</p>
-        <h2 id="standards-title">上架之前，先过四道火。</h2>
-        <ol>
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">QUALITY GATES</p>
+            <h2 id="standards-title">质量门禁</h2>
+          </div>
+          <p>插件上架前需依次通过以下检查，确保可安装、可验证、可追溯。</p>
+        </div>
+        <ol class="standards-list">
           <li><span>01</span><div><strong>结构校验</strong><p>Manifest、Cordis Patch 与权限声明完整。</p></div></li>
           <li><span>02</span><div><strong>静态质量</strong><p>严格 TypeScript、源码规则与依赖边界。</p></div></li>
           <li><span>03</span><div><strong>自动测试</strong><p>单元、契约与关键工作流均可复现。</p></div></li>
@@ -175,14 +169,14 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
 
     <footer>
       <span>Suhan DSH Forge</span>
-      <p>Built for tools worth trusting.</p>
-      <span>© 2026 · SHANGHAI</span>
+      <p>DSH 插件管理与发布平台</p>
+      <span>© 2026</span>
     </footer>
 
     <dialog ref="dialog" class="detail-dialog" aria-labelledby="detail-title" @close="onDialogClose">
       <template v-if="selectedPlugin">
         <button ref="closeButton" class="dialog-close" type="button" aria-label="关闭插件详情" @click="closePlugin">×</button>
-        <p class="eyebrow">PLUGIN DOSSIER · {{ selectedPlugin.packageName }}</p>
+        <p class="eyebrow">插件详情 · {{ selectedPlugin.packageName }}</p>
         <h2 id="detail-title">{{ selectedPlugin.displayName['zh-CN'] }}</h2>
         <p class="dialog-summary">{{ selectedPlugin.summary['zh-CN'] }}</p>
         <div class="detail-block">
