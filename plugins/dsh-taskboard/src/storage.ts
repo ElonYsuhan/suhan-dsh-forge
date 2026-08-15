@@ -51,7 +51,8 @@ function optionalEnum (value: unknown, allowed: Set<string>): boolean {
 
 function validTaskWorkspace (value: unknown): boolean {
   return value === undefined || (isObject(value) && typeof value.root === 'string' && typeof value.path === 'string' &&
-    typeof value.branch === 'string' && typeof value.baseCommit === 'string' && typeof value.targetBranch === 'string')
+    typeof value.branch === 'string' && typeof value.baseCommit === 'string' && typeof value.targetBranch === 'string' &&
+    optionalString(value.workspaceId))
 }
 
 function validGitCheckpoint (value: unknown): boolean {

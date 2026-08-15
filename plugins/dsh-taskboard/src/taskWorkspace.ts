@@ -4,8 +4,9 @@
  */
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import process from 'node:process'
 import { promisify } from 'node:util'
 import type { TaskWorkspace } from './shared/types.ts'
 
@@ -19,14 +20,38 @@ export class TaskWorkspacePreconditionError extends Error {
   }
 }
 
-async function git (cwd: string, args: string[]): Promise<string> {
+async function git (cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   const { stdout } = await execFileAsync('git', args, {
     cwd,
+    env: env === undefined ? process.env : { ...process.env, ...env },
     encoding: 'utf8',
     maxBuffer: 16 * 1024 * 1024,
     timeout: 120_000
   })
   return stdout
+}
+
+/**
+ * 用临时 Git index 捕获当前非忽略工作树，不触碰用户 index/工作区。
+ * 返回的合成提交只作为任务分支基线；最终只重放它之后的任务提交。
+ */
+async function snapshotBaseCommit (root: string, head: string, repositoryStorage: string): Promise<string> {
+  if (await status(root) === '') return head
+  const temp = await mkdtemp(resolve(repositoryStorage, '.snapshot-'))
+  const index = resolve(temp, 'index')
+  const env = { GIT_INDEX_FILE: index }
+  try {
+    await git(root, ['read-tree', head], env)
+    await git(root, ['add', '-A', '--', '.'], env)
+    const tree = (await git(root, ['write-tree'], env)).trim()
+    return (await git(root, [
+      '-c', 'user.name=DSH Taskboard',
+      '-c', 'user.email=dsh-taskboard@localhost',
+      'commit-tree', tree, '-p', head, '-m', 'taskboard: capture uncommitted task baseline'
+    ], env)).trim()
+  } finally {
+    await rm(temp, { recursive: true, force: true })
+  }
 }
 
 async function status (cwd: string): Promise<string> {
@@ -46,23 +71,22 @@ export async function resolveGitRoot (projectPath: string): Promise<string> {
   }
 }
 
-/** 为任务创建独立分支和 worktree。主工作区必须干净，避免漏掉用户未提交基线。 */
+/** 为任务创建独立分支和 worktree；未提交现场以只读合成提交成为任务基线。 */
 export async function prepareTaskWorkspace (
   projectPath: string,
   itemId: string,
   storageRoot: string
 ): Promise<TaskWorkspace> {
   const root = await resolveGitRoot(projectPath)
-  if (await status(root) !== '') {
-    throw new TaskWorkspacePreconditionError('项目主工作区存在未提交改动；为保证并行任务互不覆盖，请先提交这些改动后重试。')
-  }
   const targetBranch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
   if (targetBranch === '') throw new TaskWorkspacePreconditionError('项目当前处于 detached HEAD，无法确定自动集成目标分支；请先切换到目标分支。')
-  const baseCommit = (await git(root, ['rev-parse', 'HEAD'])).trim()
+  const head = (await git(root, ['rev-parse', 'HEAD'])).trim()
   const repositoryKey = createHash('sha256').update(root).digest('hex').slice(0, 16)
   const path = resolve(storageRoot, repositoryKey, itemId)
   const branch = branchName(itemId)
-  await mkdir(resolve(storageRoot, repositoryKey), { recursive: true })
+  const repositoryStorage = resolve(storageRoot, repositoryKey)
+  await mkdir(repositoryStorage, { recursive: true })
+  const baseCommit = await snapshotBaseCommit(root, head, repositoryStorage)
   try {
     await git(path, ['rev-parse', '--show-toplevel'])
     const existingBranch = (await git(path, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
@@ -116,7 +140,7 @@ export async function integrateTaskWorkspace (workspace: TaskWorkspace): Promise
   }
 
   try {
-    await git(workspace.path, ['rebase', '--keep-empty', workspace.targetBranch])
+    await git(workspace.path, ['rebase', '--keep-empty', '--onto', workspace.targetBranch, workspace.baseCommit, workspace.branch])
   } catch (error) {
     await git(workspace.path, ['rebase', '--abort']).catch(() => {})
     return {

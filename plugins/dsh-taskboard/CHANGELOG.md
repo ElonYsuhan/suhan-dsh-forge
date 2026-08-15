@@ -10,6 +10,8 @@
 - Enforce bounded JSON request bodies and validate work-item, parent, status, type, and settings payloads.
 
 ### Fixed
+- Associate every active task session with its real worktree Workspace instead of leaving it unowned or attaching it to a mismatched parent directory.
+- Start isolated tasks safely from dirty main worktrees by capturing an immutable baseline through a temporary Git index without changing or committing user work.
 - Preserve taskboard state across refreshes, restarts, upgrades, and reinstall mode changes under `$DSH_HOME/storages/dsh-taskboard`.
 - Migrate legacy package-local `datas/boards.json` data non-destructively when it is still available.
 - Return actionable Git-workspace precondition errors instead of opaque task-run HTTP 500 responses.

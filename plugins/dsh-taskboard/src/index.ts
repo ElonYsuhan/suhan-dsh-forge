@@ -18,11 +18,11 @@
  */
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import type {} from '@deepseek-ai/dsh-workspace'
+import { WorkspaceId, type Workspace } from '@deepseek-ai/dsh-workspace'
 import type {} from '@deepseek-ai/dsh-session'
 import { installModelSelection, type Agent, type AgentHandle, type ModelSelection } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-tools'
@@ -137,6 +137,50 @@ function diagnosticError (value: unknown): string {
     .replace(/\b(Bearer\s+|(?:api[-_]?key|token|secret)\s*[:=]\s*)[^\s,;]+/gi, '$1<redacted>')
     .replace(/[\r\n]+/g, ' ')
     .slice(0, 2_000)
+}
+
+function isTaskWorkspacePath (path: string): boolean {
+  const child = relative(WORKTREES_ROOT, resolve(path))
+  return child !== '' && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child)
+}
+
+/** 注册 Agent 实际 cwd，并用原项目/任务标题表达逻辑归属。 */
+async function attachTaskSession (
+  ctx: Context,
+  workspace: NonNullable<WorkItem['taskWorkspace']>,
+  sessionId: string,
+  title: string
+): Promise<Workspace> {
+  const registered = await ctx.workspaceRegistry.resolveByPath(workspace.path) ??
+    await ctx.workspaceRegistry.create(workspace.path, title)
+  workspace.workspaceId = registered.id
+  try {
+    await registered.attachSession(SessionId(sessionId))
+    return registered
+  } catch (error) {
+    await ctx.workspaceRegistry.delete(registered.id).catch(() => {})
+    delete workspace.workspaceId
+    throw error
+  }
+}
+
+/** 分离会话并删除插件创建的临时 Workspace；两个清理步骤互不阻断。 */
+async function removeTaskWorkspaceRegistration (
+  ctx: Context,
+  workspace: WorkItem['taskWorkspace'],
+  sessionId?: string
+): Promise<void> {
+  if (workspace?.workspaceId === undefined) return
+  const id = WorkspaceId(workspace.workspaceId)
+  const registered = ctx.workspaceRegistry.get(id)
+  const errors: unknown[] = []
+  if (registered !== undefined && sessionId !== undefined) {
+    await registered.detachSession(SessionId(sessionId)).catch(error => errors.push(error))
+  }
+  await ctx.workspaceRegistry.delete(id).catch(error => errors.push(error))
+  delete workspace.workspaceId
+  if (errors.length === 1) throw errors[0]
+  if (errors.length > 1) throw new AggregateError(errors, 'task workspace registration cleanup failed')
 }
 
 /** 确保某项目存在看板（同步 workspace 注册表） */
@@ -416,22 +460,36 @@ function retireDeliveredAgent (ctx: Context, sessionId: string, agent: Agent, li
 async function closeTaskSession (ctx: Context, item: WorkItem): Promise<string | undefined> {
   const sessionId = item.sessionId
   if (sessionId === undefined) return undefined
+  const errors: string[] = []
   try {
     const live = ctx.agents.get(SessionId(sessionId))
     if (live !== undefined) {
       await live.whenIdle()
       await ctx.sessions.flush(live.session)
     }
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error))
+  }
+  try {
     const handle = agentHandles.get(sessionId)
     if (handle !== undefined) {
       await handle.dispose()
       agentHandles.delete(sessionId)
     }
-    await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
-    return undefined
   } catch (error) {
-    return error instanceof Error ? error.message : String(error)
+    errors.push(error instanceof Error ? error.message : String(error))
   }
+  try {
+    await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error))
+  }
+  try {
+    await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sessionId)
+  } catch (error) {
+    errors.push(error instanceof Error ? error.message : String(error))
+  }
+  return errors.length === 0 ? undefined : errors.join('；')
 }
 
 /** 自动提交任务 worktree，并在仓库级短锁内集成到目标分支。 */
@@ -630,7 +688,7 @@ export function apply (ctx: Context): void {
         if (parts[1] === 'boards' && parts.length === 2 && method === 'GET') {
           const file = await loadBoards()
           // 同步 workspace 注册表：已注册项目自动获得看板
-          const workspaces = ctx.workspaceRegistry.list().map(w => ({
+          const workspaces = ctx.workspaceRegistry.list().filter(w => !isTaskWorkspacePath(w.path)).map(w => ({
             id: w.id, path: w.path, title: w.title, sessionCount: w.sessionIds.length
           }))
           let createdBoard = false
@@ -760,6 +818,7 @@ export function apply (ctx: Context): void {
                 await ctx.workspaceRegistry.archiveSession(SessionId(sid))
               }
               if (item.taskWorkspace !== undefined) {
+                await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sid)
                 await discardTaskWorkspace(item.taskWorkspace)
                 rolledBack = true
               } else if (item.gitCheckpoint !== undefined) {
@@ -809,6 +868,7 @@ export function apply (ctx: Context): void {
               const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
               let handle: AgentHandle | undefined
               let workspaceCreatedNow: WorkItem['taskWorkspace']
+              let registeredWorkspace: Workspace | undefined
               try {
                 // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
                 item.executionState = 'running'
@@ -830,6 +890,13 @@ export function apply (ctx: Context): void {
                   : await resolveTaskAgent(ctx, sessionId, item.agentPreset)
                 if (handle !== undefined) {
                   agentHandles.set(sessionId, handle)
+                  if (item.taskWorkspace === undefined) throw new Error('task workspace missing after Agent creation')
+                  registeredWorkspace = await attachTaskSession(
+                    ctx,
+                    item.taskWorkspace,
+                    sessionId,
+                    `${board.projectTitle} · ${item.title}`
+                  )
                 }
                 item.sessionId = sessionId
                 item.agentPreset = agent.session.header.agentPreset
@@ -849,6 +916,9 @@ export function apply (ctx: Context): void {
                 const index = board.items.findIndex(candidate => candidate.id === item.id)
                 if (index >= 0) board.items[index] = previous
                 await saveBoards(file).catch(() => {})
+                if (registeredWorkspace !== undefined) {
+                  await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sessionId).catch(() => {})
+                }
                 if (handle !== undefined) {
                   await handle.dispose().catch(() => {})
                   agentHandles.delete(sessionId)
@@ -877,8 +947,6 @@ export function apply (ctx: Context): void {
                 await agent.whenIdle()
                 await ctx.sessions.flush(agent.session)
               }
-              if (item.taskWorkspace !== undefined) await discardTaskWorkspace(item.taskWorkspace)
-              else if (item.gitCheckpoint !== undefined) await restoreGitCheckpoint(item.gitCheckpoint)
               if (sessionId !== undefined) {
                 const handle = agentHandles.get(sessionId)
                 if (handle !== undefined) {
@@ -887,6 +955,10 @@ export function apply (ctx: Context): void {
                 }
                 await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
               }
+              if (item.taskWorkspace !== undefined) {
+                await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sessionId)
+                await discardTaskWorkspace(item.taskWorkspace)
+              } else if (item.gitCheckpoint !== undefined) await restoreGitCheckpoint(item.gitCheckpoint)
               item.executionState = 'idle'
               item.archived = true
               item.reviewSummary = undefined

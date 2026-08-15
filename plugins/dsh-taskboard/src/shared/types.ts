@@ -34,6 +34,8 @@ export interface TaskWorkspace {
   baseCommit: string
   /** 最终自动集成的目标分支。 */
   targetBranch: string
+  /** Agent 会话实际绑定的临时 DSH Workspace。 */
+  workspaceId?: string | undefined
 }
 
 /** 任务首次执行前捕获的 Git 工作树基线。 */

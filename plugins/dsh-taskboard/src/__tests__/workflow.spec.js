@@ -96,6 +96,30 @@ describe('taskboard execution workflow', () => {
     const followup = vi.fn()
     const idleResolvers = []
     const attachSession = vi.fn(async () => {})
+    const detachSession = vi.fn(async () => {})
+    const registeredByPath = new Map()
+    const registeredById = new Map()
+    let workspaceCounter = 0
+    const createWorkspace = vi.fn(async (path, title) => {
+      const workspace = {
+        id: `task-workspace-${++workspaceCounter}`,
+        path,
+        title,
+        sessionIds: [],
+        attachSession,
+        detachSession
+      }
+      registeredByPath.set(path, workspace)
+      registeredById.set(workspace.id, workspace)
+      return workspace
+    })
+    const deleteWorkspace = vi.fn(async id => {
+      const workspace = registeredById.get(id)
+      if (workspace === undefined) return false
+      registeredById.delete(id)
+      registeredByPath.delete(workspace.path)
+      return true
+    })
     const archiveSession = vi.fn(async () => {})
     const mountPreset = vi.fn(async () => {})
     const logError = vi.fn()
@@ -139,7 +163,10 @@ describe('taskboard execution workflow', () => {
       },
       workspaceRegistry: {
         list: () => [{ id: 'workspace-1', path: dataDir, title: '测试项目', sessionIds: [] }],
-        resolveByPath: async () => ({ attachSession, detachSession: vi.fn(async () => {}) }),
+        resolveByPath: async path => registeredByPath.get(path),
+        create: createWorkspace,
+        get: id => registeredById.get(id),
+        delete: deleteWorkspace,
         archiveSession
       },
       agents: { create, get: vi.fn(() => liveAgent) },
@@ -224,7 +251,9 @@ describe('taskboard execution workflow', () => {
     expect(create.mock.calls[0][0].meta.agentPreset).toBe('standard')
     expect(create.mock.calls[0][0].meta.cwd).toBe(`${dataDir}/worktrees/${itemId}`)
     expect(mountPreset).toHaveBeenCalledOnce()
-    expect(attachSession).not.toHaveBeenCalled()
+    expect(createWorkspace).toHaveBeenCalledWith(`${dataDir}/worktrees/${itemId}`, '测试项目 · 实现审核工作流')
+    expect(attachSession).toHaveBeenCalledOnce()
+    expect(runResponse.body.item.taskWorkspace.workspaceId).toBe('task-workspace-1')
     expect(followup).toHaveBeenCalledOnce()
     expect(workspaceMocks.prepare).toHaveBeenCalledOnce()
 
@@ -283,6 +312,8 @@ describe('taskboard execution workflow', () => {
     expect(workspaceMocks.commit).toHaveBeenCalledOnce()
     expect(workspaceMocks.integrate).toHaveBeenCalledOnce()
     expect(archiveSession).toHaveBeenCalledOnce()
+    expect(detachSession).toHaveBeenCalledOnce()
+    expect(deleteWorkspace).toHaveBeenCalledOnce()
 
     const archivedResponse = response()
     await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), archivedResponse)

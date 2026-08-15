@@ -92,15 +92,26 @@ describe('task worktree integration', () => {
     await discardTaskWorkspace(second)
   })
 
-  it('refuses to create an isolated task while the main worktree is dirty', async () => {
+  it('snapshots a dirty main worktree without changing it and later integrates only task changes', async () => {
     const root = await repository()
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-dirty-'))
     tempDirs.push(storage)
     await writeFile(join(root, 'shared.txt'), 'dirty\n')
-    await expect(prepareTaskWorkspace(root, 'task-dirty', storage)).rejects.toEqual(expect.objectContaining({
-      name: 'TaskWorkspacePreconditionError',
-      message: expect.stringContaining('未提交改动')
-    }))
+    const workspace = await prepareTaskWorkspace(root, 'task-dirty', storage)
+
+    expect(await readFile(join(workspace.path, 'shared.txt'), 'utf8')).toBe('dirty\n')
+    expect(await git(root, 'status', '--porcelain')).toContain('shared.txt')
+    await writeFile(join(workspace.path, 'task.txt'), 'task only\n')
+    await commitTaskWorkspace(workspace, 'task-dirty', 'dirty baseline task')
+    expect((await integrateTaskWorkspace(workspace)).kind).toBe('conflicted')
+
+    await git(root, 'add', 'shared.txt')
+    await git(root, 'commit', '-m', 'user saves existing work')
+    expect((await integrateTaskWorkspace(workspace)).kind).toBe('merged')
+    expect(await readFile(join(root, 'shared.txt'), 'utf8')).toBe('dirty\n')
+    expect(await readFile(join(root, 'task.txt'), 'utf8')).toBe('task only\n')
+    expect(await git(root, 'show', '--format=', '--name-only', 'HEAD')).toBe('task.txt')
+    await discardTaskWorkspace(workspace)
   })
 
   it('recovers the deterministic worktree after a host restart during bootstrap', async () => {
