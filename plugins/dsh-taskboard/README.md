@@ -67,6 +67,16 @@ pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard pack:check
 ```
 
+## 一键发版
+
+确认 `plugins/dsh-taskboard/package.json#version` 已是目标版本且 Git 工作区干净，然后在仓库根目录执行：
+
+```bash
+pnpm release:taskboard
+```
+
+脚本会依次执行全量门禁与漏洞审计、生成并校验 tgz、发布 npm、创建本地 `taskboard-v<version>` Git 标签、把当前 DSH web profile 从开发链接切换为 npm 固定版本，最后重启并检查 `/taskboard/boards`。npm 已存在完全相同的版本包时会安全跳过重复发布，可用于继续完成中断后的本地安装步骤。
+
 构建工具 `scripts/tsdown.client.ts` / `scripts/platform.ts` 复用自
 [deepseek-harness](https://github.com/deepseek-ai/deepseek-harness)（MIT），
 产出的 `lib/client.js` 为 `window.__ModuleLoader__.load({ id, factory })` 格式。

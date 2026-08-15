@@ -17,6 +17,7 @@
     "dsh:restart": "node scripts/restart-dsh.mjs restart",
     "dsh:start": "node scripts/restart-dsh.mjs start",
     "dsh:stop": "node scripts/restart-dsh.mjs stop",
+    "release:taskboard": "node scripts/release-taskboard.mjs",
     "lint": "pnpm --recursive --if-present run lint",
     "pack:check": "pnpm --recursive --if-present run pack:check",
     "test": "pnpm --recursive --if-present run test",
