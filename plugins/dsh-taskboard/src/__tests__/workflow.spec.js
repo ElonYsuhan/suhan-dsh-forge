@@ -254,6 +254,17 @@ describe('taskboard execution workflow', () => {
     expect(createWorkspace).toHaveBeenCalledWith(`${dataDir}/worktrees/${itemId}`, '测试项目 · 实现审核工作流')
     expect(attachSession).toHaveBeenCalledOnce()
     expect(runResponse.body.item.taskWorkspace.workspaceId).toBe('task-workspace-1')
+
+    await deleteWorkspace('task-workspace-1')
+    deleteWorkspace.mockClear()
+    createWorkspace.mockClear()
+    attachSession.mockClear()
+    const recoveredRegistrationResponse = response()
+    await route(request('GET', '/taskboard/boards'), recoveredRegistrationResponse)
+    const recoveredRegistrationItem = recoveredRegistrationResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+    expect(createWorkspace).toHaveBeenCalledWith(`${dataDir}/worktrees/${itemId}`, '测试项目 · 实现审核工作流')
+    expect(attachSession).toHaveBeenCalledOnce()
+    expect(recoveredRegistrationItem.taskWorkspace.workspaceId).toBe('task-workspace-2')
     expect(followup).toHaveBeenCalledOnce()
     expect(workspaceMocks.prepare).toHaveBeenCalledOnce()
 

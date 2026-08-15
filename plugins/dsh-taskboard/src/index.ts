@@ -183,6 +183,29 @@ async function removeTaskWorkspaceRegistration (
   if (errors.length > 1) throw new AggregateError(errors, 'task workspace registration cleanup failed')
 }
 
+/** 重启或旧版本升级后，为仍在活动的隔离会话恢复真实 Workspace 归属。 */
+async function recoverTaskWorkspaceRegistrations (
+  ctx: Context,
+  file: BoardsFile,
+  report: (error: unknown) => void
+): Promise<void> {
+  let changed = false
+  for (const board of Object.values(file.boards)) {
+    for (const item of board.items) {
+      if (item.archived || item.sessionId === undefined || item.taskWorkspace === undefined) continue
+      if (item.taskWorkspace.workspaceId !== undefined &&
+          ctx.workspaceRegistry.get(WorkspaceId(item.taskWorkspace.workspaceId)) !== undefined) continue
+      try {
+        await attachTaskSession(ctx, item.taskWorkspace, item.sessionId, `${board.projectTitle} · ${item.title}`)
+        changed = true
+      } catch (error) {
+        report(error)
+      }
+    }
+  }
+  if (changed) await saveBoards(file)
+}
+
 /** 确保某项目存在看板（同步 workspace 注册表） */
 function ensureBoard (file: BoardsFile, key: string, path: string, title: string): Board {
   let board = file.boards[key]
@@ -563,6 +586,12 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
 export function apply (ctx: Context): void {
   const lifecycle: LifecycleState = { active: true }
   const logger = ctx.logger('dsh-taskboard')
+  const reportError = (error: unknown): string => {
+    const errorId = randomUUID().slice(0, 8)
+    logger.error('request failed [%s]', errorId, error)
+    process.stderr.write(`[dsh-taskboard] request failed [${errorId}]: ${diagnosticError(error)}\n`)
+    return errorId
+  }
   cache = null
 
   ctx.effect(() => async () => {
@@ -687,6 +716,7 @@ export function apply (ctx: Context): void {
         // ── 项目看板列表 ─────────────────────────────────────────
         if (parts[1] === 'boards' && parts.length === 2 && method === 'GET') {
           const file = await loadBoards()
+          await recoverTaskWorkspaceRegistrations(ctx, file, error => { reportError(error) })
           // 同步 workspace 注册表：已注册项目自动获得看板
           const workspaces = ctx.workspaceRegistry.list().filter(w => !isTaskWorkspacePath(w.path)).map(w => ({
             id: w.id, path: w.path, title: w.title, sessionCount: w.sessionIds.length
@@ -1087,9 +1117,7 @@ export function apply (ctx: Context): void {
           send(res, 503, { error: '看板数据无法安全读取；原文件和备份均已保留，请检查存储文件。' })
           return
         }
-        const errorId = randomUUID().slice(0, 8)
-        logger.error('request failed [%s]', errorId, err)
-        process.stderr.write(`[dsh-taskboard] request failed [${errorId}]: ${diagnosticError(err)}\n`)
+        const errorId = reportError(err)
         send(res, 500, { error: `任务看板内部错误（诊断编号：${errorId}）` })
       }
     },
