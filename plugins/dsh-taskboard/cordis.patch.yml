@@ -1,0 +1,4 @@
+# DSH bundle patch：将任务看板 Host + Client 插件挂载到 web profile。
+- insert:
+    - id: taskboard
+      name: '@suhan-dsh/taskboard'

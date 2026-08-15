@@ -1,0 +1,274 @@
+/* 需求看板工作台：侧栏入口 + 右侧主内容视图。 */
+.shell {
+  --taskboard-sidebar-width: 280px;
+  --taskboard-launcher-top: 120px;
+  position: absolute;
+  inset: 0;
+  pointer-events: none !important;
+}
+
+.launcher {
+  position: absolute;
+  left: 12px;
+  top: var(--taskboard-launcher-top);
+  z-index: 2;
+  width: calc(var(--taskboard-sidebar-width) - 24px);
+  height: 36px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-button-elevated-fill);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color .15s ease, background .15s ease, border-color .15s ease;
+}
+
+/* 在 DSH 原生侧栏流中为绝对定位的看板入口预留真实空间。 */
+.sidebarSpacer {
+  flex: 0 0 44px;
+  height: 44px;
+  pointer-events: none;
+}
+
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+.launcher:hover {
+  background: var(--dsw-alias-button-floating-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.launcherActive {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-brand-primary);
+}
+.launcherIcon {
+  font-size: 17px;
+  line-height: 1;
+}
+.launcherText {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shell[data-sidebar-collapsed] .launcher {
+  left: 10px;
+  width: 36px;
+  padding: 0;
+}
+.shell[data-sidebar-collapsed] .launcherText {
+  display: none;
+}
+
+.workspace {
+  position: absolute;
+  inset: 0 0 0 var(--taskboard-sidebar-width);
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dsw-alias-bg-base);
+  overflow: hidden;
+  pointer-events: auto;
+  animation: taskboard-in .16s ease;
+}
+@keyframes taskboard-in {
+  from { opacity: 0; transform: translateY(4px); }
+}
+
+.modalHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.headLeft { min-width: 0; }
+.modalTitle {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.modalHint {
+  margin-top: 2px;
+  display: block;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.headRight {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.projectSelect {
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+  max-width: 200px;
+}
+.projectSelect:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+
+.headBtn {
+  padding: 6px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+.headBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.closeBtn {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+.closeBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+
+.error {
+  margin: 10px 18px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 13px;
+}
+.notice {
+  margin: 10px 18px 0;
+  padding: 8px 12px;
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  border-radius: 8px;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 13px;
+}
+
+.modalBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.boardWrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 14px;
+}
+.emptyAdd {
+  display: flex;
+  gap: 8px;
+  width: min(460px, 80%);
+}
+.pathInput {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 12px;
+}
+.pathInput:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.addBtn {
+  padding: 8px 16px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-button-primary-dimmed);
+  font-size: 13px;
+  cursor: pointer;
+}
+.addBtn:hover { background: var(--dsw-alias-button-primary-hover); }
+
+/* 添加项目弹窗 */
+.addPanel {
+  width: min(420px, 90vw);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  padding: 16px 18px;
+}
+.addTitle {
+  margin: 0 0 12px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.addFoot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+.cancelBtn,
+.saveBtn {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cancelBtn {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+}
+.cancelBtn:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.saveBtn {
+  border: 1px solid transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-button-primary-dimmed);
+}
+.saveBtn:hover { background: var(--dsw-alias-button-primary-hover); }
+.saveBtn:disabled { opacity: .5; cursor: not-allowed; }

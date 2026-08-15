@@ -1,0 +1,305 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+
+const checkpointMocks = vi.hoisted(() => ({
+  capture: vi.fn(async cwd => ({
+    kind: 'git-tree',
+    root: cwd,
+    indexTree: 'index-tree',
+    worktreeTree: 'worktree-tree',
+    capturedAt: '2026-08-15T00:00:00.000Z'
+  })),
+  restore: vi.fn(async () => {})
+}))
+
+vi.mock('@deepseek-ai/dsh-agent', async importOriginal => ({
+  ...await importOriginal(),
+  installModelSelection: vi.fn()
+}))
+
+vi.mock('../gitCheckpoint.ts', () => ({
+  captureGitCheckpoint: checkpointMocks.capture,
+  restoreGitCheckpoint: checkpointMocks.restore
+}))
+
+let apply
+let dataDir
+
+beforeAll(async () => {
+  dataDir = await mkdtemp(join(tmpdir(), 'dsh-taskboard-test-'))
+  process.env.DSH_TASKBOARD_DATA = join(dataDir, 'boards.json')
+  ;({ apply } = await import('../index.ts'))
+})
+
+afterAll(async () => {
+  delete process.env.DSH_TASKBOARD_DATA
+  await rm(dataDir, { recursive: true, force: true })
+})
+
+function request (method, url, body) {
+  const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
+  return {
+    method,
+    url,
+    async * [Symbol.asyncIterator] () {
+      yield * chunks
+    }
+  }
+}
+
+function response () {
+  return {
+    status: 0,
+    body: undefined,
+    writeHead (status) {
+      this.status = status
+    },
+    end (body) {
+      this.body = JSON.parse(body)
+    }
+  }
+}
+
+describe('taskboard execution workflow', () => {
+  it('creates a complete Agent, attaches it once, and rejects concurrent execution', async () => {
+    let route
+    let taskTool
+    let liveAgent
+    const followup = vi.fn()
+    const idleResolvers = []
+    const attachSession = vi.fn(async () => {})
+    const archiveSession = vi.fn(async () => {})
+    const mountPreset = vi.fn(async () => {})
+    const create = vi.fn(async options => {
+      await options.setup({})
+      let resolveAgentIdle
+      const agentIdle = new Promise(resolve => {
+        resolveAgentIdle = resolve
+      })
+      idleResolvers.push(resolveAgentIdle)
+      liveAgent = {
+        id: options.sessionId,
+        session: { header: { agentPreset: options.meta.agentPreset } },
+        followup,
+        whenIdle: vi.fn(() => agentIdle),
+        cancel: vi.fn(() => resolveAgentIdle())
+      }
+      return { agent: liveAgent, dispose: vi.fn(async () => {}) }
+    })
+    const ctx = {
+      effect (factory) {
+        factory()
+      },
+      get (name) {
+        if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'test', model: 'test-model' }) }
+        if (name === 'agentPresets') return { resolve: async () => ({ id: 'standard' }), mount: mountPreset }
+        return undefined
+      },
+      tools: {
+        register (tool) {
+          taskTool = tool
+          return () => {}
+        }
+      },
+      webServer: {
+        register (registration) {
+          route = registration.handler
+          return () => {}
+        }
+      },
+      workspaceRegistry: {
+        list: () => [{ id: 'workspace-1', path: dataDir, title: '测试项目', sessionIds: [] }],
+        resolveByPath: async () => ({ attachSession, detachSession: vi.fn(async () => {}) }),
+        archiveSession
+      },
+      agents: { create, get: vi.fn(() => liveAgent) },
+      sessions: { flush: vi.fn(async () => {}) }
+    }
+    apply(ctx)
+
+    const boardsResponse = response()
+    await route(request('GET', '/taskboard/boards'), boardsResponse)
+    expect(boardsResponse.status).toBe(200)
+
+    const createResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'story',
+      title: '实现审核工作流',
+      desc: '逐环节审核',
+      priority: 'high',
+      labels: [],
+      status: 'todo',
+      executionMode: 'review'
+    }), createResponse)
+    const itemId = createResponse.body.item.id
+
+    const runResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), runResponse)
+    expect(runResponse.status).toBe(200)
+    expect(runResponse.body.item.executionState).toBe('running')
+    expect(runResponse.body.item.status).toBe('analysis')
+    expect(runResponse.body.item.agentPreset).toBe('standard')
+    expect(create).toHaveBeenCalledOnce()
+    expect(create.mock.calls[0][0].agentOptions).toEqual({ provider: 'test', model: 'test-model' })
+    expect(create.mock.calls[0][0].meta.agentPreset).toBe('standard')
+    expect(mountPreset).toHaveBeenCalledOnce()
+    expect(attachSession).toHaveBeenCalledOnce()
+    expect(followup).toHaveBeenCalledOnce()
+
+    const repeatedResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), repeatedResponse)
+    expect(repeatedResponse.status).toBe(409)
+    expect(create).toHaveBeenCalledOnce()
+
+    const toolResult = await taskTool.execute({
+      outcome: 'stage_complete',
+      summary: '分析方案可供审核'
+    }, { agent: liveAgent })
+    expect(toolResult).toContain('会话完全停稳后')
+
+    const runningResponse = response()
+    await route(request('GET', '/taskboard/boards'), runningResponse)
+    const runningItem = runningResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+    expect(runningItem.executionState).toBe('running')
+    expect(runningItem.reviewSummary).toBeUndefined()
+
+    const prematureApproveResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/approve`), prematureApproveResponse)
+    expect(prematureApproveResponse.status).toBe(409)
+
+    idleResolvers.shift()()
+    await vi.waitFor(async () => {
+      const reviewResponse = response()
+      await route(request('GET', '/taskboard/boards'), reviewResponse)
+      const reviewingItem = reviewResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+      expect(reviewingItem.executionState).toBe('awaiting-review')
+      expect(reviewingItem.reviewSummary).toBe('分析方案可供审核')
+    })
+
+    const reviewResponse = response()
+    await route(request('GET', '/taskboard/boards'), reviewResponse)
+    const reviewingItem = reviewResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+    expect(reviewingItem.executionState).toBe('awaiting-review')
+    expect(reviewingItem.reviewSummary).toBe('分析方案可供审核')
+
+    const approveResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/approve`), approveResponse)
+    expect(approveResponse.status).toBe(200)
+    expect(approveResponse.body.item.status).toBe('scheduled')
+    expect(approveResponse.body.item.executionState).toBe('running')
+    expect(followup).toHaveBeenCalledTimes(2)
+
+    await taskTool.execute({
+      outcome: 'delivery_ready',
+      summary: '代码与测试均已准备好'
+    }, { agent: liveAgent })
+    const deliveryResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/confirm-delivery`), deliveryResponse)
+    expect(deliveryResponse.body.item.executionState).toBe('committing')
+
+    const delivered = await taskTool.execute({
+      outcome: 'delivered',
+      summary: '质量检查通过',
+      commitRef: 'abc1234'
+    }, { agent: liveAgent })
+    expect(delivered).toContain('abc1234')
+    expect(archiveSession).toHaveBeenCalledOnce()
+
+    const archivedResponse = response()
+    await route(request('GET', '/taskboard/boards'), archivedResponse)
+    const archivedItem = archivedResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+    expect(archivedItem.archived).toBe(true)
+    expect(archivedItem.commitRef).toBe('abc1234')
+
+    const createAutoResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '自动任务不可在同一轮空转',
+      desc: '每轮只结算一个环节',
+      priority: 'medium',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), createAutoResponse)
+    const autoItemId = createAutoResponse.body.item.id
+
+    const runAutoResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${autoItemId}/run`), runAutoResponse)
+    const autoAgent = liveAgent
+    expect(runAutoResponse.body.item.status).toBe('analysis')
+
+    const firstAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '分析完成' }, { agent: autoAgent })
+    const duplicateAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '重复调用' }, { agent: autoAgent })
+    expect(firstAdvance).toContain('会话完全停稳后才会流转')
+    expect(duplicateAdvance).toContain('会话完全停稳后才会流转')
+
+    const autoRunningResponse = response()
+    await route(request('GET', '/taskboard/boards'), autoRunningResponse)
+    const autoRunningItem = autoRunningResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
+    expect(autoRunningItem.status).toBe('analysis')
+    expect(autoRunningItem.executionState).toBe('running')
+
+    idleResolvers.shift()()
+    await vi.waitFor(async () => {
+      const autoAdvancedResponse = response()
+      await route(request('GET', '/taskboard/boards'), autoAdvancedResponse)
+      const autoAdvancedItem = autoAdvancedResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
+      expect(autoAdvancedItem.status).toBe('scheduled')
+      expect(autoAdvancedItem.executionState).toBe('running')
+      expect(followup).toHaveBeenCalledTimes(5)
+    })
+
+    const forceCloseResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${autoItemId}/force-close`), forceCloseResponse)
+    expect(forceCloseResponse.status).toBe(200)
+    expect(forceCloseResponse.body.item.archived).toBe(true)
+    expect(autoAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(checkpointMocks.restore).toHaveBeenCalledOnce()
+    expect(archiveSession).toHaveBeenCalledTimes(2)
+
+    const createDeleteResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '执行中也能删除',
+      desc: '删除前停止并回退',
+      priority: 'medium',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), createDeleteResponse)
+    const deleteItemId = createDeleteResponse.body.item.id
+
+    const runDeleteResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${deleteItemId}/run`), runDeleteResponse)
+    const deleteAgent = liveAgent
+    expect(runDeleteResponse.body.item.executionState).toBe('running')
+
+    const deleteResponse = response()
+    await route(request('DELETE', `/taskboard/boards/workspace-1/items/${deleteItemId}`), deleteResponse)
+    expect(deleteResponse.status).toBe(200)
+    expect(deleteResponse.body.rolledBack).toBe(true)
+    expect(deleteResponse.body.item.archived).toBe(true)
+    expect(deleteAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
+    expect(checkpointMocks.restore).toHaveBeenCalledTimes(2)
+    expect(archiveSession).toHaveBeenCalledTimes(3)
+
+    const createPlainResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '未执行任务直接删除',
+      desc: '',
+      priority: 'low',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), createPlainResponse)
+    const plainItemId = createPlainResponse.body.item.id
+    const deletePlainResponse = response()
+    await route(request('DELETE', `/taskboard/boards/workspace-1/items/${plainItemId}`), deletePlainResponse)
+    expect(deletePlainResponse.status).toBe(200)
+    expect(deletePlainResponse.body.rolledBack).toBe(false)
+    expect(deletePlainResponse.body.item.archived).toBe(true)
+  })
+})

@@ -1,0 +1,16 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+.pnpm-store/
+lib/
+dist/
+coverage/
+artifacts/
+*.tgz
+*.tsbuildinfo
+
+# 插件运行数据不得提交或进入发布包。
+plugins/*/datas/*.json
+!plugins/*/datas/*.example.json

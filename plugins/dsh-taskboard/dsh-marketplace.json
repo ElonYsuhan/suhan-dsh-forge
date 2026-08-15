@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "displayName": {
+    "zh-CN": "DSH 需求任务看板",
+    "en-US": "DSH Taskboard"
+  },
+  "summary": {
+    "zh-CN": "面向 DSH Agent 会话的项目需求追溯、分阶段执行、人工审核与交付看板。",
+    "en-US": "Project traceability, staged agent execution, human review, and delivery workflow for DSH sessions."
+  },
+  "categories": ["workflow", "project-management"],
+  "tags": ["taskboard", "workflow", "agent", "review", "任务看板", "需求追溯"],
+  "compatibility": {
+    "dsh": ">=0.1.0-rc.6 <0.2.0",
+    "node": "^22.19.0 || >=24.0.0",
+    "profiles": ["web"]
+  },
+  "permissions": {
+    "network": ["DSH local web server routes under /taskboard"],
+    "filesystem": ["Read and write taskboard data", "Capture and restore Git worktree checkpoints"],
+    "process": ["Execute Git commands in registered workspaces"],
+    "secrets": []
+  },
+  "quality": {
+    "unitTests": true,
+    "contractTests": true,
+    "browserTests": false
+  },
+  "status": "internal"
+}

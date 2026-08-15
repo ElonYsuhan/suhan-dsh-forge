@@ -1,0 +1,519 @@
+/**
+ * 需求看板工作台，`shell.overlay` 单条目：左缘按钮 + 中间工作台浮层。
+ * 工作台 = 项目切换 + 多列看板 + 工作项详情（需求追溯 + 会话联动）。
+ */
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
+import { addProject, approveItem, confirmDelivery, createItem, deleteItem, fetchBoards, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { Board } from './Board.tsx'
+import { ConfirmDialog } from './ConfirmDialog.tsx'
+import { ItemDetail } from './ItemDetail.tsx'
+import { ItemEditor } from './ItemEditor.tsx'
+import { SettingsEditor } from './SettingsEditor.tsx'
+import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
+import css from './TaskboardLauncher.module.css'
+
+/** 注入面：会话联动（浏览器半 sessions 服务的 open） */
+export interface TaskboardInjected {
+  openSession: (sessionId: string) => void
+  /** 当前打开的 DSH 会话，用于看板与会话主视图互斥。 */
+  currentSessionId: () => string | undefined
+  /** 订阅 DSH 会话列表及当前会话变化。 */
+  subscribeSessions: (listener: () => void) => () => void
+  /** 当前 DSH 会话所属工作区，用于首次打开时自动选中。 */
+  currentProjectPath: () => string | undefined
+}
+
+/** 组合 props：overlay 条目 + 注入面 */
+export type TaskboardLauncherProps = ComposedProps<'shell.overlay', 'taskboard', never, undefined, TaskboardInjected>
+
+/** 编辑器席位 */
+interface EditorSeat {
+  item: WorkItem | null
+  defaultStatus?: string | undefined
+}
+
+/** 本地保存的项目选择 */
+const CURRENT_KEY = 'suhan-dsh-taskboard-current'
+
+/**
+ * Render the workspace.
+ * @param props - injected openSession + composed slot props.
+ */
+export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSessions, currentProjectPath }: TaskboardLauncherProps) {
+  const [open, setOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const shellRef = useRef<HTMLDivElement>(null)
+  const [data, setData] = useState<BoardsResponse | null>(null)
+  const [currentKey, setCurrentKey] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [editor, setEditor] = useState<EditorSeat | null>(null)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [addOpen, setAddOpen] = useState(false)
+  const [addPath, setAddPath] = useState('')
+  const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null)
+  const [forceCloseTarget, setForceCloseTarget] = useState<WorkItem | null>(null)
+  const [deliveryTarget, setDeliveryTarget] = useState<WorkItem | null>(null)
+  const [running, setRunning] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
+
+  const closeAll = useCallback((): void => {
+    setOpen(false)
+    setSelectedId(null)
+    setEditor(null)
+    setSettingsOpen(false)
+    setAddOpen(false)
+    setDeleteTarget(null)
+    setForceCloseTarget(null)
+    setError(null)
+    setNotice(null)
+  }, [])
+
+  /** 跟随 DSH 可拖拽/可折叠侧栏，让主看板始终只占右侧内容区。 */
+  useEffect(() => {
+    const shell = shellRef.current
+    const frame = shell?.closest('[data-shell-overlay]')?.parentElement
+    const sidebar = frame?.firstElementChild
+    if (shell === null || !(sidebar instanceof HTMLElement)) return
+
+    const newSessionButton = [...sidebar.querySelectorAll<HTMLButtonElement>('button[aria-label="新建会话"]')]
+      .find(button => button.getBoundingClientRect().height > 30)
+    const existingSpacer = sidebar.querySelector<HTMLElement>('[data-taskboard-launcher-spacer]')
+    const spacer = existingSpacer ?? document.createElement('div')
+    const ownsSpacer = existingSpacer === null
+    spacer.className = css.sidebarSpacer ?? ''
+    spacer.dataset.taskboardLauncherSpacer = ''
+    spacer.setAttribute('aria-hidden', 'true')
+    if (ownsSpacer && newSessionButton !== undefined) newSessionButton.insertAdjacentElement('afterend', spacer)
+
+    const syncSidebar = (): void => {
+      const width = sidebar.getBoundingClientRect().width
+      if (width <= 0) return
+      shell.style.setProperty('--taskboard-sidebar-width', `${width}px`)
+      if (newSessionButton !== undefined) {
+        const shellTop = shell.getBoundingClientRect().top
+        const buttonBottom = newSessionButton.getBoundingClientRect().bottom
+        shell.style.setProperty('--taskboard-launcher-top', `${buttonBottom - shellTop + 8}px`)
+      }
+      setSidebarCollapsed(width <= 60)
+    }
+
+    syncSidebar()
+    const observer = new ResizeObserver(syncSidebar)
+    observer.observe(sidebar)
+    if (newSessionButton !== undefined) observer.observe(newSessionButton)
+    return () => {
+      observer.disconnect()
+      if (ownsSpacer) spacer.remove()
+    }
+  }, [])
+
+  /** 原生会话发生切换，或直接点击当前会话行时，退出看板回到会话主视图。 */
+  useEffect(() => {
+    if (!open) return
+    const openedFrom = currentSessionId()
+    const unsubscribe = subscribeSessions(() => {
+      if (currentSessionId() !== openedFrom) closeAll()
+    })
+    const sidebar = shellRef.current?.closest('[data-shell-overlay]')?.parentElement?.firstElementChild
+    const handleSidebarClick = (event: Event): void => {
+      const target = event.target
+      if (!(sidebar instanceof HTMLElement) || !(target instanceof Element)) return
+      const sessionRow = target.closest('[role="treeitem"][aria-selected]')
+      if (sessionRow !== null && sidebar.contains(sessionRow)) closeAll()
+    }
+    document.addEventListener('click', handleSidebarClick, true)
+    return () => {
+      unsubscribe()
+      document.removeEventListener('click', handleSidebarClick, true)
+    }
+  }, [closeAll, currentSessionId, open, subscribeSessions])
+
+  /** 加载全量数据；选定项目（记忆上次选择） */
+  const load = useCallback(async (): Promise<void> => {
+    try {
+      const res = await fetchBoards()
+      setData(res)
+      const keys = Object.keys(res.boards)
+      const remembered = window.localStorage.getItem(CURRENT_KEY)
+      const activePath = currentProjectPath()
+      const activeKey = activePath === undefined
+        ? undefined
+        : keys.find(candidate => res.boards[candidate]?.projectPath === activePath)
+      const fallback = activeKey ?? (remembered !== null && keys.includes(remembered) ? remembered : keys[0]) ?? null
+      setCurrentKey(prev => prev !== null && keys.includes(prev) ? prev : fallback)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }, [currentProjectPath])
+
+  useEffect(() => {
+    if (!open) return
+    load()
+    const timer = window.setInterval(() => { load() }, 3000)
+    return () => window.clearInterval(timer)
+  }, [open, load])
+
+  const board: BoardModel | null = data !== null && currentKey !== null
+    ? (data.boards[currentKey] ?? null)
+    : null
+
+  /** 当前选中工作项（从最新数据派生，保证详情即时） */
+  const selected: WorkItem | null = useMemo(() => {
+    if (selectedId === null || board === null) return null
+    return board.items.find(i => i.id === selectedId && !i.archived) ?? null
+  }, [selectedId, board])
+
+  /** 局部更新：看板里某项不存在则追加（新建），存在则替换（更新/流转/执行） */
+  const patchBoardItem = useCallback((key: string, updated: WorkItem): void => {
+    setData(prev => {
+      if (prev === null) return prev
+      const target = prev.boards[key]
+      if (target === undefined) return prev
+      const exists = target.items.some(i => i.id === updated.id)
+      return {
+        ...prev,
+        boards: {
+          ...prev.boards,
+          [key]: {
+            ...target,
+            items: exists
+              ? target.items.map(i => i.id === updated.id ? updated : i)
+              : [...target.items, updated],
+            updatedAt: updated.updatedAt
+          }
+        }
+      }
+    })
+  }, [])
+
+  const handleSelectProject = (key: string): void => {
+    setCurrentKey(key)
+    setSelectedId(null)
+    window.localStorage.setItem(CURRENT_KEY, key)
+  }
+
+  const handleAddProject = async (): Promise<void> => {
+    const path = addPath.trim()
+    if (path === '') return
+    try {
+      const { workspace } = await addProject(path)
+      await load()
+      setCurrentKey(workspace.id)
+      setAddOpen(false)
+      setAddPath('')
+      window.localStorage.setItem(CURRENT_KEY, workspace.id)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleSaveItem = async (input: ItemInput): Promise<void> => {
+    if (board === null || currentKey === null) return
+    try {
+      const updated = editor?.item === null || editor?.item === undefined
+        ? await createItem(currentKey, input)
+        : await updateItem(currentKey, editor.item.id, input)
+      patchBoardItem(currentKey, updated)
+      setSelectedId(updated.id)
+      setEditor(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleMove = async (itemId: string, status: string): Promise<void> => {
+    if (board === null || currentKey === null) return
+    try {
+      const updated = await updateItem(currentKey, itemId, { status })
+      patchBoardItem(currentKey, updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleDelete = async (): Promise<void> => {
+    if (running || board === null || currentKey === null || deleteTarget === null) return
+    setRunning(true)
+    try {
+      const result = await deleteItem(currentKey, deleteTarget.id)
+      setData(prev => {
+        if (prev === null) return prev
+        const target = prev.boards[currentKey]
+        if (target === undefined) return prev
+        return {
+          ...prev,
+          boards: {
+            ...prev.boards,
+            [currentKey]: { ...target, items: target.items.filter(i => i.id !== deleteTarget.id) }
+          }
+        }
+      })
+      setDeleteTarget(null)
+      setSelectedId(null)
+      setNotice(result.warning ?? (result.rolledBack
+        ? '任务已停止，执行产生的改动已回退；会话已归档，卡片已删除'
+        : '卡片已删除'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const handleForceClose = async (): Promise<void> => {
+    if (running || board === null || currentKey === null || forceCloseTarget === null) return
+    setRunning(true)
+    try {
+      await forceCloseItem(currentKey, forceCloseTarget.id)
+      setData(prev => {
+        if (prev === null) return prev
+        const target = prev.boards[currentKey]
+        if (target === undefined) return prev
+        return {
+          ...prev,
+          boards: {
+            ...prev.boards,
+            [currentKey]: { ...target, items: target.items.filter(i => i.id !== forceCloseTarget.id) }
+          }
+        }
+      })
+      setForceCloseTarget(null)
+      setSelectedId(null)
+      setNotice('任务已强制关闭；Agent 已停止，工作区改动已回退，会话和卡片已归档')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const handleRun = async (): Promise<void> => {
+    if (board === null || currentKey === null || selected === null) return
+    setRunning(true)
+    try {
+      const updated = await runItem(currentKey, selected.id)
+      setNotice(`已下发到会话：${updated.sessionId ?? ''}（可随时打开查看）`)
+      patchBoardItem(currentKey, updated)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const handleExecutionAction = async (action: 'approve' | 'reject' | 'confirm-delivery'): Promise<void> => {
+    if (currentKey === null || selected === null) return
+    setRunning(true)
+    try {
+      const updated = action === 'approve'
+        ? await approveItem(currentKey, selected.id)
+        : action === 'reject'
+          ? await rejectItem(currentKey, selected.id)
+          : await confirmDelivery(currentKey, selected.id)
+      patchBoardItem(currentKey, updated)
+      setDeliveryTarget(null)
+      setNotice(action === 'approve'
+        ? '已批准，Agent 将在原会话继续下一环节'
+        : action === 'reject'
+          ? '已退回，Agent 将在原会话修订当前环节'
+          : '已确认交付，Agent 正在执行最终检查并提交代码')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const handleSaveSettings = async (settings: { columns: BoardModel['columns']; itemTypes: BoardModel['itemTypes'] }): Promise<void> => {
+    if (board === null || currentKey === null) return
+    try {
+      const updatedBoard = await saveSettings(currentKey, settings)
+      setData(prev => prev === null
+        ? prev
+        : { ...prev, boards: { ...prev.boards, [currentKey]: updatedBoard } })
+      setSettingsOpen(false)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return (
+    <div
+      ref={shellRef}
+      className={css.shell}
+      data-sidebar-collapsed={sidebarCollapsed || undefined}
+    >
+      <button
+        type='button'
+        className={`${css.launcher} ${open ? css.launcherActive : ''}`}
+        onClick={() => setOpen(o => !o)}
+        aria-label='需求看板'
+        aria-expanded={open}
+        data-testid='taskboard-launcher'
+      >
+        <span className={css.launcherIcon} aria-hidden='true'>▦</span>
+        <span className={css.launcherText}>看板</span>
+      </button>
+
+      {open && (
+        <main className={css.workspace} aria-label='需求看板工作台' data-testid='taskboard-workspace'>
+          <header className={css.modalHead}>
+            <div className={css.headLeft}>
+              <h2 className={css.modalTitle}>需求看板</h2>
+              <span className={css.modalHint}>项目级需求追溯 · 工作项可下发到聊天会话执行</span>
+            </div>
+            <div className={css.headRight}>
+              {data !== null && data.workspaces.length > 0 && (
+                <select
+                  className={css.projectSelect}
+                  value={currentKey ?? ''}
+                  onChange={ev => handleSelectProject(ev.target.value)}
+                  aria-label='切换项目'
+                  data-testid='taskboard-project-select'
+                >
+                  {data.workspaces.map(w => (
+                    <option key={w.id} value={w.id}>{w.title}</option>
+                  ))}
+                </select>
+              )}
+              <button type='button' className={css.headBtn} onClick={() => setAddOpen(true)}>＋ 添加项目</button>
+              {board !== null && (
+                <>
+                  <button type='button' className={css.headBtn} onClick={() => setEditor({ item: null, defaultStatus: board.columns[0]?.id })}>＋ 新建工作项</button>
+                  <button type='button' className={css.headBtn} onClick={() => setSettingsOpen(true)}>看板设置</button>
+                </>
+              )}
+              <button type='button' className={css.closeBtn} onClick={closeAll} aria-label='关闭看板' data-testid='taskboard-close-btn'>✕</button>
+            </div>
+          </header>
+
+          {error !== null && <div className={css.error} role='alert'>{error}</div>}
+          {notice !== null && <div className={css.notice} role='status'>{notice}</div>}
+
+          <div className={css.modalBody}>
+            {board === null
+              ? (
+                <div className={css.empty}>
+                  <p>还没有项目看板。添加一个工作区项目（目录路径）开始。</p>
+                  <div className={css.emptyAdd}>
+                    <input
+                      className={css.pathInput}
+                      value={addPath}
+                      onChange={ev => setAddPath(ev.target.value)}
+                      placeholder='/abs/path/to/project'
+                    />
+                    <button type='button' className={css.addBtn} onClick={handleAddProject}>添加项目</button>
+                  </div>
+                </div>
+                )
+              : (
+                <div className={css.boardWrap}>
+                  <Board
+                    board={board}
+                    onMove={(id, status) => handleMove(id, status)}
+                    onSelect={item => setSelectedId(item.id)}
+                    onAdd={status => setEditor({ item: null, defaultStatus: status })}
+                  />
+                  {selected !== null && (
+                    <ItemDetail
+                      item={selected}
+                      board={board}
+                      typeDef={board.itemTypes.find(t => t.key === selected.type)}
+                      parentTitle={selected.parentId === undefined ? undefined : board.items.find(i => i.id === selected.parentId)?.title}
+                      busy={running}
+                      onClose={() => setSelectedId(null)}
+                      onEdit={() => setEditor({ item: selected })}
+                      onDelete={() => setDeleteTarget(selected)}
+                      onRun={() => handleRun()}
+                      onApprove={() => handleExecutionAction('approve')}
+                      onReject={() => handleExecutionAction('reject')}
+                      onConfirmDelivery={() => setDeliveryTarget(selected)}
+                      onForceClose={() => setForceCloseTarget(selected)}
+                      onOpenSession={sessionId => {
+                        closeAll()
+                        openSession(sessionId)
+                      }}
+                    />
+                  )}
+                </div>
+                )}
+          </div>
+        </main>
+      )}
+
+      {editor !== null && board !== null && (
+        <ItemEditor
+          item={editor.item}
+          board={board}
+          defaultStatus={editor.defaultStatus}
+          onCancel={() => setEditor(null)}
+          onSave={input => handleSaveItem(input)}
+        />
+      )}
+
+      {settingsOpen && board !== null && (
+        <SettingsEditor
+          board={board}
+          onCancel={() => setSettingsOpen(false)}
+          onSave={settings => handleSaveSettings(settings)}
+        />
+      )}
+
+      {addOpen && (
+        <div className={css.mask} onClick={() => setAddOpen(false)}>
+          <div className={css.addPanel} role='dialog' aria-label='添加项目' onClick={ev => ev.stopPropagation()}>
+            <h3 className={css.addTitle}>添加项目</h3>
+            <input
+              className={css.pathInput}
+              value={addPath}
+              onChange={ev => setAddPath(ev.target.value)}
+              placeholder='工作区目录绝对路径'
+              autoFocus
+              data-testid='taskboard-add-path'
+            />
+            <footer className={css.addFoot}>
+              <button type='button' className={css.cancelBtn} onClick={() => setAddOpen(false)}>取消</button>
+              <button type='button' className={css.saveBtn} onClick={() => handleAddProject()} disabled={addPath.trim() === ''}>添加</button>
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget !== null && (
+        <ConfirmDialog
+          title='删除工作项'
+          message={deleteTarget.sessionId === undefined
+            ? `确定删除「${deleteTarget.title}」吗？卡片将从看板移除。`
+            : deleteTarget.gitCheckpoint === undefined
+              ? `确定删除「${deleteTarget.title}」吗？这是没有回退基线的旧任务：系统会停止 Agent、归档会话并删除卡片，但无法自动撤销旧任务已经产生的文件改动。`
+              : `确定删除「${deleteTarget.title}」吗？系统会立即停止 Agent，把工作区和暂存区恢复到任务首次执行前，再归档会话并删除卡片。`}
+          confirmLabel={running ? '处理中…' : '删除'}
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => handleDelete()}
+        />
+      )}
+
+      {deliveryTarget !== null && (
+        <ConfirmDialog
+          title='确认最终交付'
+          message={`确认「${deliveryTarget.title}」的交付物符合要求吗？确认后 Agent 将运行最终检查，只提交本任务代码；提交成功后会话和卡片会自动归档。`}
+          confirmLabel='确认并提交'
+          onCancel={() => setDeliveryTarget(null)}
+          onConfirm={() => handleExecutionAction('confirm-delivery')}
+        />
+      )}
+
+      {forceCloseTarget !== null && (
+        <ConfirmDialog
+          title='强制关闭任务并回退'
+          message={`确定强制关闭「${forceCloseTarget.title}」吗？系统会立即停止 Agent，并把 Git 工作区和暂存区恢复到该任务首次执行前的状态；任务启动后产生的未提交改动将被撤销。成功后会话和卡片会归档。`}
+          confirmLabel={running ? '处理中…' : '强制关闭并回退'}
+          onCancel={() => setForceCloseTarget(null)}
+          onConfirm={() => handleForceClose()}
+        />
+      )}
+    </div>
+  )
+}

@@ -1,0 +1,76 @@
+/* 看板：按自定义环节渲染的列。 */
+.board {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(230px, 1fr);
+  gap: 12px;
+  padding: 16px 20px 20px;
+  overflow-x: auto;
+}
+
+.column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
+  transition: border-color .12s ease, background .12s ease;
+}
+.columnDragOver {
+  border-color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-interactive-bg-hover-accent);
+}
+
+.columnHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px 8px;
+}
+.columnTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.columnCount {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.columnBody {
+  flex: 1;
+  min-height: 60px;
+  padding: 0 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.columnEmpty {
+  padding: 18px 8px;
+  text-align: center;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 10px;
+}
+
+.addBtn {
+  margin: 8px 10px 10px;
+  padding: 7px 0;
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .12s ease, border-color .12s ease;
+}
+.addBtn:hover {
+  color: var(--dsw-alias-brand-primary);
+  border-color: var(--dsw-alias-brand-primary);
+}

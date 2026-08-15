@@ -1,0 +1,65 @@
+/* Confirmation dialog. */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+  pointer-events: auto;
+}
+.panel {
+  width: min(360px, 90vw);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  padding: 16px 18px;
+  animation: taskboard-in .16s ease;
+}
+@keyframes taskboard-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.message {
+  margin: 8px 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--dsw-alias-label-secondary);
+}
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.cancelBtn,
+.confirmBtn {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cancelBtn {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+}
+.cancelBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.confirmBtn {
+  border: 1px solid transparent;
+  background: var(--dsw-alias-state-error-primary);
+  color: var(--dsw-alias-button-primary-dimmed);
+}
+.confirmBtn:hover {
+  filter: brightness(1.1);
+}
