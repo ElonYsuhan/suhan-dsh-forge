@@ -98,6 +98,7 @@ describe('taskboard execution workflow', () => {
     const attachSession = vi.fn(async () => {})
     const archiveSession = vi.fn(async () => {})
     const mountPreset = vi.fn(async () => {})
+    const logError = vi.fn()
     const create = vi.fn(async options => {
       await options.setup({})
       let resolveAgentIdle
@@ -115,6 +116,7 @@ describe('taskboard execution workflow', () => {
       return { agent: liveAgent, dispose: vi.fn(async () => {}) }
     })
     const ctx = {
+      logger: vi.fn(() => ({ error: logError })),
       effect (factory) {
         factory()
       },
@@ -166,6 +168,30 @@ describe('taskboard execution workflow', () => {
     expect(preconditionRunResponse.status).toBe(409)
     expect(preconditionRunResponse.body.error).toContain('不是 Git 仓库')
     expect(workspaceMocks.prepare).not.toHaveBeenCalled()
+
+    const diagnosticCreateResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '运行失败可诊断',
+      desc: '',
+      priority: 'medium',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), diagnosticCreateResponse)
+    create.mockRejectedValueOnce(new Error('secret internal detail'))
+    const diagnosticRunResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${diagnosticCreateResponse.body.item.id}/run`), diagnosticRunResponse)
+    expect(diagnosticRunResponse.status).toBe(500)
+    expect(diagnosticRunResponse.body.error).toMatch(/^任务看板内部错误（诊断编号：[0-9a-f]{8}）$/)
+    expect(diagnosticRunResponse.body.error).not.toContain('secret internal detail')
+    expect(logError).toHaveBeenCalledWith('request failed [%s]', expect.stringMatching(/^[0-9a-f]{8}$/), expect.objectContaining({
+      message: 'secret internal detail'
+    }))
+    create.mockClear()
+    workspaceMocks.prepare.mockClear()
+    workspaceMocks.discard.mockClear()
+    workspaceMocks.resolve.mockClear()
 
     const createResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {

@@ -481,6 +481,7 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
  */
 export function apply (ctx: Context): void {
   const lifecycle: LifecycleState = { active: true }
+  const logger = ctx.logger('dsh-taskboard')
   cache = null
 
   ctx.effect(() => async () => {
@@ -996,7 +997,9 @@ export function apply (ctx: Context): void {
           send(res, 503, { error: '看板数据无法安全读取；原文件和备份均已保留，请检查存储文件。' })
           return
         }
-        send(res, 500, { error: 'taskboard: internal server error' })
+        const errorId = randomUUID().slice(0, 8)
+        logger.error('request failed [%s]', errorId, err)
+        send(res, 500, { error: `任务看板内部错误（诊断编号：${errorId}）` })
       }
     },
   }), 'taskboard: route')
