@@ -4,7 +4,7 @@ import process from 'node:process'
 
 const root = resolve(import.meta.dirname, '..')
 const pluginsRoot = join(root, 'plugins')
-const requiredScripts = ['build', 'lint', 'pack:check', 'test', 'typecheck']
+const requiredScripts = ['build', 'lint', 'pack:check', 'release', 'test', 'typecheck']
 const requiredPublishedFiles = ['README.md', 'cordis.patch.yml', 'dsh-marketplace.json']
 const permissionKinds = ['network', 'filesystem', 'process', 'secrets']
 const qualityKinds = ['unitTests', 'contractTests', 'browserTests']

@@ -20,6 +20,17 @@
 
 - **BASE-011 (MUST)**：README 说明插件目的、Host/Client 形态、配置、开发命令、安装、验证、卸载、数据位置和权限原因。
 - **BASE-012 (MUST)**：预览版限制、已知兼容范围、迁移或破坏性变化必须显著写明。示例命令不得包含真实凭证、用户目录或不可移植的绝对路径。
+- **BASE-013 (MUST)**：每个插件必须在自身 `package.json#scripts.release` 提供一键发版入口；入口必须从该插件版本与包名派生发布目标，不得在仓库根脚本中写死某个插件。
+
+推荐复用仓库发布器，并按插件声明目标 profile 与健康检查路径：
+
+```json
+{
+  "scripts": {
+    "release": "node ../../scripts/release-dsh-plugin.mjs --profile web --health-path /plugin/health"
+  }
+}
+```
 
 ## 禁止模式
 
