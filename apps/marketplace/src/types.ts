@@ -30,5 +30,5 @@ export interface PluginListing {
     contractTests: boolean
     browserTests: boolean
   }
-  status: 'internal' | 'review' | 'published'
+  status: 'internal' | 'preview' | 'public' | 'published'
 }

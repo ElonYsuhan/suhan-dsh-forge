@@ -136,7 +136,7 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
             <article class="plugin-card">
               <div class="card-topline">
                 <span class="card-index">NO. {{ String(index + 1).padStart(2, '0') }}</span>
-                <span class="status"><i aria-hidden="true"></i>{{ plugin.status === 'published' ? '已发布' : '内部精选' }}</span>
+                <span class="status"><i aria-hidden="true"></i>{{ ['published', 'public'].includes(plugin.status) ? '已发布' : '内部精选' }}</span>
               </div>
               <div class="plugin-symbol" aria-hidden="true">{{ plugin.displayName['en-US']?.slice(0, 1) ?? 'D' }}</div>
               <p class="package-name">{{ plugin.packageName }}</p>

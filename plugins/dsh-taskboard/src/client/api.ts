@@ -17,6 +17,12 @@ export interface BoardsResponse {
   boards: Record<string, Board>
 }
 
+/** 当前工作区按需分页的历史任务。 */
+export interface HistoryResponse {
+  items: WorkItem[]
+  total: number
+}
+
 /** 新建/编辑工作项载荷 */
 export interface ItemInput {
   type: string
@@ -37,15 +43,12 @@ export async function fetchBoards (): Promise<BoardsResponse> {
   return res.json() as Promise<BoardsResponse>
 }
 
-/** 手动注册项目（path → workspace + 看板） */
-export async function addProject (path: string, title?: string): Promise<{ workspace: WorkspaceMeta; board: Board }> {
-  const res = await fetch('/taskboard/boards', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ path, title })
-  })
-  if (!res.ok) throw new Error(`taskboard: add project failed (${res.status})`)
-  return res.json() as Promise<{ workspace: WorkspaceMeta; board: Board }>
+/** 只在打开历史面板时加载，避免常规轮询携带不断增长的归档数据。 */
+export async function fetchHistory (key: string, offset = 0, limit = 50): Promise<HistoryResponse> {
+  const query = new URLSearchParams({ offset: String(offset), limit: String(limit) })
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/history?${query.toString()}`)
+  if (!res.ok) throw new Error(`taskboard: history failed (${res.status})`)
+  return res.json() as Promise<HistoryResponse>
 }
 
 /** 新建工作项 */

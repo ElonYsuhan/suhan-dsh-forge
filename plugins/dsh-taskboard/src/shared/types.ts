@@ -19,6 +19,23 @@ export type ExecutionState =
   | 'committing'
   | 'failed'
 
+/** 任务提交进入目标分支的状态。 */
+export type IntegrationState = 'pending' | 'integrating' | 'merged' | 'conflicted'
+
+/** 每个任务独占的 Git worktree/branch。 */
+export interface TaskWorkspace {
+  /** 原始项目 Git 根目录。 */
+  root: string
+  /** Agent 实际执行目录。 */
+  path: string
+  /** 任务独立分支。 */
+  branch: string
+  /** 创建任务分支时的提交。 */
+  baseCommit: string
+  /** 最终自动集成的目标分支。 */
+  targetBranch: string
+}
+
 /** 任务首次执行前捕获的 Git 工作树基线。 */
 export interface GitCheckpoint {
   kind: 'git-tree'
@@ -98,6 +115,18 @@ export interface WorkItem {
   deliverySummary?: string | undefined
   /** Agent 完成代码提交后报告的提交引用。 */
   commitRef?: string | undefined
+  /** 插件自动提交与集成的状态。 */
+  integrationState?: IntegrationState | undefined
+  /** 任务隔离的 Git worktree。新任务不再直接修改项目主工作区。 */
+  taskWorkspace?: TaskWorkspace | undefined
+  /** 集成冲突时自动创建的处理任务。 */
+  conflictTaskId?: string | undefined
+  /** 当前任务用于处理哪个历史任务的集成冲突。 */
+  conflictOf?: string | undefined
+  /** 冲突处理任务需要重放的源提交。 */
+  conflictSourceCommit?: string | undefined
+  /** 冲突处理任务完成后可清理的源分支。 */
+  conflictSourceBranch?: string | undefined
   /** 强制关闭时恢复文件所需的任务起始基线。 */
   gitCheckpoint?: GitCheckpoint | undefined
   /** 追溯时间线 */

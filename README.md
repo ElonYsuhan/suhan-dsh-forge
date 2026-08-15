@@ -45,7 +45,7 @@ pnpm --filter @suhan-dsh/taskboard build
 ```bash
 pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard run pack
-dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.1.tgz
 ```
 
 当前已验证兼容本机 DSH `0.1.0-rc.6`：隔离 profile 安装后 bundle 自动挂载，真实 `/taskboard/boards` 路由返回成功。

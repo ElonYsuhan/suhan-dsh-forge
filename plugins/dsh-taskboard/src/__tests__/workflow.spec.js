@@ -14,6 +14,20 @@ const checkpointMocks = vi.hoisted(() => ({
   restore: vi.fn(async () => {})
 }))
 
+const workspaceMocks = vi.hoisted(() => ({
+  prepare: vi.fn(async (cwd, itemId) => ({
+    root: cwd,
+    path: `${cwd}/worktrees/${itemId}`,
+    branch: `dsh-taskboard/${itemId}`,
+    baseCommit: 'base-commit',
+    targetBranch: 'main'
+  })),
+  commit: vi.fn(async () => 'task-commit'),
+  integrate: vi.fn(async () => ({ kind: 'merged', commit: 'integrated-commit' })),
+  discard: vi.fn(async () => {}),
+  deleteBranch: vi.fn(async () => {})
+}))
+
 vi.mock('@deepseek-ai/dsh-agent', async importOriginal => ({
   ...await importOriginal(),
   installModelSelection: vi.fn()
@@ -22,6 +36,15 @@ vi.mock('@deepseek-ai/dsh-agent', async importOriginal => ({
 vi.mock('../gitCheckpoint.ts', () => ({
   captureGitCheckpoint: checkpointMocks.capture,
   restoreGitCheckpoint: checkpointMocks.restore
+}))
+
+vi.mock('../taskWorkspace.ts', () => ({
+  prepareTaskWorkspace: workspaceMocks.prepare,
+  resolveGitRoot: vi.fn(async cwd => cwd),
+  commitTaskWorkspace: workspaceMocks.commit,
+  integrateTaskWorkspace: workspaceMocks.integrate,
+  discardTaskWorkspace: workspaceMocks.discard,
+  deleteTaskBranch: workspaceMocks.deleteBranch
 }))
 
 let apply
@@ -136,8 +159,13 @@ describe('taskboard execution workflow', () => {
     const itemId = createResponse.body.item.id
 
     const runResponse = response()
-    await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), runResponse)
+    const simultaneousResponse = response()
+    await Promise.all([
+      route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), runResponse),
+      route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), simultaneousResponse)
+    ])
     expect(runResponse.status).toBe(200)
+    expect(simultaneousResponse.status).toBe(409)
     expect(runResponse.body.item.executionState).toBe('running')
     expect(runResponse.body.item.status).toBe('analysis')
     expect(runResponse.body.item.agentPreset).toBe('standard')
@@ -147,6 +175,7 @@ describe('taskboard execution workflow', () => {
     expect(mountPreset).toHaveBeenCalledOnce()
     expect(attachSession).toHaveBeenCalledOnce()
     expect(followup).toHaveBeenCalledOnce()
+    expect(workspaceMocks.prepare).toHaveBeenCalledOnce()
 
     const repeatedResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/run`), repeatedResponse)
@@ -197,21 +226,19 @@ describe('taskboard execution workflow', () => {
     }, { agent: liveAgent })
     const deliveryResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${itemId}/confirm-delivery`), deliveryResponse)
-    expect(deliveryResponse.body.item.executionState).toBe('committing')
-
-    const delivered = await taskTool.execute({
-      outcome: 'delivered',
-      summary: '质量检查通过',
-      commitRef: 'abc1234'
-    }, { agent: liveAgent })
-    expect(delivered).toContain('abc1234')
+    expect(deliveryResponse.body.item.executionState).toBe('idle')
+    expect(deliveryResponse.body.item.integrationState).toBe('merged')
+    expect(deliveryResponse.body.item.commitRef).toBe('integrated-commit')
+    expect(workspaceMocks.commit).toHaveBeenCalledOnce()
+    expect(workspaceMocks.integrate).toHaveBeenCalledOnce()
     expect(archiveSession).toHaveBeenCalledOnce()
 
     const archivedResponse = response()
-    await route(request('GET', '/taskboard/boards'), archivedResponse)
-    const archivedItem = archivedResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
+    await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), archivedResponse)
+    const archivedItem = archivedResponse.body.items.find(item => item.id === itemId)
     expect(archivedItem.archived).toBe(true)
-    expect(archivedItem.commitRef).toBe('abc1234')
+    expect(archivedItem.commitRef).toBe('integrated-commit')
+    expect(archivedResponse.body.total).toBe(1)
 
     const createAutoResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -248,7 +275,7 @@ describe('taskboard execution workflow', () => {
       const autoAdvancedItem = autoAdvancedResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
       expect(autoAdvancedItem.status).toBe('scheduled')
       expect(autoAdvancedItem.executionState).toBe('running')
-      expect(followup).toHaveBeenCalledTimes(5)
+      expect(followup).toHaveBeenCalledTimes(4)
     })
 
     const forceCloseResponse = response()
@@ -256,7 +283,7 @@ describe('taskboard execution workflow', () => {
     expect(forceCloseResponse.status).toBe(200)
     expect(forceCloseResponse.body.item.archived).toBe(true)
     expect(autoAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(checkpointMocks.restore).toHaveBeenCalledOnce()
+    expect(workspaceMocks.discard).toHaveBeenCalledTimes(2)
     expect(archiveSession).toHaveBeenCalledTimes(2)
 
     const createDeleteResponse = response()
@@ -282,7 +309,7 @@ describe('taskboard execution workflow', () => {
     expect(deleteResponse.body.rolledBack).toBe(true)
     expect(deleteResponse.body.item.archived).toBe(true)
     expect(deleteAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(checkpointMocks.restore).toHaveBeenCalledTimes(2)
+    expect(workspaceMocks.discard).toHaveBeenCalledTimes(3)
     expect(archiveSession).toHaveBeenCalledTimes(3)
 
     const createPlainResponse = response()
@@ -301,5 +328,40 @@ describe('taskboard execution workflow', () => {
     expect(deletePlainResponse.status).toBe(200)
     expect(deletePlainResponse.body.rolledBack).toBe(false)
     expect(deletePlainResponse.body.item.archived).toBe(true)
+
+    const createConflictResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task',
+      title: '会产生集成冲突的任务',
+      desc: '',
+      priority: 'high',
+      labels: [],
+      status: 'todo',
+      executionMode: 'auto'
+    }), createConflictResponse)
+    const conflictSourceId = createConflictResponse.body.item.id
+    const runConflictResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${conflictSourceId}/run`), runConflictResponse)
+    const conflictAgent = liveAgent
+    await taskTool.execute({ outcome: 'delivery_ready', summary: '等待冲突集成' }, { agent: conflictAgent })
+    conflictAgent.cancel({ kind: 'user' })
+    workspaceMocks.integrate.mockResolvedValueOnce({
+      kind: 'conflicted',
+      sourceCommit: 'conflict-source-commit',
+      reason: 'shared.txt content conflict'
+    })
+    const confirmConflictResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${conflictSourceId}/confirm-delivery`), confirmConflictResponse)
+    expect(confirmConflictResponse.status).toBe(200)
+    expect(confirmConflictResponse.body.item.archived).toBe(true)
+    expect(confirmConflictResponse.body.item.integrationState).toBe('conflicted')
+    expect(confirmConflictResponse.body.item.conflictTaskId).toBeTypeOf('string')
+
+    const conflictBoardResponse = response()
+    await route(request('GET', '/taskboard/boards'), conflictBoardResponse)
+    const generated = conflictBoardResponse.body.boards['workspace-1'].items.find(item => item.conflictOf === conflictSourceId)
+    expect(generated.title).toContain('处理集成冲突')
+    expect(generated.conflictSourceCommit).toBe('conflict-source-commit')
+    expect(generated.archived).toBe(false)
   })
 })

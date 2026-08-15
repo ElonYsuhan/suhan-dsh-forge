@@ -1,0 +1,14 @@
+{
+  "name": "@suhan-dsh/taskboard",
+  "owner": "ElonYsuhan",
+  "url": "https://github.com/ElonYsuhan/suhan-dsh-forge",
+  "page": "https://awesome-dsh-plugin.com/p/ElonYsuhan/suhan-dsh-forge/",
+  "category": "workflow",
+  "description": {
+    "en": "Project traceability, staged agent execution, human review, and delivery workflow for DSH sessions.",
+    "zh": "面向 DSH Agent 会话的项目需求追溯、分阶段执行、人工审核与交付看板。"
+  },
+  "npm": "@suhan-dsh/taskboard",
+  "install": "dsh plugin --profile web add @suhan-dsh/taskboard",
+  "added": "2026-08-15"
+}

@@ -5,22 +5,25 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
 ## 形态
 
 - **浏览器半**（`src/client/`）
-  - `shell.overlay` 条目：侧栏看板入口 + 右侧全尺寸工作台（项目切换 / 自定义环节列 / 拖拽流转 / 工作项详情与需求追溯时间线 / 执行 / 看板设置）
+  - `shell.overlay` 条目：侧栏看板入口 + 右侧全尺寸工作台（项目切换 / 自定义环节列 / 拖拽流转 / 工作项详情与需求追溯时间线 / 执行 / 历史任务 / 看板设置）
   - `conversation.input.left` 条目：聊天页 composer「＋待办」按钮，对话中直接创建待办任务到项目看板
   - 会话联动：工作项详情「执行」下发任务到 agent 会话；点击「打开会话」或左侧任一会话时，关闭看板并切回聊天页
 - **Node 半**（`src/index.ts`）
   - `/taskboard` REST：项目看板 CRUD、工作项 CRUD、自定义环节/类型设置、执行
-  - **执行**：工作项首次执行创建一个完整 Agent + Session（使用 Web profile 当前模型与默认 Agent preset，`cwd`=项目路径），后续审核、退回、重试始终复用同一会话
-  - **agent 工具 `taskboard_progress`**：汇报环节完成、阻塞、待交付和已提交；看板每 3 秒刷新执行状态
-  - 数据落盘 `datas/boards.json`（按 projectKey 分看板，首次访问自动建种子）
+  - **并行执行**：首次执行创建独立 Git worktree、任务分支和完整 Agent + Session（使用 Web profile 当前模型与默认 Agent preset，`cwd`=任务 worktree）；不同任务不共享文件目录
+  - **自动提交与集成**：人工确认交付后由插件生成单任务提交；同一仓库的最终集成在短时互斥锁内先 rebase 最新目标分支，再以 `ff-only` 更新主工作区
+  - **冲突编排**：无法自动集成时保留源提交和分支、归档原任务，并自动创建关联的「处理集成冲突」任务
+  - **agent 工具 `taskboard_progress`**：汇报环节完成、阻塞和待交付；看板每 3 秒刷新执行状态
+  - 数据落盘 `datas/boards.json`；任务 worktree 位于同一运行数据目录的 `worktrees/`
 
 ## 工作项模型
 
 - 类型：史诗 / 需求 / 任务 / 缺陷（可自定义），`parentId` 构成追溯树
 - 环节：默认八阶段（待办 → 分析 → 排期 → 开发 → 测试 → 验收 → 上线 → 完成），可自定义
 - 追溯：每个工作项的 `timeline` 记录创建 / 流转 / 执行 / 备注全历史
-- 删除：卡片在任意状态都可删除；执行过的任务会先停止 Agent、恢复执行前 Git 基线，再归档关联会话并移出看板
-- 强制关闭：首次执行前保存 Git 工作树基线；人工强制关闭时中断 Agent、恢复任务前文件与暂存状态，再归档会话和卡片
+- 删除：卡片在任意状态都可删除；新任务会停止 Agent 并只删除自己的 worktree/分支，旧 checkpoint 任务继续使用兼容回退
+- 强制关闭：中断 Agent 并清理任务隔离目录，不修改其他任务或项目主工作区
+- 历史：右上角「历史任务」按需分页展示当前工作区归档记录，包括结果、提交 SHA 和冲突任务关联；常规 3 秒轮询不携带历史数据
 
 ## 执行与审核工作流
 
@@ -39,14 +42,20 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
       └─ 重大任务：人工批准 / 退回
   → 交付物就绪
   → 人工确认最终交付
-  → Agent 运行最终检查并只提交本任务代码
-  → taskboard_progress(delivered, commitRef)
-  → DSH 会话归档 + 卡片归档（会话日志与时间线保留）
+  → 插件自动暂存任务 worktree 的全部变化并创建单任务提交
+  → 仓库级集成锁内 rebase 最新目标分支 + ff-only 集成
+      ├─ 成功：DSH 会话归档 + 卡片进入历史任务
+      └─ 冲突：保留源提交/分支 + 自动创建冲突处理任务
 ```
 
-约束：人工确认最终交付前，Agent 不得创建 Git 提交。若质量检查、改动隔离或提交失败，工作项进入阻塞状态，不会假归档。
+约束：Agent 全程不得创建 Git 提交、切换分支或操作项目主工作区。若质量检查、改动隔离或自动提交失败，工作项进入阻塞状态，不会假归档。即使没有文件变化，插件也会生成一条空审计提交，使历史任务与 Git 记录一一对应。
 
-强制关闭仅在任务执行期间 `HEAD` 未变化时自动回退；若检测到新提交，会停止回退并保留卡片为失败状态，避免误撤销其他任务或人工提交。
+## 并行与 Git 前置条件
+
+- 启动新任务时项目必须位于正常分支且主工作区干净；否则拒绝启动，要求先提交或暂存人工改动。
+- 不同任务的 Agent 和文件写入完全隔离；只有最终集成会短暂串行。
+- 集成时若用户切换目标分支、修改主工作区或其他进程推进分支，插件停止自动集成并创建冲突处理任务，绝不覆盖现场。
+- 冲突处理任务基于最新目标分支创建新 worktree，并按指令使用 `git cherry-pick --no-commit <sourceCommit>` 重放变化；解决后仍由插件统一提交。
 
 ## 构建
 
@@ -64,10 +73,18 @@ pnpm --filter @suhan-dsh/taskboard pack:check
 
 ## 安装到 DSH web profile
 
+### 从 npm 公开安装
+
+```bash
+dsh plugin --profile web add @suhan-dsh/taskboard
+```
+
+### 从本地构建产物安装
+
 ```bash
 pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard run pack
-dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.0.tgz
+dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.1.tgz
 ```
 
 插件包已通过 `package.json#dsh.bundle.patch` 声明 `cordis.patch.yml`。若当前 DSH 预览版未自动挂载 bundle，可在 `~/.dsh/profiles/web/cordis.patch.yml` 追加：
@@ -94,8 +111,14 @@ CHOKIDAR_USEPOLLING=1
 ## 数据
 
 - 文件：`datas/boards.json`（本地运行状态，不进入 Git 或发布包）
+- 任务隔离目录：`datas/worktrees/`（运行时创建；成功、删除或强制关闭后清理，冲突时保留源 Git 分支）
 - 迁移：设置 `DSH_TASKBOARD_DATA=<绝对路径>` 覆盖存储位置
+
+卸载插件只停止 Agent handle，不主动删除历史看板数据。运行中任务的 worktree 会保留，以便重新安装后恢复或人工处理。
 
 ## 上架状态
 
-当前包保持 `private: true` 和 `UNLICENSED`，只允许内部安装测试。公开上架前必须确定 npm 包名、源码仓库、维护者与许可证，再解除发布门禁。
+- npm 包：`@suhan-dsh/taskboard`（MIT，`publishConfig.access: public`）
+- 源码仓库：<https://github.com/ElonYsuhan/suhan-dsh-forge>
+- 市场状态：`dsh-marketplace.json#status` 为 `public`；待收录至 awesome-dsh-plugin 后可在 dshmarket 浏览、搜索和一键安装。
+- 权限声明：网络仅本地 `/taskboard` 路由；文件系统限看板数据、任务 worktree 与最终串行集成；进程仅以参数数组运行声明的 Git 命令；不读取或保存 secrets。

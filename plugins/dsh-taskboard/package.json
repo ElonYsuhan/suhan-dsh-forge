@@ -1,9 +1,8 @@
 {
   "name": "@suhan-dsh/taskboard",
   "description": "DSH Web taskboard plugin with workspace-scoped Agent sessions, staged human review, delivery confirmation, and durable archival",
-  "version": "0.1.0",
-  "private": true,
-  "license": "UNLICENSED",
+  "version": "0.1.1",
+  "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/types/index.d.ts",
@@ -22,7 +21,6 @@
     },
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./dsh-marketplace.json": "./dsh-marketplace.json",
-    "./src/*": "./src/*",
     "./package.json": "./package.json"
   },
   "dsh": {
@@ -74,9 +72,34 @@
     "lib/index.js",
     "lib/invariant.js",
     "lib/client.js",
+    "lib/client.js.map",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "dsh-marketplace.json",
-    "README.md"
-  ]
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElonYsuhan/suhan-dsh-forge.git"
+  },
+  "homepage": "https://github.com/ElonYsuhan/suhan-dsh-forge#readme",
+  "bugs": {
+    "url": "https://github.com/ElonYsuhan/suhan-dsh-forge/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "taskboard",
+    "workflow",
+    "project-management",
+    "agent",
+    "review"
+  ],
+  "author": "ElonYsuhan",
+  "publishConfig": {
+    "access": "public"
+  }
 }

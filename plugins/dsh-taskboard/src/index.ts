@@ -30,8 +30,9 @@ import type {} from '@deepseek-ai/dsh-tools'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { captureGitCheckpoint, restoreGitCheckpoint } from './gitCheckpoint.ts'
+import { restoreGitCheckpoint } from './gitCheckpoint.ts'
 import { createBoard, executionModeOf, executionStateOf, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type ItemTypeDef, type TimelineEntry, type WorkItem } from './shared/types.ts'
+import { commitTaskWorkspace, deleteTaskBranch, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot } from './taskWorkspace.ts'
 
 /**
  * Host services this plugin requires. Cordis only resolves `ctx` property
@@ -45,11 +46,35 @@ const DATA_FILE = process.env.DSH_TASKBOARD_DATA !== undefined
   ? resolve(process.env.DSH_TASKBOARD_DATA)
   : resolve(dirname(fileURLToPath(import.meta.url)), '..', 'datas', 'boards.json')
 
+/** 任务 worktree 位于运行数据目录，不进入项目仓库或发布包。 */
+const WORKTREES_ROOT = resolve(dirname(DATA_FILE), 'worktrees')
+
 /** 活动执行句柄（createAgent 返回的 owner 能力）：归档时停止 agent 并归档会话。 */
 const agentHandles = new Map<string, AgentHandle>()
 
 /** 内存缓存：避免每次请求读盘 */
 let cache: BoardsFile | null = null
+
+/** 同一任务的状态转换串行；不同任务及其 Agent 仍可并行。 */
+const operationLocks = new Map<string, Promise<void>>()
+
+/** 原子文件写入仍需顺序化，避免较慢的旧快照最后落盘。 */
+let saveTail: Promise<void> = Promise.resolve()
+
+async function withLock<T> (key: string, action: () => Promise<T>): Promise<T> {
+  const previous = operationLocks.get(key) ?? Promise.resolve()
+  let release!: () => void
+  const gate = new Promise<void>(resolveGate => { release = resolveGate })
+  const tail = previous.then(() => gate)
+  operationLocks.set(key, tail)
+  await previous
+  try {
+    return await action()
+  } finally {
+    release()
+    if (operationLocks.get(key) === tail) operationLocks.delete(key)
+  }
+}
 
 async function loadBoards (): Promise<BoardsFile> {
   if (cache !== null) return cache
@@ -66,10 +91,15 @@ async function loadBoards (): Promise<BoardsFile> {
 /** 原子落盘（tmp + rename） */
 async function saveBoards (file: BoardsFile): Promise<void> {
   cache = file
-  await mkdir(dirname(DATA_FILE), { recursive: true })
-  const tmp = `${DATA_FILE}.${randomUUID()}.tmp`
-  await writeFile(tmp, JSON.stringify(file, null, 2), 'utf8')
-  await rename(tmp, DATA_FILE)
+  const serialized = JSON.stringify(file, null, 2)
+  const write = saveTail.then(async () => {
+    await mkdir(dirname(DATA_FILE), { recursive: true })
+    const tmp = `${DATA_FILE}.${randomUUID()}.tmp`
+    await writeFile(tmp, serialized, 'utf8')
+    await rename(tmp, DATA_FILE)
+  })
+  saveTail = write.catch(() => {})
+  await write
 }
 
 /** 读取请求体 JSON */
@@ -199,6 +229,44 @@ function touch (board: Board, item: WorkItem): void {
   board.updatedAt = item.updatedAt
 }
 
+/** 集成失败后生成一个显式、可追溯的冲突处理任务。 */
+function createConflictItem (
+  board: Board,
+  source: WorkItem,
+  sourceCommit: string,
+  sourceBranch: string,
+  reason: string
+): WorkItem {
+  const now = new Date().toISOString()
+  const item: WorkItem = {
+    id: randomUUID(),
+    type: 'task',
+    title: `处理集成冲突：${source.title}`,
+    desc: [
+      `原工作项 ${source.id} 已生成独立提交 ${sourceCommit}，但无法自动集成。`,
+      `原因：${reason}`,
+      '执行本任务时，请在独立 worktree 中运行 git cherry-pick --no-commit 指定提交，人工判断并解决冲突；不要直接修改项目主工作区。'
+    ].join('\n'),
+    priority: source.priority,
+    labels: [...new Set([...source.labels, 'integration-conflict'])],
+    status: board.columns[0]?.id ?? 'todo',
+    parentId: source.parentId,
+    iteration: source.iteration,
+    executionMode: 'review',
+    executionState: 'idle',
+    integrationState: 'pending',
+    conflictOf: source.id,
+    conflictSourceCommit: sourceCommit,
+    conflictSourceBranch: sourceBranch,
+    timeline: [],
+    createdAt: now,
+    updatedAt: now,
+    archived: false
+  }
+  pushTimeline(item, { action: 'created', to: item.status, note: `由工作项 ${source.id} 的集成冲突自动创建` })
+  return item
+}
+
 /** 是否已有一条不能并发替换的执行。 */
 function executionActive (state: ExecutionState): boolean {
   return state === 'running' || state === 'awaiting-review' || state === 'awaiting-delivery' || state === 'committing'
@@ -215,6 +283,9 @@ function executionPrompt (board: Board, item: WorkItem): string {
     item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
     `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：可自主逐环节推进'}`,
     `【当前环节】${phase}`,
+    item.conflictSourceCommit === undefined
+      ? '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。'
+      : `【冲突处理】先运行 git cherry-pick --no-commit ${item.conflictSourceCommit}，解决冲突并验证；不得创建提交，最终提交由看板完成。`,
     '',
     '必须遵守：',
     '- 先读取并遵守工作区内的工程指令。只处理本工作项，不覆盖或提交无关改动。',
@@ -224,8 +295,8 @@ function executionPrompt (board: Board, item: WorkItem): string {
       : '- 每个 turn 最多完成一个环节。工具返回“结束本轮执行”后必须立即停止；会话停稳后看板才会流转，插件会另发下一环节的新 turn。',
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
     '- 完成交付物和全部质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")。',
-    '- 未收到人工“确认交付”前严禁 git commit，也不得归档会话或工作项。',
-    '- 收到确认交付指令后，只提交本工作项涉及的文件；提交成功后调用 taskboard_progress(outcome="delivered", summary="交付摘要", commitRef="提交 SHA")。'
+    '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
+    '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。'
   ].filter(line => line !== '').join('\n')
 }
 
@@ -245,12 +316,14 @@ function publishReviewAfterAgentIdle (
     for (const board of Object.values(file.boards)) {
       const item = board.items.find(candidate => candidate.sessionId === sessionId && !candidate.archived)
       if (item === undefined) continue
-      if (executionStateOf(item) !== 'running' || item.status !== stageStatus) return
-      item.executionState = 'awaiting-review'
-      item.reviewSummary = note
-      pushTimeline(item, { action: 'note', note: `环节产出待人工审核：${note}` })
-      touch(board, item)
-      await saveBoards(file)
+      await withLock(`item:${board.projectKey}:${item.id}`, async () => {
+        if (item.archived || executionStateOf(item) !== 'running' || item.status !== stageStatus) return
+        item.executionState = 'awaiting-review'
+        item.reviewSummary = note
+        pushTimeline(item, { action: 'note', note: `环节产出待人工审核：${note}` })
+        touch(board, item)
+        await saveBoards(file)
+      })
       return
     }
   }
@@ -275,21 +348,23 @@ function advanceAutoStageAfterAgentIdle (
     for (const board of Object.values(file.boards)) {
       const item = board.items.find(candidate => candidate.sessionId === sessionId && !candidate.archived)
       if (item === undefined) continue
-      if (executionStateOf(item) !== 'running' || item.status !== stageStatus) return
-      const next = nextColumn(board, item)
-      if (next === undefined) {
-        item.executionState = 'awaiting-delivery'
-        item.deliverySummary = note
-        pushTimeline(item, { action: 'note', note: `全部环节完成，等待人工确认交付：${note}` })
+      await withLock(`item:${board.projectKey}:${item.id}`, async () => {
+        if (item.archived || executionStateOf(item) !== 'running' || item.status !== stageStatus) return
+        const next = nextColumn(board, item)
+        if (next === undefined) {
+          item.executionState = 'awaiting-delivery'
+          item.deliverySummary = note
+          pushTimeline(item, { action: 'note', note: `全部环节完成，等待人工确认交付：${note}` })
+          touch(board, item)
+          await saveBoards(file)
+          return
+        }
+        pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note })
+        item.status = next.id
         touch(board, item)
         await saveBoards(file)
-        return
-      }
-      pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note })
-      item.status = next.id
-      touch(board, item)
-      await saveBoards(file)
-      followup(agent, `上一环节已在会话停稳后结算。现在进入「${next.label}」环节。请先完成该环节的真实工作并在会话中给出结果；每个 turn 只能在末尾调用一次 taskboard_progress(outcome="stage_complete")。`)
+        followup(agent, `上一环节已在会话停稳后结算。现在进入「${next.label}」环节。请先完成该环节的真实工作并在会话中给出结果；每个 turn 只能在末尾调用一次 taskboard_progress(outcome="stage_complete")。`)
+      })
       return
     }
   }
@@ -311,6 +386,92 @@ function retireDeliveredAgent (ctx: Context, sessionId: string, agent: Agent): v
   })().catch(() => {
     // 会话已完成并归档；清理由 DSH/插件卸载生命周期继续兜底。
   })
+}
+
+/** 停止持有任务会话的资源并归档；Git 结果已经落盘时，归档失败只记录不回滚提交。 */
+async function closeTaskSession (ctx: Context, item: WorkItem): Promise<string | undefined> {
+  const sessionId = item.sessionId
+  if (sessionId === undefined) return undefined
+  try {
+    const live = ctx.agents.get(SessionId(sessionId))
+    if (live !== undefined) {
+      await live.whenIdle()
+      await ctx.sessions.flush(live.session)
+    }
+    const handle = agentHandles.get(sessionId)
+    if (handle !== undefined) {
+      await handle.dispose()
+      agentHandles.delete(sessionId)
+    }
+    await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
+}
+
+/** 自动提交任务 worktree，并在仓库级短锁内集成到目标分支。 */
+async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Board, item: WorkItem): Promise<void> {
+  const workspace = item.taskWorkspace
+  if (workspace === undefined) throw new Error('任务缺少隔离 worktree，不能使用自动集成流程')
+
+  item.executionState = 'committing'
+  item.integrationState = 'integrating'
+  pushTimeline(item, { action: 'note', note: '人工确认交付；看板开始自动提交并串行集成' })
+  touch(board, item)
+  await saveBoards(file)
+
+  let sourceCommit: string
+  try {
+    sourceCommit = await commitTaskWorkspace(workspace, item.id, item.title)
+  } catch (error) {
+    item.executionState = 'blocked'
+    item.integrationState = 'pending'
+    pushTimeline(item, { action: 'note', note: `自动创建任务提交失败：${error instanceof Error ? error.message : String(error)}` })
+    touch(board, item)
+    await saveBoards(file)
+    throw error
+  }
+
+  const result = await withLock(`repository:${workspace.root}`, async () => integrateTaskWorkspace(workspace))
+    .catch(error => ({
+      kind: 'conflicted' as const,
+      sourceCommit,
+      reason: `自动集成过程异常终止：${error instanceof Error ? error.message : String(error)}`
+    }))
+  if (result.kind === 'conflicted') {
+    const conflict = createConflictItem(board, item, result.sourceCommit, workspace.branch, result.reason)
+    board.items.push(conflict)
+    item.commitRef = result.sourceCommit
+    item.conflictTaskId = conflict.id
+    item.integrationState = 'conflicted'
+    item.executionState = 'failed'
+    item.archived = true
+    pushTimeline(item, { action: 'note', note: `自动集成受阻；已创建冲突处理任务 ${conflict.id}：${result.reason}` })
+    const sessionWarning = await closeTaskSession(ctx, item)
+    await discardTaskWorkspace(workspace, true)
+    if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `Git 冲突现场已保存，但会话归档失败：${sessionWarning}` })
+    touch(board, item)
+    await saveBoards(file)
+    return
+  }
+
+  item.commitRef = result.commit
+  item.integrationState = 'merged'
+  item.executionState = 'idle'
+  item.archived = true
+  const finalColumn = board.columns.at(-1)
+  if (finalColumn !== undefined && item.status !== finalColumn.id) {
+    pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '任务提交已自动集成' })
+    item.status = finalColumn.id
+  }
+  pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}` })
+  const sessionWarning = await closeTaskSession(ctx, item)
+  await discardTaskWorkspace(workspace)
+  if (item.conflictSourceBranch !== undefined) await deleteTaskBranch(workspace.root, item.conflictSourceBranch)
+  if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但会话归档失败：${sessionWarning}` })
+  touch(board, item)
+  await saveBoards(file)
 }
 
 /**
@@ -355,7 +516,11 @@ export function apply (ctx: Context): void {
         }
       }
       if (found === null) return '未找到与该会话关联的工作项'
-      const { board: foundBoard, item } = found
+      const located = found
+      const lockKey = `item:${located.board.projectKey}:${located.item.id}`
+      return withLock(lockKey, async () => {
+      const { board: foundBoard, item } = located
+      if (item.archived) return '工作项已经归档，拒绝更新执行状态'
       const summary = typeof args.summary === 'string' && args.summary.trim() !== ''
         ? args.summary.trim()
         : undefined
@@ -375,6 +540,7 @@ export function apply (ctx: Context): void {
         return '交付物已登记。请停止执行，等待人工确认交付；确认前严禁提交代码。'
       }
       if (args.outcome === 'delivered') {
+        if (item.taskWorkspace !== undefined) return '当前任务由看板自动提交和集成，拒绝 Agent 自报 delivered。请等待人工确认交付。'
         const commitRef = typeof args.commitRef === 'string' ? args.commitRef.trim() : ''
         if (executionStateOf(item) !== 'committing') return '尚未收到人工确认交付，拒绝提交和归档。'
         if (commitRef === '') return 'delivered 必须提供已成功创建的代码提交 SHA。'
@@ -414,6 +580,7 @@ export function apply (ctx: Context): void {
       if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
       advanceAutoStageAfterAgentIdle(exec.agent, sessionId, item.status, note)
       return '已记录当前环节产出。请立即结束本轮执行；会话完全停稳后才会流转，并由看板开启下一环节的新 turn。'
+      })
     }
   })), 'taskboard: tool')
 
@@ -435,9 +602,17 @@ export function apply (ctx: Context): void {
           const workspaces = ctx.workspaceRegistry.list().map(w => ({
             id: w.id, path: w.path, title: w.title, sessionCount: w.sessionIds.length
           }))
-          for (const w of workspaces) ensureBoard(file, w.id, w.path, w.title)
-          if (workspaces.length > 0) await saveBoards(file)
-          send(res, 200, { workspaces, boards: file.boards })
+          let createdBoard = false
+          for (const w of workspaces) {
+            if (file.boards[w.id] === undefined) createdBoard = true
+            ensureBoard(file, w.id, w.path, w.title)
+          }
+          if (createdBoard) await saveBoards(file)
+          const activeBoards = Object.fromEntries(Object.entries(file.boards).map(([boardKey, value]) => [
+            boardKey,
+            { ...value, items: value.items.filter(item => !item.archived) }
+          ]))
+          send(res, 200, { workspaces, boards: activeBoards })
           return
         }
         if (parts[1] === 'boards' && parts.length === 2 && method === 'POST') {
@@ -463,6 +638,19 @@ export function apply (ctx: Context): void {
         const board = file.boards[key]
         if (board === undefined) {
           send(res, 404, { error: `board not found: ${key}` })
+          return
+        }
+
+        // ── 当前工作区历史：按需分页，不进入 3 秒活动看板轮询 ──────
+        if (parts.length === 4 && parts[3] === 'history' && method === 'GET') {
+          const offsetValue = Number.parseInt(url.searchParams.get('offset') ?? '0', 10)
+          const limitValue = Number.parseInt(url.searchParams.get('limit') ?? '50', 10)
+          const offset = Number.isFinite(offsetValue) ? Math.max(0, offsetValue) : 0
+          const limit = Number.isFinite(limitValue) ? Math.min(100, Math.max(1, limitValue)) : 50
+          const history = board.items
+            .filter(item => item.archived)
+            .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+          send(res, 200, { items: history.slice(offset, offset + limit), total: history.length })
           return
         }
 
@@ -554,7 +742,9 @@ export function apply (ctx: Context): void {
           }
           // DELETE 随时删除：执行过则先停止 Agent、恢复任务前基线并归档会话。
           if (parts.length === 5 && method === 'DELETE') {
-            const item = findItem(board, parts[4] ?? '')
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+            const item = findItem(board, itemId)
             const sid = item.sessionId
             let rolledBack = false
             let warning: string | undefined
@@ -566,7 +756,10 @@ export function apply (ctx: Context): void {
                   await live.whenIdle()
                   await ctx.sessions.flush(live.session)
                 }
-                if (item.gitCheckpoint !== undefined) {
+                if (item.taskWorkspace !== undefined) {
+                  await discardTaskWorkspace(item.taskWorkspace)
+                  rolledBack = true
+                } else if (item.gitCheckpoint !== undefined) {
                   await restoreGitCheckpoint(item.gitCheckpoint)
                   rolledBack = true
                 } else {
@@ -601,67 +794,84 @@ export function apply (ctx: Context): void {
               await saveBoards(file)
               throw error
             }
+            })
             return
           }
           // POST run：首次创建会话；阻塞/失败后的重试继续使用同一会话。
           if (parts.length === 6 && parts[5] === 'run' && method === 'POST') {
-            const item = findItem(board, parts[4] ?? '')
-            const state = executionStateOf(item)
-            if (executionActive(state)) {
-              send(res, 409, { error: '工作项已有进行中的执行，请打开关联会话查看状态' })
-              return
-            }
-            const previous = structuredClone(item)
-            const firstRun = item.sessionId === undefined
-            const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
-            let handle: AgentHandle | undefined
-            let workspace: Awaited<ReturnType<typeof ctx.workspaceRegistry.resolveByPath>>
-            try {
-              if (firstRun) item.gitCheckpoint = await captureGitCheckpoint(board.projectPath)
-              const agent = firstRun
-                ? (handle = await createTaskAgent(ctx, sessionId, board.projectPath)).agent
-                : await resolveTaskAgent(ctx, sessionId, item.agentPreset)
-              if (handle !== undefined) {
-                agentHandles.set(sessionId, handle)
-                workspace = await ctx.workspaceRegistry.resolveByPath(board.projectPath)
-                if (workspace === undefined) throw new Error(`workspace not found for ${board.projectPath}`)
-                await workspace.attachSession(SessionId(sessionId))
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+              const item = findItem(board, itemId)
+              const state = executionStateOf(item)
+              if (executionActive(state)) {
+                send(res, 409, { error: '工作项已有进行中的执行，请打开关联会话查看状态' })
+                return
               }
-              item.sessionId = sessionId
-              item.agentPreset = agent.session.header.agentPreset
-              item.executionState = 'running'
-              item.reviewSummary = undefined
-              if (firstRun) {
-                const next = nextColumn(board, item)
-                if (next !== undefined) {
-                  pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: '开始执行' })
-                  item.status = next.id
+              const previous = structuredClone(item)
+              const firstRun = item.sessionId === undefined
+              const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
+              let handle: AgentHandle | undefined
+              let registeredWorkspace: Awaited<ReturnType<typeof ctx.workspaceRegistry.resolveByPath>>
+              try {
+                // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
+                item.executionState = 'running'
+                item.reviewSummary = undefined
+                touch(board, item)
+                await saveBoards(file)
+                if (firstRun) {
+                  const root = await resolveGitRoot(board.projectPath)
+                  item.taskWorkspace = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id, WORKTREES_ROOT))
+                  item.integrationState = 'pending'
+                  item.gitCheckpoint = undefined
                 }
+                const agentCwd = item.taskWorkspace?.path ?? board.projectPath
+                const agent = firstRun
+                  ? (handle = await createTaskAgent(ctx, sessionId, agentCwd)).agent
+                  : await resolveTaskAgent(ctx, sessionId, item.agentPreset)
+                if (handle !== undefined) {
+                  agentHandles.set(sessionId, handle)
+                  registeredWorkspace = await ctx.workspaceRegistry.resolveByPath(board.projectPath)
+                  if (registeredWorkspace === undefined) throw new Error(`workspace not found for ${board.projectPath}`)
+                  await registeredWorkspace.attachSession(SessionId(sessionId))
+                }
+                item.sessionId = sessionId
+                item.agentPreset = agent.session.header.agentPreset
+                if (firstRun) {
+                  const next = nextColumn(board, item)
+                  if (next !== undefined) {
+                    pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: '创建独立 Git worktree 并开始执行' })
+                    item.status = next.id
+                  }
+                }
+                pushTimeline(item, { action: 'run', sessionId, note: firstRun ? `在独立分支 ${item.taskWorkspace?.branch ?? ''} 创建任务会话` : '在原会话继续执行' })
+                touch(board, item)
+                await saveBoards(file)
+                followup(agent, executionPrompt(board, item))
+                send(res, 200, { item })
+              } catch (error) {
+                const createdWorkspace = item.taskWorkspace
+                const index = board.items.findIndex(candidate => candidate.id === item.id)
+                if (index >= 0) board.items[index] = previous
+                await saveBoards(file).catch(() => {})
+                if (registeredWorkspace !== undefined) await registeredWorkspace.detachSession(SessionId(sessionId)).catch(() => {})
+                if (handle !== undefined) {
+                  await handle.dispose().catch(() => {})
+                  agentHandles.delete(sessionId)
+                }
+                if (firstRun && createdWorkspace !== undefined) await discardTaskWorkspace(createdWorkspace).catch(() => {})
+                throw error
               }
-              pushTimeline(item, { action: 'run', sessionId, note: firstRun ? '创建任务会话并开始执行' : '在原会话继续执行' })
-              touch(board, item)
-              await saveBoards(file)
-              followup(agent, executionPrompt(board, item))
-            } catch (error) {
-              const index = board.items.findIndex(candidate => candidate.id === item.id)
-              if (index >= 0) board.items[index] = previous
-              await saveBoards(file).catch(() => {})
-              if (workspace !== undefined) await workspace.detachSession(SessionId(sessionId)).catch(() => {})
-              if (handle !== undefined) {
-                await handle.dispose().catch(() => {})
-                agentHandles.delete(sessionId)
-              }
-              throw error
-            }
-            send(res, 200, { item })
+            })
             return
           }
 
           // POST force-close：中断 Agent，恢复任务开始前的 Git 基线，再归档会话与卡片。
           if (parts.length === 6 && parts[5] === 'force-close' && method === 'POST') {
-            const item = findItem(board, parts[4] ?? '')
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+            const item = findItem(board, itemId)
             const sessionId = item.sessionId
-            if (sessionId === undefined || item.gitCheckpoint === undefined) {
+            if (sessionId === undefined || (item.taskWorkspace === undefined && item.gitCheckpoint === undefined)) {
               send(res, 409, { error: '工作项没有可回退的执行会话或 Git 基线' })
               return
             }
@@ -672,7 +882,8 @@ export function apply (ctx: Context): void {
                 await agent.whenIdle()
                 await ctx.sessions.flush(agent.session)
               }
-              await restoreGitCheckpoint(item.gitCheckpoint)
+              if (item.taskWorkspace !== undefined) await discardTaskWorkspace(item.taskWorkspace)
+              else if (item.gitCheckpoint !== undefined) await restoreGitCheckpoint(item.gitCheckpoint)
               const handle = agentHandles.get(sessionId)
               if (handle !== undefined) {
                 await handle.dispose()
@@ -694,13 +905,34 @@ export function apply (ctx: Context): void {
               await saveBoards(file)
               throw error
             }
+            })
             return
           }
 
-          // POST approve/reject/confirm-delivery：全部继续使用工作项唯一会话。
+          // 新任务由插件自动提交并集成；旧任务仍走原会话提交协议以保持兼容。
+          if (parts.length === 6 && parts[5] === 'confirm-delivery' && method === 'POST') {
+            const itemId = parts[4] ?? ''
+            const candidate = findItem(board, itemId)
+            if (candidate.taskWorkspace !== undefined) {
+              await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+                const item = findItem(board, itemId)
+                if (executionStateOf(item) !== 'awaiting-delivery') {
+                  send(res, 409, { error: '交付物尚未就绪，不能确认交付' })
+                  return
+                }
+                await finalizeIsolatedTask(ctx, file, board, item)
+                send(res, 200, { item })
+              })
+              return
+            }
+          }
+
+          // 重大任务审核与旧任务交付继续使用工作项唯一会话。
           if (parts.length === 6 && method === 'POST' && ['approve', 'reject', 'confirm-delivery'].includes(parts[5] ?? '')) {
             const action = parts[5]
-            const item = findItem(board, parts[4] ?? '')
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+            const item = findItem(board, itemId)
             const sessionId = item.sessionId
             if (sessionId === undefined) {
               send(res, 409, { error: '工作项尚未创建执行会话' })
@@ -767,6 +999,7 @@ export function apply (ctx: Context): void {
               throw error
             }
             send(res, 200, { item })
+            })
             return
           }
         }

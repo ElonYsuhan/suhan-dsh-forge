@@ -16,9 +16,17 @@
     "profiles": ["web"]
   },
   "permissions": {
-    "network": ["DSH local web server routes under /taskboard"],
-    "filesystem": ["Read and write taskboard data", "Capture and restore Git worktree checkpoints"],
-    "process": ["Execute Git commands in registered workspaces"],
+    "network": [
+      "Local DSH web profile HTTP route prefix /taskboard only"
+    ],
+    "filesystem": [
+      "Read/write taskboard data file (default package-local datas/boards.json, overridable via DSH_TASKBOARD_DATA)",
+      "Create/remove isolated per-task Git worktrees under the taskboard runtime data directory",
+      "Update a registered workspace only during serialized final integration; preserve source branches when integration conflicts"
+    ],
+    "process": [
+      "Run git with explicit argument arrays under registered workspaces and task-owned worktrees (worktree, status, add, commit, rebase, merge, branch, rev-parse and cleanup)"
+    ],
     "secrets": []
   },
   "quality": {
@@ -26,5 +34,5 @@
     "contractTests": true,
     "browserTests": false
   },
-  "status": "internal"
+  "status": "public"
 }

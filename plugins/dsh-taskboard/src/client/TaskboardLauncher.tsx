@@ -4,12 +4,13 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { addProject, approveItem, confirmDelivery, createItem, deleteItem, fetchBoards, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { approveItem, confirmDelivery, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
 import { ItemEditor } from './ItemEditor.tsx'
 import { SettingsEditor } from './SettingsEditor.tsx'
+import { HistoryPanel } from './HistoryPanel.tsx'
 import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
 import css from './TaskboardLauncher.module.css'
 
@@ -49,8 +50,10 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editor, setEditor] = useState<EditorSeat | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [addOpen, setAddOpen] = useState(false)
-  const [addPath, setAddPath] = useState('')
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyItems, setHistoryItems] = useState<WorkItem[]>([])
+  const [historyTotal, setHistoryTotal] = useState(0)
+  const [historyLoading, setHistoryLoading] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null)
   const [forceCloseTarget, setForceCloseTarget] = useState<WorkItem | null>(null)
   const [deliveryTarget, setDeliveryTarget] = useState<WorkItem | null>(null)
@@ -63,7 +66,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     setSelectedId(null)
     setEditor(null)
     setSettingsOpen(false)
-    setAddOpen(false)
+    setHistoryOpen(false)
     setDeleteTarget(null)
     setForceCloseTarget(null)
     setError(null)
@@ -140,7 +143,10 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       const activePath = currentProjectPath()
       const activeKey = activePath === undefined
         ? undefined
-        : keys.find(candidate => res.boards[candidate]?.projectPath === activePath)
+        : keys.find(candidate => {
+          const candidateBoard = res.boards[candidate]
+          return candidateBoard?.projectPath === activePath || candidateBoard?.items.some(item => item.taskWorkspace?.path === activePath) === true
+        })
       const fallback = activeKey ?? (remembered !== null && keys.includes(remembered) ? remembered : keys[0]) ?? null
       setCurrentKey(prev => prev !== null && keys.includes(prev) ? prev : fallback)
     } catch (err) {
@@ -191,22 +197,34 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const handleSelectProject = (key: string): void => {
     setCurrentKey(key)
     setSelectedId(null)
+    setHistoryOpen(false)
+    setHistoryItems([])
+    setHistoryTotal(0)
     window.localStorage.setItem(CURRENT_KEY, key)
   }
 
-  const handleAddProject = async (): Promise<void> => {
-    const path = addPath.trim()
-    if (path === '') return
+  const loadHistory = async (append: boolean): Promise<void> => {
+    if (currentKey === null || historyLoading) return
+    setHistoryLoading(true)
     try {
-      const { workspace } = await addProject(path)
-      await load()
-      setCurrentKey(workspace.id)
-      setAddOpen(false)
-      setAddPath('')
-      window.localStorage.setItem(CURRENT_KEY, workspace.id)
+      const offset = append ? historyItems.length : 0
+      const result = await fetchHistory(currentKey, offset)
+      setHistoryItems(previous => append ? [...previous, ...result.items] : result.items)
+      setHistoryTotal(result.total)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setHistoryLoading(false)
     }
+  }
+
+  const toggleHistory = (): void => {
+    if (historyOpen) {
+      setHistoryOpen(false)
+      return
+    }
+    setHistoryOpen(true)
+    void loadHistory(false)
   }
 
   const handleSaveItem = async (input: ItemInput): Promise<void> => {
@@ -318,7 +336,9 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
         ? '已批准，Agent 将在原会话继续下一环节'
         : action === 'reject'
           ? '已退回，Agent 将在原会话修订当前环节'
-          : '已确认交付，Agent 正在执行最终检查并提交代码')
+          : updated.integrationState === 'conflicted'
+            ? `自动集成发生冲突，已创建处理任务 ${updated.conflictTaskId?.slice(0, 8) ?? ''}`
+            : '任务已自动提交并集成，可在历史任务中查看')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -378,10 +398,18 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                   ))}
                 </select>
               )}
-              <button type='button' className={css.headBtn} onClick={() => setAddOpen(true)}>＋ 添加项目</button>
               {board !== null && (
                 <>
                   <button type='button' className={css.headBtn} onClick={() => setEditor({ item: null, defaultStatus: board.columns[0]?.id })}>＋ 新建工作项</button>
+                  <button
+                    type='button'
+                    className={css.headBtn}
+                    onClick={toggleHistory}
+                    aria-expanded={historyOpen}
+                    aria-controls='taskboard-history-panel'
+                  >
+                    {historyOpen ? '返回看板' : '历史任务'}
+                  </button>
                   <button type='button' className={css.headBtn} onClick={() => setSettingsOpen(true)}>看板设置</button>
                 </>
               )}
@@ -396,18 +424,20 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
             {board === null
               ? (
                 <div className={css.empty}>
-                  <p>还没有项目看板。添加一个工作区项目（目录路径）开始。</p>
-                  <div className={css.emptyAdd}>
-                    <input
-                      className={css.pathInput}
-                      value={addPath}
-                      onChange={ev => setAddPath(ev.target.value)}
-                      placeholder='/abs/path/to/project'
-                    />
-                    <button type='button' className={css.addBtn} onClick={handleAddProject}>添加项目</button>
-                  </div>
+                  <p>当前没有已注册的 DSH 工作区，请先在会话侧选择或创建工作区。</p>
                 </div>
                 )
+              : historyOpen
+                ? (
+                  <HistoryPanel
+                    projectTitle={board.projectTitle}
+                    items={historyItems}
+                    total={historyTotal}
+                    loading={historyLoading}
+                    onLoadMore={() => { void loadHistory(true) }}
+                    onClose={() => setHistoryOpen(false)}
+                  />
+                  )
               : (
                 <div className={css.boardWrap}>
                   <Board
@@ -461,32 +491,14 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
         />
       )}
 
-      {addOpen && (
-        <div className={css.mask} onClick={() => setAddOpen(false)}>
-          <div className={css.addPanel} role='dialog' aria-label='添加项目' onClick={ev => ev.stopPropagation()}>
-            <h3 className={css.addTitle}>添加项目</h3>
-            <input
-              className={css.pathInput}
-              value={addPath}
-              onChange={ev => setAddPath(ev.target.value)}
-              placeholder='工作区目录绝对路径'
-              autoFocus
-              data-testid='taskboard-add-path'
-            />
-            <footer className={css.addFoot}>
-              <button type='button' className={css.cancelBtn} onClick={() => setAddOpen(false)}>取消</button>
-              <button type='button' className={css.saveBtn} onClick={() => handleAddProject()} disabled={addPath.trim() === ''}>添加</button>
-            </footer>
-          </div>
-        </div>
-      )}
-
       {deleteTarget !== null && (
         <ConfirmDialog
           title='删除工作项'
           message={deleteTarget.sessionId === undefined
             ? `确定删除「${deleteTarget.title}」吗？卡片将从看板移除。`
-            : deleteTarget.gitCheckpoint === undefined
+            : deleteTarget.taskWorkspace !== undefined
+              ? `确定删除「${deleteTarget.title}」吗？系统会停止 Agent 并删除该任务的独立 worktree/分支，不会影响其他并行任务。`
+              : deleteTarget.gitCheckpoint === undefined
               ? `确定删除「${deleteTarget.title}」吗？这是没有回退基线的旧任务：系统会停止 Agent、归档会话并删除卡片，但无法自动撤销旧任务已经产生的文件改动。`
               : `确定删除「${deleteTarget.title}」吗？系统会立即停止 Agent，把工作区和暂存区恢复到任务首次执行前，再归档会话并删除卡片。`}
           confirmLabel={running ? '处理中…' : '删除'}
@@ -498,7 +510,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       {deliveryTarget !== null && (
         <ConfirmDialog
           title='确认最终交付'
-          message={`确认「${deliveryTarget.title}」的交付物符合要求吗？确认后 Agent 将运行最终检查，只提交本任务代码；提交成功后会话和卡片会自动归档。`}
+          message={`确认「${deliveryTarget.title}」的交付物符合要求吗？确认后看板会自动提交该任务的独立 worktree，并串行集成到目标分支；若冲突会保留提交并自动创建处理任务。`}
           confirmLabel='确认并提交'
           onCancel={() => setDeliveryTarget(null)}
           onConfirm={() => handleExecutionAction('confirm-delivery')}
@@ -508,7 +520,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       {forceCloseTarget !== null && (
         <ConfirmDialog
           title='强制关闭任务并回退'
-          message={`确定强制关闭「${forceCloseTarget.title}」吗？系统会立即停止 Agent，并把 Git 工作区和暂存区恢复到该任务首次执行前的状态；任务启动后产生的未提交改动将被撤销。成功后会话和卡片会归档。`}
+          message={`确定强制关闭「${forceCloseTarget.title}」吗？系统会立即停止 Agent 并删除该任务的独立 worktree/分支，不会修改其他任务或项目主工作区。成功后会话和卡片会归档。`}
           confirmLabel={running ? '处理中…' : '强制关闭并回退'}
           onCancel={() => setForceCloseTarget(null)}
           onConfirm={() => handleForceClose()}
