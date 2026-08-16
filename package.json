@@ -17,6 +17,7 @@
     "dsh:restart": "node scripts/restart-dsh.mjs restart",
     "dsh:start": "node scripts/restart-dsh.mjs start",
     "dsh:stop": "node scripts/restart-dsh.mjs stop",
+    "dsh:doctor": "node scripts/dsh-doctor.mjs",
     "deploy": "pnpm run build && wrangler deploy",
     "lint": "pnpm --recursive --if-present run lint",
     "pack:check": "pnpm --recursive --if-present run pack:check",
