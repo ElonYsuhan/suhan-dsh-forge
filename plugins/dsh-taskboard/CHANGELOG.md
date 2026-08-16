@@ -4,8 +4,8 @@
 
 ### Added
 - Isolate concurrent tasks in task-owned Git worktrees and serialize only final repository integration.
-- Automatically create a linked conflict-resolution task when a completed task cannot be integrated safely.
-- Add workspace-scoped paginated task history and durable Git commit references.
+- Resolve rebase conflicts autonomously in the original task worktree and session, then continue serialized integration without creating a second task.
+- Add workspace-scoped paginated task history, durable Git commit references, and direct reopening of retained task sessions.
 - Keep a last-known-good data backup and recover from a corrupt primary data file.
 - Enforce bounded JSON request bodies and validate work-item, parent, status, type, and settings payloads.
 

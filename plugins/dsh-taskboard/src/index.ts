@@ -33,7 +33,7 @@ import { restoreGitCheckpoint } from './gitCheckpoint.ts'
 import { HttpError, readJsonBody } from './http.ts'
 import { createBoard, executionModeOf, executionStateOf, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type TimelineEntry, type WorkItem } from './shared/types.ts'
 import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
-import { commitTaskWorkspace, deleteTaskBranch, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError } from './taskWorkspace.ts'
+import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
 import { createItemFromBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
@@ -314,44 +314,6 @@ function touch (board: Board, item: WorkItem): void {
   board.updatedAt = item.updatedAt
 }
 
-/** 集成失败后生成一个显式、可追溯的冲突处理任务。 */
-function createConflictItem (
-  board: Board,
-  source: WorkItem,
-  sourceCommit: string,
-  sourceBranch: string,
-  reason: string
-): WorkItem {
-  const now = new Date().toISOString()
-  const item: WorkItem = {
-    id: randomUUID(),
-    type: 'task',
-    title: `处理集成冲突：${source.title}`,
-    desc: [
-      `原工作项 ${source.id} 已生成独立提交 ${sourceCommit}，但无法自动集成。`,
-      `原因：${reason}`,
-      '执行本任务时，请在独立 worktree 中运行 git cherry-pick --no-commit 指定提交，人工判断并解决冲突；不要直接修改项目主工作区。'
-    ].join('\n'),
-    priority: source.priority,
-    labels: [...new Set([...source.labels, 'integration-conflict'])],
-    status: board.columns[0]?.id ?? 'todo',
-    parentId: source.parentId,
-    iteration: source.iteration,
-    executionMode: 'review',
-    executionState: 'idle',
-    integrationState: 'pending',
-    conflictOf: source.id,
-    conflictSourceCommit: sourceCommit,
-    conflictSourceBranch: sourceBranch,
-    timeline: [],
-    createdAt: now,
-    updatedAt: now,
-    archived: false
-  }
-  pushTimeline(item, { action: 'created', to: item.status, note: `由工作项 ${source.id} 的集成冲突自动创建` })
-  return item
-}
-
 /** 是否已有一条不能并发替换的执行。 */
 function executionActive (state: ExecutionState): boolean {
   return state === 'running' || state === 'awaiting-review' || state === 'awaiting-delivery' || state === 'committing'
@@ -368,9 +330,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
     item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
     `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：可自主逐环节推进'}`,
     `【当前环节】${phase}`,
-    item.conflictSourceCommit === undefined
-      ? '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。'
-      : `【冲突处理】先运行 git cherry-pick --no-commit ${item.conflictSourceCommit}，解决冲突并验证；不得创建提交，最终提交由看板完成。`,
+    '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。',
     '',
     '必须遵守：',
     '- 先读取并遵守工作区内的工程指令。只处理本工作项，不覆盖或提交无关改动。',
@@ -479,13 +439,12 @@ function retireDeliveredAgent (ctx: Context, sessionId: string, agent: Agent, li
   })
 }
 
-/** 停止持有任务会话的资源并归档；Git 结果已经落盘时，归档失败只记录不回滚提交。 */
-async function closeTaskSession (ctx: Context, item: WorkItem): Promise<string | undefined> {
-  const sessionId = item.sessionId
-  if (sessionId === undefined) return undefined
+/** 完成任务后只释放 live Agent；会话、worktree 与临时 Workspace 作为可打开的历史档案保留。 */
+async function preserveTaskSession (ctx: Context, item: WorkItem): Promise<string | undefined> {
+  if (item.sessionId === undefined) return undefined
   const errors: string[] = []
   try {
-    const live = ctx.agents.get(SessionId(sessionId))
+    const live = ctx.agents.get(SessionId(item.sessionId))
     if (live !== undefined) {
       await live.whenIdle()
       await ctx.sessions.flush(live.session)
@@ -494,31 +453,44 @@ async function closeTaskSession (ctx: Context, item: WorkItem): Promise<string |
     errors.push(error instanceof Error ? error.message : String(error))
   }
   try {
-    const handle = agentHandles.get(sessionId)
+    const handle = agentHandles.get(item.sessionId)
     if (handle !== undefined) {
       await handle.dispose()
-      agentHandles.delete(sessionId)
+      agentHandles.delete(item.sessionId)
     }
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error))
-  }
-  try {
-    await ctx.workspaceRegistry.archiveSession(SessionId(sessionId))
-  } catch (error) {
-    errors.push(error instanceof Error ? error.message : String(error))
-  }
-  try {
-    await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sessionId)
   } catch (error) {
     errors.push(error instanceof Error ? error.message : String(error))
   }
   return errors.length === 0 ? undefined : errors.join('；')
 }
 
+async function requestConflictResolution (
+  ctx: Context,
+  file: BoardsFile,
+  board: Board,
+  item: WorkItem,
+  result: Extract<IntegrationResult, { kind: 'conflicted' }>
+): Promise<void> {
+  item.commitRef = result.sourceCommit
+  item.integrationState = 'conflicted'
+  item.executionState = result.rebaseInProgress ? 'running' : 'blocked'
+  pushTimeline(item, { action: 'note', note: `变基集成受阻，保留在原任务处理：${result.reason}` })
+  touch(board, item)
+  await saveBoards(file)
+  if (!result.rebaseInProgress || item.sessionId === undefined) return
+  const agent = await resolveTaskAgent(ctx, item.sessionId, item.agentPreset)
+  followup(agent, [
+    '自动变基集成遇到代码冲突。请在当前任务 worktree 中根据整个仓库的功能、测试和工程约束自主解决所有冲突。',
+    '不要创建新任务，不要切换分支，不要运行 git commit/rebase/merge；可以编辑冲突文件并执行验证。',
+    '确认语义正确且 git diff --check、相关测试通过后，调用 taskboard_progress(outcome="integration_resolved", summary="冲突取舍与验证摘要")。'
+  ].join('\n'))
+}
+
 /** 自动提交任务 worktree，并在仓库级短锁内集成到目标分支。 */
 async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Board, item: WorkItem): Promise<void> {
   const workspace = item.taskWorkspace
   if (workspace === undefined) throw new Error('任务缺少隔离 worktree，不能使用自动集成流程')
+  const pendingCommit = item.integrationState === 'conflicted' ? item.commitRef : undefined
 
   item.executionState = 'committing'
   item.integrationState = 'integrating'
@@ -528,7 +500,9 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
 
   let sourceCommit: string
   try {
-    sourceCommit = await commitTaskWorkspace(workspace, item.id, item.title)
+    sourceCommit = pendingCommit !== undefined
+      ? pendingCommit
+      : await commitTaskWorkspace(workspace, item.id, item.title)
   } catch (error) {
     item.executionState = 'blocked'
     item.integrationState = 'pending'
@@ -542,22 +516,11 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
     .catch(error => ({
       kind: 'conflicted' as const,
       sourceCommit,
-      reason: `自动集成过程异常终止：${error instanceof Error ? error.message : String(error)}`
+      reason: `自动集成过程异常终止：${error instanceof Error ? error.message : String(error)}`,
+      rebaseInProgress: false
     }))
   if (result.kind === 'conflicted') {
-    const conflict = createConflictItem(board, item, result.sourceCommit, workspace.branch, result.reason)
-    board.items.push(conflict)
-    item.commitRef = result.sourceCommit
-    item.conflictTaskId = conflict.id
-    item.integrationState = 'conflicted'
-    item.executionState = 'failed'
-    item.archived = true
-    pushTimeline(item, { action: 'note', note: `自动集成受阻；已创建冲突处理任务 ${conflict.id}：${result.reason}` })
-    const sessionWarning = await closeTaskSession(ctx, item)
-    await discardTaskWorkspace(workspace, true)
-    if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `Git 冲突现场已保存，但会话归档失败：${sessionWarning}` })
-    touch(board, item)
-    await saveBoards(file)
+    await requestConflictResolution(ctx, file, board, item, result)
     return
   }
 
@@ -571,10 +534,8 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
     item.status = finalColumn.id
   }
   pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}` })
-  const sessionWarning = await closeTaskSession(ctx, item)
-  await discardTaskWorkspace(workspace)
-  if (item.conflictSourceBranch !== undefined) await deleteTaskBranch(workspace.root, item.conflictSourceBranch)
-  if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但会话归档失败：${sessionWarning}` })
+  const sessionWarning = await preserveTaskSession(ctx, item)
+  if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
   touch(board, item)
   await saveBoards(file)
 }
@@ -610,7 +571,7 @@ export function apply (ctx: Context): void {
     parameters: {
       outcome: {
         type: 'string',
-        enum: ['stage_complete', 'blocked', 'delivery_ready', 'delivered'],
+        enum: ['stage_complete', 'blocked', 'delivery_ready', 'integration_resolved', 'delivered'],
         required: true,
         description: 'stage_complete=当前环节产出完成；blocked=遇到阻塞；delivery_ready=交付物已就绪；delivered=人工确认后已完成代码提交'
       },
@@ -642,6 +603,33 @@ export function apply (ctx: Context): void {
       const summary = typeof args.summary === 'string' && args.summary.trim() !== ''
         ? args.summary.trim()
         : undefined
+      if (args.outcome === 'integration_resolved') {
+        if (item.taskWorkspace === undefined || item.integrationState !== 'conflicted') return '当前任务不在变基冲突处理状态。'
+        item.executionState = 'committing'
+        item.integrationState = 'integrating'
+        pushTimeline(item, { action: 'note', note: summary === undefined ? 'Agent 已完成冲突取舍，继续变基集成' : `Agent 已完成冲突取舍：${summary}` })
+        touch(foundBoard, item)
+        await saveBoards(file)
+        const result = await withLock(`repository:${item.taskWorkspace.root}`, async () => continueTaskIntegration(item.taskWorkspace!))
+        if (result.kind === 'conflicted') {
+          await requestConflictResolution(ctx, file, foundBoard, item, result)
+          return result.rebaseInProgress ? '仍有下一处变基冲突，请继续解决并再次汇报 integration_resolved。' : `集成被外部工作区状态阻塞：${result.reason}`
+        }
+        item.commitRef = result.commit
+        item.integrationState = 'merged'
+        item.executionState = 'idle'
+        item.archived = true
+        const finalColumn = foundBoard.columns.at(-1)
+        if (finalColumn !== undefined && item.status !== finalColumn.id) {
+          pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '冲突已自主解决并完成变基集成' })
+          item.status = finalColumn.id
+        }
+        pushTimeline(item, { action: 'note', note: `变基集成完成，提交：${result.commit}；历史会话保留可打开` })
+        touch(foundBoard, item)
+        await saveBoards(file)
+        if (exec.agent !== undefined) retireDeliveredAgent(ctx, sessionId, exec.agent, lifecycle)
+        return `冲突已解决并完成变基集成：${result.commit}。历史会话已保留。`
+      }
       if (args.outcome === 'blocked') {
         item.executionState = 'blocked'
         pushTimeline(item, { action: 'note', note: summary === undefined ? '执行阻塞' : `执行阻塞：${summary}` })

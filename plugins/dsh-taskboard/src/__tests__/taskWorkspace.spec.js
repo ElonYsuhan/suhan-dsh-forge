@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { afterEach, describe, expect, it } from 'vitest'
-import { commitTaskWorkspace, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError } from '../taskWorkspace.ts'
+import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError } from '../taskWorkspace.ts'
 
 const execFileAsync = promisify(execFile)
 const tempDirs = []
@@ -69,7 +69,7 @@ describe('task worktree integration', () => {
     await discardTaskWorkspace(second)
   })
 
-  it('preserves the source commit when concurrent tasks edit the same lines', async () => {
+  it('keeps a conflicted rebase in the same worktree and continues after autonomous resolution', async () => {
     const root = await repository()
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-conflict-'))
     tempDirs.push(storage)
@@ -84,9 +84,17 @@ describe('task worktree integration', () => {
 
     const result = await integrateTaskWorkspace(second)
     expect(result.kind).toBe('conflicted')
-    if (result.kind === 'conflicted') expect(result.sourceCommit).toBe(sourceCommit)
+    if (result.kind === 'conflicted') {
+      expect(result.sourceCommit).toBe(sourceCommit)
+      expect(result.rebaseInProgress).toBe(true)
+    }
     expect(await readFile(join(root, 'shared.txt'), 'utf8')).toBe('first\n')
-    expect(await git(second.path, 'rev-parse', 'HEAD')).toBe(sourceCommit)
+    expect(await readFile(join(second.path, 'shared.txt'), 'utf8')).toContain('<<<<<<<')
+
+    await writeFile(join(second.path, 'shared.txt'), 'first and second\n')
+    const continued = await continueTaskIntegration(second)
+    expect(continued.kind).toBe('merged')
+    expect(await readFile(join(root, 'shared.txt'), 'utf8')).toBe('first and second\n')
 
     await discardTaskWorkspace(first)
     await discardTaskWorkspace(second)

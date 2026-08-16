@@ -21,11 +21,11 @@
     ],
     "filesystem": [
       "Read/write persistent taskboard state and its recovery backup under $DSH_HOME/storages/dsh-taskboard (overridable via DSH_TASKBOARD_DATA); read the legacy package-local data file once for non-destructive migration",
-      "Create/remove isolated per-task Git worktrees under the taskboard runtime data directory",
-      "Update a registered workspace only during serialized final integration; preserve source branches when integration conflicts"
+      "Create isolated per-task Git worktrees under the taskboard runtime data directory; retain completed worktrees for reopenable session history and remove them when tasks are deleted or force-closed",
+      "Update a registered workspace only during serialized rebase and fast-forward integration; retain conflict state in the task-owned worktree for same-session resolution"
     ],
     "process": [
-      "Run git with explicit argument arrays under registered workspaces and task-owned worktrees (worktree, status, temporary-index read-tree/write-tree/commit-tree baseline capture, add, commit, rebase, merge, branch, rev-parse and cleanup)"
+      "Run git with explicit argument arrays under registered workspaces and task-owned worktrees (worktree, status, temporary-index read-tree/write-tree/commit-tree baseline capture, add, commit, rebase/rebase --continue, merge --ff-only, branch, rev-parse and cleanup)"
     ],
     "secrets": []
   },

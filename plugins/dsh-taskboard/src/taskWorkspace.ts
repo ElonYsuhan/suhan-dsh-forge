@@ -123,7 +123,7 @@ export async function commitTaskWorkspace (workspace: TaskWorkspace, itemId: str
 
 export type IntegrationResult =
   | { kind: 'merged'; commit: string }
-  | { kind: 'conflicted'; sourceCommit: string; reason: string }
+  | { kind: 'conflicted'; sourceCommit: string; reason: string; rebaseInProgress: boolean }
 
 /**
  * 将任务提交重放到最新目标分支，再以 ff-only 更新主工作区。
@@ -133,20 +133,20 @@ export async function integrateTaskWorkspace (workspace: TaskWorkspace): Promise
   const sourceCommit = (await git(workspace.path, ['rev-parse', 'HEAD'])).trim()
   const currentBranch = (await git(workspace.root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
   if (currentBranch !== workspace.targetBranch) {
-    return { kind: 'conflicted', sourceCommit, reason: `目标工作区已从 ${workspace.targetBranch} 切换到 ${currentBranch || 'detached HEAD'}` }
+    return { kind: 'conflicted', sourceCommit, reason: `目标工作区已从 ${workspace.targetBranch} 切换到 ${currentBranch || 'detached HEAD'}`, rebaseInProgress: false }
   }
   if (await status(workspace.root) !== '') {
-    return { kind: 'conflicted', sourceCommit, reason: '目标工作区存在人工或其他进程产生的未提交改动' }
+    return { kind: 'conflicted', sourceCommit, reason: '目标工作区存在人工或其他进程产生的未提交改动', rebaseInProgress: false }
   }
 
   try {
     await git(workspace.path, ['rebase', '--keep-empty', '--onto', workspace.targetBranch, workspace.baseCommit, workspace.branch])
   } catch (error) {
-    await git(workspace.path, ['rebase', '--abort']).catch(() => {})
     return {
       kind: 'conflicted',
       sourceCommit,
-      reason: `任务提交无法自动重放到最新 ${workspace.targetBranch}：${error instanceof Error ? error.message : String(error)}`
+      reason: `任务提交无法自动重放到最新 ${workspace.targetBranch}：${error instanceof Error ? error.message : String(error)}`,
+      rebaseInProgress: true
     }
   }
 
@@ -157,10 +157,39 @@ export async function integrateTaskWorkspace (workspace: TaskWorkspace): Promise
     return {
       kind: 'conflicted',
       sourceCommit: rebasedCommit,
-      reason: `目标分支在集成期间发生变化：${error instanceof Error ? error.message : String(error)}`
+      reason: `目标分支在集成期间发生变化：${error instanceof Error ? error.message : String(error)}`,
+      rebaseInProgress: false
     }
   }
   return { kind: 'merged', commit: rebasedCommit }
+}
+
+/** Agent 在原任务 worktree 解决冲突后，继续变基并 fast-forward 集成。 */
+export async function continueTaskIntegration (workspace: TaskWorkspace): Promise<IntegrationResult> {
+  await git(workspace.path, ['diff', '--check'])
+  await git(workspace.path, ['add', '-A', '--', '.'])
+  try {
+    await git(workspace.path, ['-c', 'core.editor=true', 'rebase', '--continue'])
+  } catch (error) {
+    return {
+      kind: 'conflicted',
+      sourceCommit: (await git(workspace.path, ['rev-parse', 'HEAD'])).trim(),
+      reason: `继续变基时仍有待处理冲突：${error instanceof Error ? error.message : String(error)}`,
+      rebaseInProgress: true
+    }
+  }
+  const commit = (await git(workspace.path, ['rev-parse', 'HEAD'])).trim()
+  try {
+    await git(workspace.root, ['merge', '--ff-only', workspace.branch])
+    return { kind: 'merged', commit }
+  } catch (error) {
+    return {
+      kind: 'conflicted',
+      sourceCommit: commit,
+      reason: `目标分支在冲突处理期间发生变化：${error instanceof Error ? error.message : String(error)}`,
+      rebaseInProgress: false
+    }
+  }
 }
 
 /** 删除任务 worktree；冲突现场需要保留分支时只移除 worktree。 */

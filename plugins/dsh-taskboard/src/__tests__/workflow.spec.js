@@ -25,6 +25,7 @@ const workspaceMocks = vi.hoisted(() => ({
   })),
   commit: vi.fn(async () => 'task-commit'),
   integrate: vi.fn(async () => ({ kind: 'merged', commit: 'integrated-commit' })),
+  continueIntegration: vi.fn(async () => ({ kind: 'merged', commit: 'resolved-commit' })),
   discard: vi.fn(async () => {}),
   deleteBranch: vi.fn(async () => {})
 }))
@@ -45,6 +46,7 @@ vi.mock('../taskWorkspace.ts', async importOriginal => ({
   resolveGitRoot: workspaceMocks.resolve,
   commitTaskWorkspace: workspaceMocks.commit,
   integrateTaskWorkspace: workspaceMocks.integrate,
+  continueTaskIntegration: workspaceMocks.continueIntegration,
   discardTaskWorkspace: workspaceMocks.discard,
   deleteTaskBranch: workspaceMocks.deleteBranch
 }))
@@ -322,9 +324,9 @@ describe('taskboard execution workflow', () => {
     expect(deliveryResponse.body.item.commitRef).toBe('integrated-commit')
     expect(workspaceMocks.commit).toHaveBeenCalledOnce()
     expect(workspaceMocks.integrate).toHaveBeenCalledOnce()
-    expect(archiveSession).toHaveBeenCalledOnce()
-    expect(detachSession).toHaveBeenCalledOnce()
-    expect(deleteWorkspace).toHaveBeenCalledOnce()
+    expect(archiveSession).not.toHaveBeenCalled()
+    expect(detachSession).not.toHaveBeenCalled()
+    expect(deleteWorkspace).not.toHaveBeenCalled()
 
     const archivedResponse = response()
     await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), archivedResponse)
@@ -376,8 +378,8 @@ describe('taskboard execution workflow', () => {
     expect(forceCloseResponse.status).toBe(200)
     expect(forceCloseResponse.body.item.archived).toBe(true)
     expect(autoAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(workspaceMocks.discard).toHaveBeenCalledTimes(2)
-    expect(archiveSession).toHaveBeenCalledTimes(2)
+    expect(workspaceMocks.discard).toHaveBeenCalledOnce()
+    expect(archiveSession).toHaveBeenCalledOnce()
 
     const createDeleteResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -402,8 +404,8 @@ describe('taskboard execution workflow', () => {
     expect(deleteResponse.body.rolledBack).toBe(true)
     expect(deleteResponse.body.item.archived).toBe(true)
     expect(deleteAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(workspaceMocks.discard).toHaveBeenCalledTimes(3)
-    expect(archiveSession).toHaveBeenCalledTimes(3)
+    expect(workspaceMocks.discard).toHaveBeenCalledTimes(2)
+    expect(archiveSession).toHaveBeenCalledTimes(2)
 
     const createPlainResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -441,20 +443,24 @@ describe('taskboard execution workflow', () => {
     workspaceMocks.integrate.mockResolvedValueOnce({
       kind: 'conflicted',
       sourceCommit: 'conflict-source-commit',
-      reason: 'shared.txt content conflict'
+      reason: 'shared.txt content conflict',
+      rebaseInProgress: true
     })
     const confirmConflictResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${conflictSourceId}/confirm-delivery`), confirmConflictResponse)
     expect(confirmConflictResponse.status).toBe(200)
-    expect(confirmConflictResponse.body.item.archived).toBe(true)
+    expect(confirmConflictResponse.body.item.archived).toBe(false)
     expect(confirmConflictResponse.body.item.integrationState).toBe('conflicted')
-    expect(confirmConflictResponse.body.item.conflictTaskId).toBeTypeOf('string')
+    expect(confirmConflictResponse.body.item.executionState).toBe('running')
 
-    const conflictBoardResponse = response()
-    await route(request('GET', '/taskboard/boards'), conflictBoardResponse)
-    const generated = conflictBoardResponse.body.boards['workspace-1'].items.find(item => item.conflictOf === conflictSourceId)
-    expect(generated.title).toContain('处理集成冲突')
-    expect(generated.conflictSourceCommit).toBe('conflict-source-commit')
-    expect(generated.archived).toBe(false)
+    await taskTool.execute({ outcome: 'integration_resolved', summary: '保留双方功能并通过测试' }, { agent: conflictAgent })
+    expect(workspaceMocks.continueIntegration).toHaveBeenCalledOnce()
+    const resolvedBoardResponse = response()
+    await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), resolvedBoardResponse)
+    const resolved = resolvedBoardResponse.body.items.find(item => item.id === conflictSourceId)
+    expect(resolved.archived).toBe(true)
+    expect(resolved.integrationState).toBe('merged')
+    expect(resolved.commitRef).toBe('resolved-commit')
+    expect(resolvedBoardResponse.body.items.some(item => item.conflictOf === conflictSourceId)).toBe(false)
   })
 })

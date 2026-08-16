@@ -345,7 +345,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
         : action === 'reject'
           ? '已退回，Agent 将在原会话修订当前环节'
           : updated.integrationState === 'conflicted'
-            ? `自动集成发生冲突，已创建处理任务 ${updated.conflictTaskId?.slice(0, 8) ?? ''}`
+            ? '变基发生冲突，系统已在原任务会话中自主处理'
             : '任务已自动提交并集成，可在历史任务中查看')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -444,6 +444,10 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                     total={historyTotal}
                     loading={historyLoading}
                     onLoadMore={() => { void loadHistory(true) }}
+                    onOpenSession={sessionId => {
+                      closeAll()
+                      openSession(sessionId)
+                    }}
                     onClose={() => setHistoryOpen(false)}
                   />
                   )
@@ -519,7 +523,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       {deliveryTarget !== null && (
         <ConfirmDialog
           title='确认最终交付'
-          message={`确认「${deliveryTarget.title}」的交付物符合要求吗？确认后看板会自动提交该任务的独立 worktree，并串行集成到目标分支；若冲突会保留提交并自动创建处理任务。`}
+          message={`确认「${deliveryTarget.title}」的交付物符合要求吗？确认后看板会自动提交独立 worktree，通过变基串行集成到目标分支；若发生代码冲突，系统会在原任务会话中自主取舍并继续集成。`}
           confirmLabel='确认并提交'
           onCancel={() => setDeliveryTarget(null)}
           onConfirm={() => handleExecutionAction('confirm-delivery')}

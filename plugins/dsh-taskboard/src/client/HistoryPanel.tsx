@@ -8,6 +8,7 @@ export interface HistoryPanelProps {
   total: number
   loading: boolean
   onLoadMore: () => void
+  onOpenSession: (sessionId: string) => void
   onClose: () => void
 }
 
@@ -18,7 +19,7 @@ function outcome (item: WorkItem): string {
   return item.executionState === 'failed' ? '失败归档' : '已归档'
 }
 
-export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore, onClose }: HistoryPanelProps) {
+export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore, onOpenSession, onClose }: HistoryPanelProps) {
   return (
     <section
       id='taskboard-history-panel'
@@ -51,6 +52,9 @@ export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore,
                 </div>
                 {item.conflictTaskId !== undefined && <p className={css.note}>已生成冲突处理任务：{item.conflictTaskId.slice(0, 8)}</p>}
                 {item.deliverySummary !== undefined && <p className={css.summary}>{item.deliverySummary}</p>}
+                {item.sessionId !== undefined && (
+                  <button type='button' className={css.openSession} onClick={() => onOpenSession(item.sessionId!)}>打开会话</button>
+                )}
               </article>
             ))}
           </div>
