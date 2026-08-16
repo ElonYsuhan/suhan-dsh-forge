@@ -57,6 +57,8 @@ const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const SETTINGS_KEY = 'suhan-dsh-virtual-companion-settings'
 const DRAG_THRESHOLD = 5
 const SINGLE_CLICK_DELAY_MS = 260
+/** 0.1s 静音 WAV：在用户手势中播放一次以解锁 Audio 元素的自动播放限制。 */
+const SILENT_WAV = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=='
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
   x: typeof window === 'undefined' ? 24 : Math.max(24, window.innerWidth - 280),
   y: 96
@@ -98,8 +100,10 @@ function getSpeechRecognition (): SpeechRecognitionConstructorLike | undefined {
  * @param _props - composed slot props (this entry has no inject face).
  */
 export function VirtualCompanion (_props: VirtualCompanionProps) {
+  const stageRef = useRef<HTMLDivElement | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUnlockedRef = useRef(false)
   const audioUrlRef = useRef<string | null>(null)
   const dragStateRef = useRef<{
     pointerId: number
@@ -131,6 +135,34 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
 
+  // 唯一的 Audio 元素：浏览器要求媒体播放由用户手势解锁，元素在挂载时
+  // 创建、在首次指针交互时播放一次静音片段完成解锁，之后复用播放所有句子。
+  useEffect(() => {
+    const audio = new Audio()
+    audio.preload = 'auto'
+    audioRef.current = audio
+    return () => {
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+      if (audioRef.current === audio) audioRef.current = null
+    }
+  }, [])
+
+  const unlockAudio = useCallback((): void => {
+    const audio = audioRef.current
+    if (audio === null || audioUnlockedRef.current) return
+    void (async () => {
+      try {
+        audio.src = SILENT_WAV
+        await audio.play()
+        audioUnlockedRef.current = true
+      } catch {
+        // 静音解锁失败不阻断交互；正式播放失败会走现有错误提示
+      }
+    })()
+  }, [])
+
   useEffect(() => {
     try {
       window.localStorage.setItem(POSITION_KEY, JSON.stringify(position))
@@ -156,7 +188,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       audio.pause()
       audio.removeAttribute('src')
       audio.load()
-      audioRef.current = null
     }
     if (audioUrlRef.current !== null) {
       URL.revokeObjectURL(audioUrlRef.current)
@@ -217,10 +248,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
       if (!interactingRef.current || blob === null) return
       stopCurrentAudio()
+      const audio = audioRef.current
+      if (audio === null) throw new Error('音频播放器未就绪')
       const url = URL.createObjectURL(blob)
       audioUrlRef.current = url
-      const audio = new Audio(url)
-      audioRef.current = audio
+      audio.src = url
       onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
         if (audioRef.current === audio) {
@@ -536,6 +568,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
 
   const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    unlockAudio()
     dragStateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
@@ -545,7 +578,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
     dragMovedRef.current = false
     event.currentTarget.setPointerCapture(event.pointerId)
-  }, [position])
+  }, [position, unlockAudio])
 
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = dragStateRef.current
@@ -555,9 +588,14 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     if (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD) {
       dragMovedRef.current = true
     }
+    // 钳制在视口内：四周留 8px 余量，防止人物被拖出屏幕外
+    const bounds = stageRef.current?.getBoundingClientRect()
+    const margin = 8
+    const maxX = Math.max(margin, window.innerWidth - (bounds?.width ?? 150) - margin)
+    const maxY = Math.max(margin, window.innerHeight - (bounds?.height ?? 268) - margin)
     setPosition({
-      x: Math.max(0, state.originX + deltaX),
-      y: Math.max(0, state.originY + deltaY)
+      x: Math.min(maxX, Math.max(margin, state.originX + deltaX)),
+      y: Math.min(maxY, Math.max(margin, state.originY + deltaY))
     })
   }, [])
 
@@ -585,6 +623,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       data-testid='virtual-companion'
     >
       <div
+        ref={stageRef}
         className={`${css.stage} ${speaking ? css.speaking : ''} ${hovered ? css.hovered : ''}`}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
