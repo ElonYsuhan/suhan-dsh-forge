@@ -64,7 +64,6 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
       <h1 id="plugins-page-title">插件列表</h1>
       <p class="lead">统一查看、筛选和安装经过 Forge 门禁的 DSH 插件。</p>
     </div>
-    <a class="primary-link" href="#/quality">查看质量门禁</a>
   </section>
 
   <section class="metrics" aria-label="平台概览">
@@ -74,15 +73,7 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
     <div><strong>RC.6</strong><span>DSH 基准版本</span></div>
   </section>
 
-  <section id="plugins" class="catalog" aria-labelledby="catalog-title">
-    <div class="section-heading">
-      <div>
-        <p class="eyebrow">PLUGIN CATALOG</p>
-        <h2 id="catalog-title">插件列表</h2>
-      </div>
-      <p>展示已通过结构校验、类型检查、自动测试与安装冒烟门禁的插件。</p>
-    </div>
-
+  <section id="plugins" class="catalog" aria-label="插件列表">
     <div class="catalog-tools">
       <label class="search-box">
         <span class="sr-only">搜索插件</span>

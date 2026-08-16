@@ -8,17 +8,9 @@
       <h1 id="quality-page-title">质量门禁</h1>
       <p class="lead">插件上架前需依次通过以下检查，确保可安装、可验证、可追溯。</p>
     </div>
-    <a class="primary-link" href="#/plugins">浏览插件</a>
   </section>
 
-  <section id="standards" class="standards" aria-labelledby="standards-title">
-    <div class="section-heading">
-      <div>
-        <p class="eyebrow">QUALITY GATES</p>
-        <h2 id="standards-title">质量门禁</h2>
-      </div>
-      <p>插件上架前需依次通过以下检查，确保可安装、可验证、可追溯。</p>
-    </div>
+  <section id="standards" class="standards" aria-label="质量门禁">
     <ol class="standards-list">
       <li><span>01</span><div><strong>结构校验</strong><p>Manifest、Cordis Patch 与权限声明完整。</p></div></li>
       <li><span>02</span><div><strong>静态质量</strong><p>严格 TypeScript、源码规则与依赖边界。</p></div></li>

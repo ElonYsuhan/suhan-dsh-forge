@@ -35,7 +35,7 @@ onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
       <span class="forge-status"><i aria-hidden="true"></i> Forge 正常</span>
     </header>
 
-    <div class="module-tabs" role="tablist" aria-label="管理模块">
+    <nav class="module-tabs" role="tablist" aria-label="管理模块">
       <a
         id="plugins-tab"
         :class="{ active: currentRoute === ROUTES.plugins }"
@@ -50,7 +50,7 @@ onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
         role="tab"
         :aria-selected="currentRoute === ROUTES.quality"
       >质量门禁</a>
-    </div>
+    </nav>
 
     <main id="main">
       <div
