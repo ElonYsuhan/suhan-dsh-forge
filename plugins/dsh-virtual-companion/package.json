@@ -1,6 +1,6 @@
 {
   "name": "@suhan-dsh/virtual-companion",
-  "description": "DSH Web draggable 3D human virtual companion with click-to-start proactive voice chat",
+  "description": "DSH Web always-on-top draggable 3D human virtual companion with streaming proactive voice chat",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",

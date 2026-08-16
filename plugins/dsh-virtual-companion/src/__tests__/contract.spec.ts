@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
+import { EventEmitter } from 'node:events'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { PassThrough } from 'node:stream'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.ts'
 import { TtsError, type SpeechSynth } from '../tts.ts'
@@ -18,6 +20,20 @@ interface AudioResponseLike extends ServerResponse {
   status: number
   headers: Record<string, string | number | readonly string[] | undefined>
   body: Buffer
+}
+
+interface StreamAudioResponseLike extends ServerResponse {
+  status: number
+  headers: Record<string, string | number | readonly string[] | undefined>
+  chunks: Buffer[]
+  ended: boolean
+  destroyed: boolean
+  on: (event: string, listener: () => void) => void
+  once: (event: string, listener: () => void) => void
+  emit: (event: string, ...args: unknown[]) => boolean
+  removeListener: (event: string, listener: () => void) => void
+  removeAllListeners: (event?: string) => void
+  destroy: () => void
 }
 
 interface SseResponseLike extends ServerResponse {
@@ -83,6 +99,46 @@ function audioResponse (): AudioResponseLike {
   Object.defineProperty(res, 'status', { get: () => state.status })
   Object.defineProperty(res, 'headers', { get: () => state.headers })
   Object.defineProperty(res, 'body', { get: () => state.body })
+  return res
+}
+
+function streamAudioResponse (): StreamAudioResponseLike {
+  const state: {
+    status: number
+    headers: Record<string, string | number | readonly string[] | undefined>
+    chunks: Buffer[]
+    ended: boolean
+    destroyed: boolean
+  } = { status: 0, headers: {}, chunks: [], ended: false, destroyed: false }
+  const emitter = new EventEmitter()
+  const res = {
+    writeHead (status: number, headers?: Record<string, string | number | readonly string[] | undefined>): void {
+      state.status = status
+      state.headers = headers ?? {}
+    },
+    write (chunk: unknown): boolean {
+      state.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array))
+      return true
+    },
+    end (): void {
+      state.ended = true
+      emitter.emit('finish')
+    },
+    on: emitter.on.bind(emitter),
+    once: emitter.once.bind(emitter),
+    emit: emitter.emit.bind(emitter),
+    removeListener: emitter.removeListener.bind(emitter),
+    removeAllListeners: emitter.removeAllListeners.bind(emitter),
+    destroy (): void {
+      state.destroyed = true
+      emitter.emit('close')
+    }
+  } as unknown as StreamAudioResponseLike
+  Object.defineProperty(res, 'status', { get: () => state.status })
+  Object.defineProperty(res, 'headers', { get: () => state.headers })
+  Object.defineProperty(res, 'chunks', { get: () => state.chunks })
+  Object.defineProperty(res, 'ended', { get: () => state.ended })
+  Object.defineProperty(res, 'destroyed', { get: () => state.destroyed })
   return res
 }
 
@@ -319,6 +375,48 @@ describe('virtual-companion host contract', () => {
     expect(res.headers['Content-Type']).toBe('audio/mpeg')
     expect(res.body.toString()).toBe('fake-mp3')
     expect(synth.synthesize).toHaveBeenCalledWith('你好', 'loli')
+  })
+
+  it('streams TTS audio chunks through the streaming GET route', async () => {
+    const audioStream = new PassThrough()
+    const synth: SpeechSynth & { stream: ReturnType<typeof vi.fn> } = {
+      synthesize: vi.fn(),
+      stream: vi.fn(async () => ({ stream: audioStream, contentType: 'audio/mpeg' })),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = streamAudioResponse()
+    const handling = routes[0]!.handler(
+      request('GET', '/virtual-companion/tts/stream?text=%E4%BD%A0%E5%A5%BD&voice=loli'),
+      res
+    )
+    await new Promise(resolve => setImmediate(resolve))
+    audioStream.end(Buffer.from('fake-mp3'))
+    await handling
+    await new Promise(resolve => setImmediate(resolve))
+
+    expect(res.status).toBe(200)
+    expect(res.headers['Content-Type']).toBe('audio/mpeg')
+    expect(res.chunks.map(chunk => chunk.toString()).join('')).toBe('fake-mp3')
+    expect(res.ended).toBe(true)
+    expect(synth.stream).toHaveBeenCalledWith('你好', 'loli')
+  })
+
+  it('rejects missing streaming TTS text without calling the synthesizer', async () => {
+    const synth: SpeechSynth & { stream: ReturnType<typeof vi.fn> } = {
+      synthesize: vi.fn(),
+      stream: vi.fn(),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = response()
+    await routes[0]!.handler(request('GET', '/virtual-companion/tts/stream'), res)
+    expect(res.status).toBe(400)
+    expect(synth.stream).not.toHaveBeenCalled()
   })
 
   it('falls back to the default TTS voice for invalid style ids', async () => {

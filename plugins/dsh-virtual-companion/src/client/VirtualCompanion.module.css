@@ -1,6 +1,6 @@
 .companion {
-  position: absolute;
-  z-index: 40;
+  position: fixed;
+  z-index: 2147483647;
   width: 200px;
   pointer-events: auto;
   user-select: none;
@@ -88,7 +88,7 @@
   backdrop-filter: blur(10px);
   font-size: 13px;
   line-height: 1.5;
-  z-index: 45;
+  z-index: 2147483647;
   pointer-events: auto;
 }
 

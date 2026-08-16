@@ -7,7 +7,8 @@ import {
   collectReply,
   collectReplySentences,
   normalizeChatText,
-  splitReplySentences
+  splitReplySentences,
+  streamReplyEvents
 } from '../shared/chat.ts'
 import { CHAT_HISTORY_LIMIT, CHAT_TEXT_MAX_LENGTH } from '../shared/types.ts'
 
@@ -107,6 +108,42 @@ describe('collectReplySentences', () => {
 
     await expect(async () => {
       for await (const _sentence of collectReplySentences(stream())) {
+        // consume
+      }
+    }).rejects.toThrow(ChatReplyError)
+  })
+})
+
+describe('streamReplyEvents', () => {
+  it('emits raw deltas immediately and complete sentences for TTS', async () => {
+    async function * stream (): AsyncGenerator<StreamChunk> {
+      yield { type: 'text-delta', index: 0, text: '你好！' }
+      yield { type: 'text-delta', index: 0, text: '今天' }
+      yield { type: 'text-delta', index: 0, text: '好吗？' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+
+    const events = []
+    for await (const event of streamReplyEvents(stream())) {
+      events.push(event)
+    }
+    expect(events).toEqual([
+      { delta: '你好！' },
+      { sentence: '你好！' },
+      { delta: '今天' },
+      { delta: '好吗？' },
+      { sentence: '今天好吗？' }
+    ])
+  })
+
+  it('fails on error finish while streaming deltas', async () => {
+    async function * stream (): AsyncGenerator<StreamChunk> {
+      yield { type: 'text-delta', index: 0, text: '部分' }
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: 'boom', code: 'ERR_TEST' } } }
+    }
+
+    await expect(async () => {
+      for await (const _event of streamReplyEvents(stream())) {
         // consume
       }
     }).rejects.toThrow(ChatReplyError)

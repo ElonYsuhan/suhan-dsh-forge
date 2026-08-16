@@ -97,3 +97,37 @@ export async function * collectReplySentences (stream: AsyncIterable<StreamChunk
   const tail = buffer.trim()
   if (tail.length > 0) yield tail
 }
+
+/** One event in the low-latency chat SSE stream. */
+export interface ReplyStreamEvent {
+  delta?: string
+  sentence?: string
+}
+
+/**
+ * Stream raw token deltas for immediate bubble updates and complete sentences
+ * for sentence-level TTS. This keeps the visible response in sync with the LLM
+ * while still allowing natural voice playback per sentence.
+ */
+export async function * streamReplyEvents (stream: AsyncIterable<StreamChunk>): AsyncGenerator<ReplyStreamEvent> {
+  let buffer = ''
+  for await (const chunk of stream) {
+    if (chunk.type === 'text-delta') {
+      buffer += chunk.text
+      yield { delta: chunk.text }
+    }
+    if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+      const failure = chunk.reason.failure
+      throw new ChatReplyError(failure?.message ?? `LLM stream ended with ${chunk.reason.kind}`)
+    }
+    while (true) {
+      const match = buffer.match(/^[\s\S]*?[。！？!?；;]/)
+      if (match === null || match[0] === undefined) break
+      const sentence = match[0].trim()
+      buffer = buffer.slice(match[0].length)
+      if (sentence.length > 0) yield { sentence }
+    }
+  }
+  const tail = buffer.trim()
+  if (tail.length > 0) yield { sentence: tail }
+}

@@ -7,7 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
-import { appendTurn, ChatInputError, ChatReplyError, collectReply, collectReplySentences, normalizeChatText } from './shared/chat.ts'
+import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText, streamReplyEvents } from './shared/chat.ts'
 import { getRoleSystemPrompt } from './shared/settings.ts'
 import { CHAT_HISTORY_LIMIT, OPENING_REQUEST } from './shared/types.ts'
 import { normalizeVoiceStyle } from './shared/voice.ts'
@@ -126,15 +126,20 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
           })
           let fullReply = ''
           try {
-            for await (const sentence of collectReplySentences(ctx.llm.stream({
+            for await (const event of streamReplyEvents(ctx.llm.stream({
               provider: selection.provider,
               model: selection.model,
               messages,
               system,
               signal: AbortSignal.timeout(30_000)
             }))) {
-              fullReply += sentence
-              sendSseEvent(res, { sentence })
+              if (event.delta !== undefined) {
+                fullReply += event.delta
+                sendSseEvent(res, { delta: event.delta })
+              }
+              if (event.sentence !== undefined) {
+                sendSseEvent(res, { sentence: event.sentence })
+              }
             }
             if (fullReply.trim().length === 0) throw new ChatReplyError('模型没有返回可朗读文本')
             history = appendTurn(history, text, fullReply.trim(), selection.provider, selection.model)
@@ -150,6 +155,29 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
               res.end()
             }
           }
+          return
+        }
+
+        if (parts[0] === 'virtual-companion' && parts[1] === 'tts' && parts[2] === 'stream' && parts.length === 3 && method === 'GET') {
+          const text = normalizeChatText(url.searchParams.get('text'))
+          const voice = normalizeVoiceStyle(url.searchParams.get('voice'))
+          if (speechSynth.stream === undefined) {
+            sendJson(res, 501, { error: 'streaming TTS unavailable' })
+            return
+          }
+          const audio = await speechSynth.stream(text, voice)
+          res.writeHead(200, {
+            'Content-Type': audio.contentType,
+            'Cache-Control': 'no-store',
+            'X-Accel-Buffering': 'no'
+          })
+          audio.stream.on('error', () => {
+            if (!res.writableEnded) res.destroy()
+          })
+          res.on('close', () => {
+            audio.stream.destroy()
+          })
+          audio.stream.pipe(res)
           return
         }
 

@@ -4,9 +4,9 @@
  * Instead of relying on the browser's low-quality speechSynthesis voices, the
  * Host synthesizes speech through the open-source `msedge-tts` client, which
  * uses Microsoft Edge's neural Read Aloud voices. This module owns the Edge TTS
- * client lifecycle per request and returns a bounded MP3 buffer to the HTTP
- * route, so a failing synthesis can still be reported as JSON instead of a
- * truncated audio stream.
+ * client lifecycle per request. Besides returning a bounded MP3 buffer for
+ * small/fallback requests, it also exposes a streaming MP3 source so the
+ * browser can begin playback while Edge is still synthesizing the sentence.
  */
 import { Readable } from 'node:stream'
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts'
@@ -33,9 +33,17 @@ export interface TtsAudioResult {
   contentType: string
 }
 
+/** Live audio source returned by a streaming speech synthesizer. */
+export interface TtsStreamResult {
+  stream: Readable
+  contentType: string
+}
+
 /** Injectable speech synthesizer used by the Host route. */
 export interface SpeechSynth {
   synthesize (text: string, voice: VoiceStyleId): Promise<TtsAudioResult>
+  /** Optional live streaming source. The route uses it when available. */
+  stream? (text: string, voice: VoiceStyleId): Promise<TtsStreamResult>
   dispose (): void
 }
 
@@ -132,7 +140,55 @@ export class EdgeTtsSpeechSynth implements SpeechSynth {
     }
   }
 
+  /**
+   * Start an Edge TTS synthesis and return its MP3 Readable immediately.
+   *
+   * The returned stream owns the underlying MsEdgeTTS client; the client is
+   * closed when the stream ends, closes, or errors. This lets the HTTP route
+   * pipe audio to the browser as chunks are synthesized instead of buffering
+   * the entire sentence before playback.
+   */
+  async stream (text: string, voice: VoiceStyleId): Promise<TtsStreamResult> {
+    const style = getVoiceStyle(voice)
+    const tts = new MsEdgeTTS()
+    let audioStream: Readable | null = null
+    let closed = false
+
+    const close = (): void => {
+      if (closed) return
+      closed = true
+      try {
+        tts.close()
+      } catch {
+        // best-effort cleanup; do not mask the original stream error
+      }
+    }
+
+    try {
+      await withTimeout((async () => {
+        await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
+        const result = tts.toStream(text, {
+          rate: style.edgeRate,
+          pitch: style.edgePitch
+        })
+        audioStream = result.audioStream
+        audioStream.once('end', close)
+        audioStream.once('close', close)
+        audioStream.once('error', close)
+      })(), TTS_TIMEOUT_MS, () => {
+        audioStream?.destroy()
+        close()
+      })
+      if (audioStream === null) throw new TtsError('TTS returned no audio stream')
+      return { stream: audioStream, contentType: 'audio/mpeg' }
+    } catch (error) {
+      close()
+      if (error instanceof TtsError) throw error
+      throw new TtsError(`Edge TTS streaming failed: ${safeDiagnostic(error)}`)
+    }
+  }
+
   dispose (): void {
-    // Per-request clients are already closed in synthesize().
+    // Per-request clients are already closed by synthesize()/stream().
   }
 }

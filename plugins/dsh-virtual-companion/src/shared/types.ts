@@ -38,6 +38,9 @@ export interface ChatResponse {
 
 /** One SSE frame emitted by the streaming chat endpoint. */
 export interface ChatStreamEvent {
+  /** Raw token delta for immediate on-screen text while the LLM is generating. */
+  delta?: string
+  /** A complete sentence ready for sentence-level TTS playback. */
   sentence?: string
   done?: boolean
   error?: string

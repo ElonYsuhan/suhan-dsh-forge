@@ -58,10 +58,17 @@ const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const SETTINGS_KEY = 'suhan-dsh-virtual-companion-settings'
 const DRAG_THRESHOLD = 5
 const SINGLE_CLICK_DELAY_MS = 260
+/** Sentences longer than this use the buffered POST fallback to avoid very long URLs. */
+const TTS_STREAM_TEXT_MAX_LENGTH = 500
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
   x: typeof window === 'undefined' ? 24 : Math.max(24, window.innerWidth - 280),
   y: 96
 })
+
+function buildTtsStreamUrl (text: string, voiceId: VoiceStyleId): string {
+  const params = new URLSearchParams({ text, voice: voiceId })
+  return `/virtual-companion/tts/stream?${params.toString()}`
+}
 
 function readPosition (): { x: number; y: number } {
   try {
@@ -200,28 +207,38 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
-      const response = await fetch('/virtual-companion/tts', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: settings.voiceId })
-      })
-      if (!response.ok) {
-        let message = `HTTP ${response.status}`
-        try {
-          const data = await response.json() as { error?: unknown }
-          if (typeof data.error === 'string') message = data.error
-        } catch {
-          // keep the HTTP fallback message when the error body is not JSON
+      let audio: HTMLAudioElement
+      if (text.length <= TTS_STREAM_TEXT_MAX_LENGTH) {
+        if (!interactingRef.current) return
+        stopCurrentAudio()
+        audio = new Audio()
+        audio.preload = 'auto'
+        audio.src = buildTtsStreamUrl(text, settings.voiceId)
+        audioUrlRef.current = null
+      } else {
+        const response = await fetch('/virtual-companion/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice: settings.voiceId })
+        })
+        if (!response.ok) {
+          let message = `HTTP ${response.status}`
+          try {
+            const data = await response.json() as { error?: unknown }
+            if (typeof data.error === 'string') message = data.error
+          } catch {
+            // keep the HTTP fallback message when the error body is not JSON
+          }
+          throw new Error(message)
         }
-        throw new Error(message)
+        const blob = await response.blob()
+        if (blob.size === 0) throw new Error('语音合成返回空音频')
+        if (!interactingRef.current) return
+        stopCurrentAudio()
+        const url = URL.createObjectURL(blob)
+        audioUrlRef.current = url
+        audio = new Audio(url)
       }
-      const blob = await response.blob()
-      if (blob.size === 0) throw new Error('语音合成返回空音频')
-      if (!interactingRef.current) return
-      stopCurrentAudio()
-      const url = URL.createObjectURL(blob)
-      audioUrlRef.current = url
-      const audio = new Audio(url)
       audioRef.current = audio
       onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
@@ -343,11 +360,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               const line = buffer.slice(0, newlineIndex).trim()
               buffer = buffer.slice(newlineIndex + 1)
               if (line.startsWith('data: ')) {
-                const data = JSON.parse(line.slice(6)) as { sentence?: unknown; done?: unknown; error?: unknown }
+                const data = JSON.parse(line.slice(6)) as { delta?: unknown; sentence?: unknown; done?: unknown; error?: unknown }
                 if (typeof data.error === 'string') throw new Error(data.error)
-                if (typeof data.sentence === 'string' && data.sentence.length > 0) {
-                  streamed += data.sentence
+                if (typeof data.delta === 'string' && data.delta.length > 0) {
+                  streamed += data.delta
                   setBubbleText(streamed)
+                }
+                if (typeof data.sentence === 'string' && data.sentence.length > 0) {
                   sentenceQueueRef.current.push(data.sentence)
                   playNextSentenceRef.current()
                 }
