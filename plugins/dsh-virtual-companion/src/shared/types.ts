@@ -16,6 +16,9 @@ export const COMPANION_SYSTEM_PROMPT = [
   '回答控制在 2-4 句以内，适合语音朗读。'
 ].join(' ')
 
+/** Internal prompt used when the user clicks the companion to start a voice session. */
+export const OPENING_REQUEST = '用户刚刚单击了你，请主动向用户问好，并自然地问一个简短的中文问题来开启语音聊天。'
+
 /** Client -> Host chat request body. */
 export interface ChatRequest {
   text: string

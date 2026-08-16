@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText } from './shared/chat.ts'
-import { CHAT_HISTORY_LIMIT, COMPANION_SYSTEM_PROMPT } from './shared/types.ts'
+import { CHAT_HISTORY_LIMIT, COMPANION_SYSTEM_PROMPT, OPENING_REQUEST } from './shared/types.ts'
 import { normalizeVoiceStyle } from './shared/voice.ts'
 import { EdgeTtsSpeechSynth, TtsError, type SpeechSynth } from './tts.ts'
 import { HttpError, readJsonBody, safeDiagnostic, sendJson } from './http.ts'
@@ -65,6 +65,24 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
 
         if (parts[0] === 'virtual-companion' && parts[1] === 'health' && parts.length === 2 && method === 'GET') {
           sendJson(res, 200, { ok: true })
+          return
+        }
+
+        if (parts[0] === 'virtual-companion' && parts[1] === 'opening' && parts.length === 2 && method === 'POST') {
+          const selection = currentModelSelection(ctx)
+          const openingMessage = createUserMessage({
+            content: [{ type: 'text', text: OPENING_REQUEST }],
+            source: { kind: 'user' }
+          })
+          const reply = await collectReply(ctx.llm.stream({
+            provider: selection.provider,
+            model: selection.model,
+            messages: [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), openingMessage],
+            system: COMPANION_SYSTEM_PROMPT,
+            signal: AbortSignal.timeout(30_000)
+          }))
+          history = appendTurn(history, OPENING_REQUEST, reply, selection.provider, selection.model)
+          sendJson(res, 200, { reply })
           return
         }
 

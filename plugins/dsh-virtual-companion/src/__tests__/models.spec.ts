@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { COMPANION_MODELS, createCompanionModel } from '../three/companionModels.ts'
 
 describe('companion procedural models', () => {
-  it('provides all model kinds in the switchable list', () => {
-    expect(COMPANION_MODELS.map(item => item.id)).toEqual(['human', 'cat', 'robot', 'blob'])
+  it('keeps only the human model in the companion list', () => {
+    expect(COMPANION_MODELS.map(item => item.id)).toEqual(['human'])
     for (const item of COMPANION_MODELS) {
       expect(item.label.trim().length).toBeGreaterThan(0)
     }

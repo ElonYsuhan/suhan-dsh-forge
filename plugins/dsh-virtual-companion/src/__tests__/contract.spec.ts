@@ -126,6 +126,17 @@ describe('virtual-companion host contract', () => {
     expect(res.body).toEqual({ ok: true })
   })
 
+  it('returns a proactive opening question through the DSH LLM stream', async () => {
+    const { ctx, routes, stream } = createContext()
+    apply(ctx)
+
+    const res = response()
+    await routes[0]!.handler(request('POST', '/virtual-companion/opening'), res)
+    expect(stream).toHaveBeenCalledTimes(1)
+    expect(res.status).toBe(200)
+    expect(res.body).toEqual({ reply: '你好呀' })
+  })
+
   it('chats through the DSH LLM stream and returns the collected reply', async () => {
     const { ctx, routes, stream } = createContext()
     apply(ctx)

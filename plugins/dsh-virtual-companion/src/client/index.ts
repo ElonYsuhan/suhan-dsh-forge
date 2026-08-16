@@ -1,7 +1,7 @@
 /**
- * 虚拟伙伴插件，浏览器半：
- * - 注册 `shell.overlay` 全页面浮动 3D 伙伴
- * - 拖拽、模型切换、悬浮互动和语音聊天都在浮层组件内完成
+ * 虚拟人物插件，浏览器半：
+ * - 注册 `shell.overlay` 全页面浮动 3D 人物
+ * - 拖拽移动、单击开启模型主动提问的语音聊天都在浮层组件内完成
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls ui-layout's SlotMap merge (declares 'shell.overlay').

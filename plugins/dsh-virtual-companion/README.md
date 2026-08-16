@@ -1,27 +1,27 @@
 # @suhan-dsh/virtual-companion
 
-DeepSeek Harness Web 客户端插件：**可拖拽 3D 虚拟伙伴**，可出现在 DSH Web 任意位置，支持模型切换、透明浮空效果、鼠标悬浮互动和多风格语音聊天。
+DeepSeek Harness Web 客户端插件：**透明浮空 3D 虚拟人物**，可拖拽到页面任意位置，无操作面板；单击人物即开始由模型主动提问的语音聊天。
 
 > 当前状态：`internal`，仅供隔离开发验证，未公开发布。
 
 ## 形态
 
 - **浏览器半**（`src/client/`）
-  - `shell.overlay` 条目：全页面透明浮空 3D 伙伴（无背景卡片/边框，直接悬浮在页面上）
-  - 拖拽位置、当前模型和语音风格保存到 `localStorage`
-  - 鼠标悬浮时播放动画/气泡反馈
-  - 语音聊天：浏览器 `SpeechRecognition` 转文字，客户端请求 Host 合成并播放高自然度神经网络语音；支持自然、高冷、萝莉、御姐、少年、磁性等语音风格；不支持语音输入时回退文字输入
+  - `shell.overlay` 条目：全页面透明浮空 3D 人物（只保留“人物”一个模型）
+  - 无模型/语音/聊天操作面板；鼠标按住拖动即可移动，单击开始或停止语音聊天
+  - 单击后由 Host 调用 DSH 当前默认模型生成开场问题并朗读，随后自动聆听用户语音回答，形成连续语音对话
 - **Node 半**（`src/index.ts`）
   - `GET /virtual-companion/health`：健康检查
-  - `POST /virtual-companion/chat`：接收文字，使用 DSH 当前默认模型生成回复
+  - `POST /virtual-companion/opening`：让模型主动生成一句开场问候/问题
+  - `POST /virtual-companion/chat`：接收用户语音转写的文字，使用 DSH 当前默认模型生成回复
   - `POST /virtual-companion/tts`：通过开源 `msedge-tts` 客户端调用 Microsoft Edge 神经网络语音合成中文 MP3，返回给浏览器播放
   - 对话历史上限 20 条，仅存于 Host 内存，不落盘
 
 ## 配置
 
-- 模型跟随 DSH Web 当前选择的模型；3D 外观可在浮层内切换。
-- 语音风格在聊天面板中切换，选项包括自然、高冷、萝莉、御姐、少年、磁性。
-- 语音由 Host 通过开源 `msedge-tts` 客户端调用 Microsoft Edge 神经网络语音合成；客户端只负责播放 MP3，不再依赖浏览器本地的 `speechSynthesis` 音色。
+- 当前无配置项。模型跟随 DSH Web 当前选择的模型；3D 外观固定为“人物”。
+- 语音固定使用默认真人感中文神经网络音色，不提供切换面板。
+- 语音输入依赖浏览器 Web Speech API；浏览器不支持时单击会提示并无法开启语音聊天。
 
 ## 开发命令
 
@@ -47,7 +47,7 @@ dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-vir
 
 - `pnpm --filter @suhan-dsh/virtual-companion test`
 - 根目录 `pnpm check`
-- 浏览器人工验证：3D 透明浮空渲染、模型切换、拖拽、悬浮互动、语音风格切换、语音聊天与文字回退
+- 浏览器人工验证：3D 透明浮空人物渲染、拖拽移动、单击开始语音、模型主动提问、语音回答、连续对话、再次单击停止
 
 ## 卸载
 
@@ -55,11 +55,11 @@ dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-vir
 dsh plugin --profile web remove @suhan-dsh/virtual-companion
 ```
 
-卸载会移除 Host 路由、Client slot、Three.js 渲染器、语音识别和语音合成资源；`localStorage` 中的位置/模型/语音风格偏好默认保留。
+卸载会移除 Host 路由、Client slot、Three.js 渲染器、语音识别和语音合成资源；`localStorage` 中的位置偏好默认保留。
 
 ## 数据
 
-- 浏览器 `localStorage`：`suhan-dsh-virtual-companion-position`、`suhan-dsh-virtual-companion-model`、`suhan-dsh-virtual-companion-voice`
+- 浏览器 `localStorage`：`suhan-dsh-virtual-companion-position`
 - Host 内存：最近 20 条聊天消息，服务重启即清空
 - 不读取、不写入文件系统，不保存 secrets
 
@@ -75,4 +75,4 @@ dsh plugin --profile web remove @suhan-dsh/virtual-companion
 - DSH：`>=0.1.0-rc.6 <0.2.0`
 - Node.js：`^22.19.0 || >=24.0.0`
 - Profile：`web`
-- 浏览器：需支持 WebGL；语音输入依赖 Web Speech API，不支持时自动回退文字输入；语音播放依赖浏览器 `Audio` 播放能力
+- 浏览器：需支持 WebGL；语音输入依赖 Web Speech API，不支持时无法开启语音聊天；语音播放依赖浏览器 `Audio` 播放能力

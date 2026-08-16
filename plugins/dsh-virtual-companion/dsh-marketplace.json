@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
   "displayName": {
-    "zh-CN": "虚拟伙伴",
-    "en-US": "Virtual Companion"
+    "zh-CN": "虚拟人物",
+    "en-US": "Virtual Human"
   },
   "summary": {
-    "zh-CN": "可在 DSH Web 任意位置拖拽的透明浮空 3D 虚拟伙伴，支持模型切换、鼠标悬浮互动与多风格高自然度神经网络语音聊天。",
-    "en-US": "A transparent floating draggable 3D virtual companion for DSH Web with switchable models, hover reactions, and multiple high-quality neural voice styles."
+    "zh-CN": "可在 DSH Web 任意位置拖拽的透明浮空 3D 虚拟人物；单击即开始由模型主动提问的语音聊天，使用开源神经网络语音合成真人感中文音色。",
+    "en-US": "A transparent draggable 3D human companion for DSH Web; click to start proactive voice chat with open-source neural Chinese TTS."
   },
   "categories": ["productivity", "entertainment"],
-  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "voice-style", "virtual-pet", "虚拟伙伴", "语音聊天", "透明浮空", "语音风格", "edge-tts", "神经网络语音"],
+  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "click-to-talk", "virtual-human", "虚拟人物", "语音聊天", "透明浮空", "edge-tts", "神经网络语音"],
   "compatibility": {
     "dsh": ">=0.1.0-rc.6 <0.2.0",
     "node": "^22.19.0 || >=24.0.0",

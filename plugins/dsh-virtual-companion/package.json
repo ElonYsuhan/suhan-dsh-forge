@@ -1,6 +1,6 @@
 {
   "name": "@suhan-dsh/virtual-companion",
-  "description": "DSH Web draggable 3D virtual companion with switchable models, hover reactions, and voice chat",
+  "description": "DSH Web draggable 3D human virtual companion with click-to-start proactive voice chat",
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
@@ -93,6 +93,7 @@
     "3d",
     "threejs",
     "voice-chat",
+    "click-to-talk",
     "virtual-pet"
   ],
   "author": "ElonYsuhan",

@@ -1,22 +1,17 @@
 /**
- * 虚拟伙伴浮层组件：
+ * 虚拟人物浮层组件：
  * - 注册在 `shell.overlay`，可拖拽到页面任意位置
- * - 使用 Three.js 渲染可切换的 3D 模型
- * - 支持鼠标悬浮互动、文字/语音聊天
+ * - 只保留“人物”一个 3D 模型，不再提供模型/语音/聊天操作面板
+ * - 单击人物开始或停止语音聊天；模型会主动提问，用户用语音回答
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { COMPANION_MODELS, type CompanionModelKind } from '../three/companionModels.ts'
+import type { CompanionModelKind } from '../three/companionModels.ts'
 import { CompanionScene } from '../three/companionScene.ts'
-import { DEFAULT_VOICE_STYLE_ID, normalizeVoiceStyle, VOICE_STYLES, type VoiceStyleId } from '../shared/voice.ts'
+import { DEFAULT_VOICE_STYLE_ID } from '../shared/voice.ts'
 import css from './VirtualCompanion.module.css'
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
-
-interface ChatMessage {
-  role: 'user' | 'assistant'
-  text: string
-}
 
 interface SpeechRecognitionAlternative {
   transcript: string
@@ -48,8 +43,7 @@ interface SpeechRecognitionConstructorLike {
 }
 
 const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
-const MODEL_KEY = 'suhan-dsh-virtual-companion-model'
-const VOICE_KEY = 'suhan-dsh-virtual-companion-voice'
+const DRAG_THRESHOLD = 5
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
   x: typeof window === 'undefined' ? 24 : Math.max(24, window.innerWidth - 280),
   y: 96
@@ -66,27 +60,6 @@ function readPosition (): { x: number; y: number } {
   } catch {
     return DEFAULT_POSITION()
   }
-}
-
-function readModel (): CompanionModelKind {
-  try {
-    const stored = window.localStorage.getItem(MODEL_KEY)
-    if (stored !== null && COMPANION_MODELS.some(entry => entry.id === stored)) {
-      return stored as CompanionModelKind
-    }
-  } catch {
-    // ignore storage failures and fall back to the default model
-  }
-  return 'human'
-}
-
-function readVoiceStyle (): VoiceStyleId {
-  try {
-    return normalizeVoiceStyle(window.localStorage.getItem(VOICE_KEY))
-  } catch {
-    // ignore storage failures and fall back to the default voice style
-  }
-  return DEFAULT_VOICE_STYLE_ID
 }
 
 function getSpeechRecognition (): SpeechRecognitionConstructorLike | undefined {
@@ -114,34 +87,30 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     originX: number
     originY: number
   } | null>(null)
+  const dragMovedRef = useRef(false)
+  const interactingRef = useRef(false)
+  const onSpeechEndRef = useRef<(() => void) | null>(null)
+  const sendAnswerRef = useRef<(text: string) => void>(() => {})
+  const beginListeningRef = useRef<() => void>(() => {})
 
   const [position, setPosition] = useState(readPosition)
-  const [model, setModel] = useState<CompanionModelKind>(readModel)
-  const [voiceStyle, setVoiceStyle] = useState<VoiceStyleId>(readVoiceStyle)
   const [hovered, setHovered] = useState(false)
-  const [chatOpen, setChatOpen] = useState(false)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [input, setInput] = useState('')
-  const [sending, setSending] = useState(false)
+  const [interacting, setInteracting] = useState(false)
   const [listening, setListening] = useState(false)
+  const [thinking, setThinking] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
+  const [bubbleText, setBubbleText] = useState<string | null>(null)
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (canvas === null) return
-    const scene = new CompanionScene(canvas, model)
+    const scene = new CompanionScene(canvas, 'human' satisfies CompanionModelKind)
     sceneRef.current = scene
     return () => {
       scene.dispose()
       sceneRef.current = null
     }
-    // The scene is created once; model changes are applied through setModel below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-
-  useEffect(() => {
-    sceneRef.current?.setModel(model)
-  }, [model])
 
   useEffect(() => {
     sceneRef.current?.setHovered(hovered)
@@ -154,22 +123,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       // storage may be unavailable; drag still works for this session
     }
   }, [position])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(MODEL_KEY, model)
-    } catch {
-      // storage may be unavailable; model still switches for this session
-    }
-  }, [model])
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(VOICE_KEY, voiceStyle)
-    } catch {
-      // storage may be unavailable; voice still switches for this session
-    }
-  }, [voiceStyle])
 
   const stopCurrentAudio = useCallback((): void => {
     const audio = audioRef.current
@@ -188,18 +141,20 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [])
 
   useEffect(() => () => {
+    interactingRef.current = false
+    onSpeechEndRef.current = null
     recognitionRef.current?.abort()
     recognitionRef.current = null
     stopCurrentAudio()
   }, [stopCurrentAudio])
 
-  const speak = useCallback(async (text: string): Promise<void> => {
+  const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
       const response = await fetch('/virtual-companion/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, voice: voiceStyle })
+        body: JSON.stringify({ text, voice: DEFAULT_VOICE_STYLE_ID })
       })
       if (!response.ok) {
         let message = `HTTP ${response.status}`
@@ -213,43 +168,71 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
       const blob = await response.blob()
       if (blob.size === 0) throw new Error('语音合成返回空音频')
+      if (!interactingRef.current) return
       stopCurrentAudio()
       const url = URL.createObjectURL(blob)
       audioUrlRef.current = url
       const audio = new Audio(url)
       audioRef.current = audio
+      onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
         if (audioRef.current === audio) {
+          const done = onSpeechEndRef.current
+          onSpeechEndRef.current = null
           stopCurrentAudio()
+          done?.()
         }
       }
       audio.onerror = () => {
         if (audioRef.current === audio) {
+          const done = onSpeechEndRef.current
+          onSpeechEndRef.current = null
           setSpeechError('语音播放失败，请稍后重试')
           stopCurrentAudio()
+          done?.()
         }
       }
       try {
         await audio.play()
       } catch (error) {
         if (audioRef.current === audio) {
+          const done = onSpeechEndRef.current
+          onSpeechEndRef.current = null
           stopCurrentAudio()
+          done?.()
         }
         throw error
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       setSpeechError(`语音合成失败：${message}`)
+      setBubbleText('语音合成失败，点击重新开始')
+      interactingRef.current = false
+      setInteracting(false)
+      setListening(false)
+      setThinking(false)
     }
-  }, [stopCurrentAudio, voiceStyle])
+  }, [stopCurrentAudio])
 
-  const sendText = useCallback(async (raw: string): Promise<void> => {
+  const stopVoiceSession = useCallback((): void => {
+    interactingRef.current = false
+    setInteracting(false)
+    setListening(false)
+    setThinking(false)
+    setBubbleText(null)
+    onSpeechEndRef.current = null
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    stopCurrentAudio()
+  }, [stopCurrentAudio])
+
+  const sendAnswer = useCallback(async (raw: string): Promise<void> => {
     const text = raw.trim()
-    if (text === '' || sending) return
-    setMessages(previous => [...previous, { role: 'user', text }])
-    setInput('')
-    setSending(true)
+    if (text === '' || !interactingRef.current) return
+    setThinking(true)
+    setListening(false)
     setSpeechError(null)
+    setBubbleText('正在思考…')
     try {
       const response = await fetch('/virtual-companion/chat', {
         method: 'POST',
@@ -262,28 +245,37 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         throw new Error(message)
       }
       const reply = typeof data.reply === 'string' ? data.reply : ''
-      if (reply !== '') {
-        setMessages(previous => [...previous, { role: 'assistant', text: reply }])
-        void speak(reply)
+      if (reply === '') throw new Error('模型返回空回复')
+      setThinking(false)
+      setBubbleText(null)
+      if (interactingRef.current) {
+        void speak(reply, () => {
+          if (interactingRef.current) beginListeningRef.current()
+        })
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      setMessages(previous => [...previous, { role: 'assistant', text: `（无法连接虚拟伙伴：${message}）` }])
-    } finally {
-      setSending(false)
+      setThinking(false)
+      setSpeechError(`聊天失败：${message}`)
+      setBubbleText('聊天失败，点击重新开始')
+      stopVoiceSession()
     }
-  }, [sending, speak])
+  }, [speak, stopVoiceSession])
 
-  const startListening = useCallback((): void => {
+  const beginListening = useCallback((): void => {
+    if (!interactingRef.current) return
     const SpeechRecognitionCtor = getSpeechRecognition()
     if (SpeechRecognitionCtor === undefined) {
-      setSpeechError('当前浏览器不支持语音识别，请使用文字输入')
+      setSpeechError('当前浏览器不支持语音识别')
+      setBubbleText('当前浏览器不支持语音识别')
+      stopVoiceSession()
       return
     }
     setSpeechError(null)
+    setBubbleText('我在听，请回答…')
     const recognition = new SpeechRecognitionCtor()
     recognition.lang = 'zh-CN'
-    recognition.interimResults = true
+    recognition.interimResults = false
     recognition.continuous = false
     recognition.onresult = (event): void => {
       const results: SpeechRecognitionResultLike[] = []
@@ -293,29 +285,90 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
       const finalResult = results.find(result => result.isFinal)
       const transcript = finalResult?.[0]?.transcript ?? ''
-      if (transcript !== '') {
-        setInput(transcript)
-        void sendText(transcript)
+      if (transcript.trim() !== '') {
+        recognition.stop()
+        recognitionRef.current = null
+        setListening(false)
+        sendAnswerRef.current(transcript.trim())
       }
     }
     recognition.onerror = (event): void => {
       setListening(false)
       setSpeechError(event.error ?? '语音识别失败')
+      setBubbleText('语音识别失败，点击重新开始')
       recognition.abort()
+      if (interactingRef.current) stopVoiceSession()
     }
     recognition.onend = (): void => {
       setListening(false)
     }
     recognitionRef.current = recognition
-    recognition.start()
     setListening(true)
-  }, [sendText])
+    try {
+      recognition.start()
+    } catch {
+      setListening(false)
+      setSpeechError('语音识别启动失败')
+      setBubbleText('语音识别启动失败，点击重新开始')
+      stopVoiceSession()
+    }
+  }, [stopVoiceSession])
 
-  const stopListening = useCallback((): void => {
-    recognitionRef.current?.stop()
-    recognitionRef.current = null
+  sendAnswerRef.current = sendAnswer
+  beginListeningRef.current = beginListening
+
+  const startVoiceSession = useCallback((): void => {
+    if (interactingRef.current) return
+    if (getSpeechRecognition() === undefined) {
+      setSpeechError('当前浏览器不支持语音识别')
+      setBubbleText('当前浏览器不支持语音识别')
+      return
+    }
+    interactingRef.current = true
+    setInteracting(true)
     setListening(false)
-  }, [])
+    setThinking(true)
+    setSpeechError(null)
+    setBubbleText('正在开启语音聊天…')
+    void (async () => {
+      try {
+        const response = await fetch('/virtual-companion/opening', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: '{}'
+        })
+        const data = await response.json() as { reply?: unknown; error?: unknown }
+        if (!response.ok) {
+          const message = typeof data.error === 'string' ? data.error : `HTTP ${response.status}`
+          throw new Error(message)
+        }
+        const reply = typeof data.reply === 'string' ? data.reply : ''
+        if (reply === '') throw new Error('模型没有返回开场白')
+        setThinking(false)
+        setBubbleText(null)
+        if (interactingRef.current) {
+          void speak(reply, () => {
+            if (interactingRef.current) beginListeningRef.current()
+          })
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setThinking(false)
+        setSpeechError(`无法开启语音聊天：${message}`)
+        setBubbleText('无法开启语音聊天，点击重试')
+        stopVoiceSession()
+      }
+    })()
+  }, [speak, stopVoiceSession])
+
+  const toggleVoiceSession = useCallback((): void => {
+    if (interactingRef.current) {
+      stopVoiceSession()
+      setBubbleText('已停止语音聊天')
+    } else {
+      startVoiceSession()
+    }
+  }, [startVoiceSession, stopVoiceSession])
 
   const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -326,15 +379,21 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       originX: position.x,
       originY: position.y
     }
+    dragMovedRef.current = false
     event.currentTarget.setPointerCapture(event.pointerId)
   }, [position])
 
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = dragStateRef.current
     if (state === null || state.pointerId !== event.pointerId) return
+    const deltaX = event.clientX - state.startX
+    const deltaY = event.clientY - state.startY
+    if (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD) {
+      dragMovedRef.current = true
+    }
     setPosition({
-      x: Math.max(0, state.originX + event.clientX - state.startX),
-      y: Math.max(0, state.originY + event.clientY - state.startY)
+      x: Math.max(0, state.originX + deltaX),
+      y: Math.max(0, state.originY + deltaY)
     })
   }, [])
 
@@ -345,13 +404,12 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
-  }, [])
+    if (!dragMovedRef.current) {
+      toggleVoiceSession()
+    }
+  }, [toggleVoiceSession])
 
-  const handleHeaderPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-    const target = event.target
-    if (target instanceof Element && target.closest('button, select, input') !== null) return
-    startDrag(event)
-  }, [startDrag])
+  const statusText = speechError ?? bubbleText ?? (hovered ? '单击开始语音聊天' : null)
 
   return (
     <div
@@ -360,111 +418,22 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       data-testid='virtual-companion'
     >
       <div
-        className={css.header}
-        onPointerDown={handleHeaderPointerDown}
+        className={css.stage}
+        onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
-      >
-        <span className={css.title}>虚拟伙伴</span>
-        <select
-          className={css.modelSelect}
-          value={model}
-          onChange={event => setModel(event.target.value as CompanionModelKind)}
-          aria-label='切换模型'
-          title='切换模型'
-        >
-          {COMPANION_MODELS.map(item => (
-            <option key={item.id} value={item.id}>{item.label}</option>
-          ))}
-        </select>
-        <button
-          type='button'
-          className={css.chatToggle}
-          onClick={() => setChatOpen(open => !open)}
-          aria-expanded={chatOpen}
-        >
-          {chatOpen ? '收起' : '聊天'}
-        </button>
-      </div>
-
-      <div
-        className={css.stage}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
       >
-        <canvas ref={canvasRef} className={css.canvas} aria-label='3D 虚拟伙伴' />
-        {hovered && <div className={css.bubble} role='status'>你好，我是你的虚拟伙伴！</div>}
+        <canvas ref={canvasRef} className={css.canvas} aria-label='3D 虚拟人物' />
+        {statusText !== null && <div className={css.bubble} role='status'>{statusText}</div>}
+        {(listening || thinking || interacting) && (
+          <div className={css.indicator} role='status'>
+            {listening ? '🎤' : thinking ? '…' : interacting ? '●' : ''}
+          </div>
+        )}
       </div>
-
-      {chatOpen && (
-        <div className={css.chatPanel}>
-          <div className={css.messages}>
-            {messages.length === 0 && (
-              <div className={css.empty}>点击麦克风或输入文字和我聊天吧</div>
-            )}
-            {messages.map((message, index) => (
-              <div
-                key={index}
-                className={message.role === 'user' ? css.userMsg : css.assistantMsg}
-              >
-                {message.text}
-              </div>
-            ))}
-          </div>
-          <div className={css.voiceRow}>
-            <label className={css.voiceLabel} htmlFor='virtual-companion-voice'>语音</label>
-            <select
-              id='virtual-companion-voice'
-              className={css.voiceSelect}
-              value={voiceStyle}
-              onChange={event => setVoiceStyle(event.target.value as VoiceStyleId)}
-              aria-label='切换语音'
-              title='切换语音'
-            >
-              {VOICE_STYLES.map(style => (
-                <option key={style.id} value={style.id} title={style.description}>{style.label}</option>
-              ))}
-            </select>
-            <span className={css.voiceHint}>
-              {VOICE_STYLES.find(style => style.id === voiceStyle)?.description ?? ''}
-            </span>
-          </div>
-          {speechError !== null && <div className={css.error} role='alert'>{speechError}</div>}
-          <div className={css.inputRow}>
-            <input
-              className={css.input}
-              value={input}
-              onChange={event => setInput(event.target.value)}
-              onKeyDown={event => {
-                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
-                  void sendText(input)
-                }
-              }}
-              placeholder='输入消息…'
-              disabled={sending}
-              aria-label='聊天输入'
-            />
-            <button
-              type='button'
-              className={css.sendBtn}
-              onClick={() => { void sendText(input) }}
-              disabled={sending || input.trim() === ''}
-            >
-              {sending ? '…' : '发送'}
-            </button>
-            <button
-              type='button'
-              className={`${css.micBtn} ${listening ? css.micActive : ''}`}
-              onClick={listening ? stopListening : () => { void startListening() }}
-              disabled={sending}
-              aria-label={listening ? '停止语音输入' : '开始语音输入'}
-            >
-              {listening ? '■' : '🎤'}
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
