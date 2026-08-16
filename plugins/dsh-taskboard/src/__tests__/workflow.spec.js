@@ -351,7 +351,7 @@ describe('taskboard execution workflow', () => {
     const runAutoResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${autoItemId}/run`), runAutoResponse)
     const autoAgent = liveAgent
-    expect(runAutoResponse.body.item.status).toBe('analysis')
+    expect(runAutoResponse.body.item.status).toBe('in-dev')
 
     const firstAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '分析完成' }, { agent: autoAgent })
     const duplicateAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '重复调用' }, { agent: autoAgent })
@@ -361,7 +361,7 @@ describe('taskboard execution workflow', () => {
     const autoRunningResponse = response()
     await route(request('GET', '/taskboard/boards'), autoRunningResponse)
     const autoRunningItem = autoRunningResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
-    expect(autoRunningItem.status).toBe('analysis')
+    expect(autoRunningItem.status).toBe('in-dev')
     expect(autoRunningItem.executionState).toBe('running')
 
     idleResolvers.shift()()
@@ -369,7 +369,7 @@ describe('taskboard execution workflow', () => {
       const autoAdvancedResponse = response()
       await route(request('GET', '/taskboard/boards'), autoAdvancedResponse)
       const autoAdvancedItem = autoAdvancedResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
-      expect(autoAdvancedItem.status).toBe('analysis')
+      expect(autoAdvancedItem.status).toBe('in-dev')
       expect(autoAdvancedItem.executionState).toBe('awaiting-delivery')
       expect(followup).toHaveBeenCalledTimes(3)
     })
@@ -474,5 +474,29 @@ describe('taskboard execution workflow', () => {
     expect(manualCleanupResponse.status).toBe(200)
     expect(manualCleanupResponse.body.item.sessionId).toBe(conflictAgent.id)
     expect(archiveSession).toHaveBeenCalledTimes(2)
+
+    const externalBlockCreate = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task', title: '集成状态重试', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto'
+    }), externalBlockCreate)
+    const externalBlockId = externalBlockCreate.body.item.id
+    const externalBlockRun = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${externalBlockId}/run`), externalBlockRun)
+    const externalAgent = liveAgent
+    await taskTool.execute({ outcome: 'delivery_ready', summary: '交付完成' }, { agent: externalAgent })
+    externalAgent.cancel({ kind: 'user' })
+    workspaceMocks.integrate.mockResolvedValueOnce({
+      kind: 'conflicted', sourceCommit: 'pending-commit', reason: '主工作区有外部改动', rebaseInProgress: false
+    })
+    const blockedDelivery = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${externalBlockId}/confirm-delivery`), blockedDelivery)
+    expect(blockedDelivery.body.item.executionState).toBe('blocked')
+    const agentCreations = create.mock.calls.length
+    const retryIntegration = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${externalBlockId}/run`), retryIntegration)
+    expect(retryIntegration.status).toBe(200)
+    expect(retryIntegration.body.item.integrationState).toBe('merged')
+    expect(retryIntegration.body.item.archived).toBe(true)
+    expect(create).toHaveBeenCalledTimes(agentCreations)
   })
 })

@@ -9,6 +9,8 @@
 - Run automatic-mode tasks end-to-end in one Agent turn instead of repeating model startup and repository validation across every board column.
 - Remove completed temporary Workspaces/worktrees automatically, allow manual cleanup of legacy retained workspaces, and keep session logs reopenable from history.
 - Add delivery constraints for bounded output/concurrency, targeted checks, one final full gate, user-path verification, resource cleanup, and performance regressions.
+- Place task worktrees inside the registered project sandbox, exclude them through `.git/info/exclude`, and make the prompt use the exact Session cwd so builds cannot fall back to the main workspace or fail on an out-of-sandbox path.
+- Retry a blocked pending Git integration directly without rerunning the Agent task, and show automatic tasks in development instead of leaving them in analysis.
 - Keep a last-known-good data backup and recover from a corrupt primary data file.
 - Enforce bounded JSON request bodies and validate work-item, parent, status, type, and settings payloads.
 

@@ -4,7 +4,7 @@
  */
 import { createHash } from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { appendFile, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
@@ -62,6 +62,18 @@ function branchName (itemId: string): string {
   return `dsh-taskboard/${itemId.replace(/[^a-zA-Z0-9_-]/g, '-').slice(0, 64)}`
 }
 
+const LOCAL_WORKTREES_DIR = '.dsh-taskboard-worktrees'
+
+/** 任务目录必须位于项目沙箱内，同时通过仓库本地 exclude 永久避开 status/add。 */
+async function ensureLocalWorktreeExclude (root: string): Promise<void> {
+  const gitPath = (await git(root, ['rev-parse', '--git-path', 'info/exclude'])).trim()
+  const excludePath = resolve(root, gitPath)
+  const marker = `/${LOCAL_WORKTREES_DIR}/`
+  const current = await readFile(excludePath, 'utf8').catch(() => '')
+  if (current.split(/\r?\n/).includes(marker)) return
+  await appendFile(excludePath, `${current.endsWith('\n') || current === '' ? '' : '\n'}${marker}\n`, 'utf8')
+}
+
 /** 返回规范化 Git 根目录，供调度器使用同一把仓库锁。 */
 export async function resolveGitRoot (projectPath: string): Promise<string> {
   try {
@@ -74,17 +86,17 @@ export async function resolveGitRoot (projectPath: string): Promise<string> {
 /** 为任务创建独立分支和 worktree；未提交现场以只读合成提交成为任务基线。 */
 export async function prepareTaskWorkspace (
   projectPath: string,
-  itemId: string,
-  storageRoot: string
+  itemId: string
 ): Promise<TaskWorkspace> {
   const root = await resolveGitRoot(projectPath)
+  await ensureLocalWorktreeExclude(root)
   const targetBranch = (await git(root, ['symbolic-ref', '--quiet', '--short', 'HEAD'])).trim()
   if (targetBranch === '') throw new TaskWorkspacePreconditionError('项目当前处于 detached HEAD，无法确定自动集成目标分支；请先切换到目标分支。')
   const head = (await git(root, ['rev-parse', 'HEAD'])).trim()
   const repositoryKey = createHash('sha256').update(root).digest('hex').slice(0, 16)
-  const path = resolve(storageRoot, repositoryKey, itemId)
+  const repositoryStorage = resolve(root, LOCAL_WORKTREES_DIR)
+  const path = resolve(repositoryStorage, `${repositoryKey}-${itemId}`)
   const branch = branchName(itemId)
-  const repositoryStorage = resolve(storageRoot, repositoryKey)
   await mkdir(repositoryStorage, { recursive: true })
   const baseCommit = await snapshotBaseCommit(root, head, repositoryStorage)
   try {

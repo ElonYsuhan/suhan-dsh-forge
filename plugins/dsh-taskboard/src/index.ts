@@ -46,9 +46,7 @@ export const inject = ['webServer', 'workspaceRegistry', 'sessions', 'agents', '
 /** 数据文件：默认 $DSH_HOME/storages/dsh-taskboard/boards.json；环境变量可覆盖。 */
 const DATA_PATHS = taskboardDataPaths(import.meta.url)
 const DATA_FILE = DATA_PATHS.dataFile
-
-/** 任务 worktree 位于运行数据目录，不进入项目仓库或发布包。 */
-const WORKTREES_ROOT = resolve(dirname(DATA_FILE), 'worktrees')
+const LEGACY_WORKTREES_ROOT = resolve(dirname(DATA_FILE), 'worktrees')
 
 /** 活动执行句柄（createAgent 返回的 owner 能力）：归档时停止 agent 并归档会话。 */
 const agentHandles = new Map<string, AgentHandle>()
@@ -140,8 +138,10 @@ function diagnosticError (value: unknown): string {
 }
 
 function isTaskWorkspacePath (path: string): boolean {
-  const child = relative(WORKTREES_ROOT, resolve(path))
-  return child !== '' && child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child)
+  const resolvedPath = resolve(path)
+  const legacyChild = relative(LEGACY_WORKTREES_ROOT, resolvedPath)
+  const legacy = legacyChild !== '' && legacyChild !== '..' && !legacyChild.startsWith(`..${sep}`) && !isAbsolute(legacyChild)
+  return legacy || resolvedPath.includes(`${sep}.dsh-taskboard-worktrees${sep}`)
 }
 
 /** 注册 Agent 实际 cwd，并用原项目/任务标题表达逻辑归属。 */
@@ -324,7 +324,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
   const mode = executionModeOf(item)
   const phase = columnLabel(board, item.status)
   return [
-    `请执行以下工作项。项目：${board.projectTitle}；工作目录：${board.projectPath}。`,
+    `请执行以下工作项。项目：${board.projectTitle}；实际工作目录：${item.taskWorkspace?.path ?? board.projectPath}。`,
     `【标题】${item.title}`,
     item.desc === '' ? '' : `【描述】${item.desc}`,
     item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
@@ -334,6 +334,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '',
     '必须遵守：',
     '- 先读取并遵守工作区内的工程指令。只处理本工作项，不覆盖或提交无关改动。',
+    '- 所有命令和文件修改必须留在上述实际工作目录；严禁 cd 到原项目主工作区或其他任务目录。',
     mode === 'review'
       ? '- 每个环节都要在会话中给出可审核的结果，再调用 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")。'
       : '- 在本轮内完成必要分析、实现、针对性测试和最终验证；完成后直接调用 taskboard_progress(outcome="delivery_ready", summary="交付与验证摘要")，不要逐列调用 stage_complete。',
@@ -927,6 +928,11 @@ export function apply (ctx: Context): void {
               const item = findItem(board, itemId)
               const state = executionStateOf(item)
               const interruptedBootstrap = state === 'running' && item.sessionId === undefined
+              if (item.integrationState === 'conflicted' && item.commitRef !== undefined && item.taskWorkspace !== undefined) {
+                await finalizeIsolatedTask(ctx, file, board, item)
+                send(res, 200, { item })
+                return
+              }
               if (executionActive(state) && !interruptedBootstrap) {
                 send(res, 409, { error: '工作项已有进行中的执行，请打开关联会话查看状态' })
                 return
@@ -945,7 +951,7 @@ export function apply (ctx: Context): void {
                 await saveBoards(file)
                 if (firstRun && item.taskWorkspace === undefined) {
                   const root = await resolveGitRoot(board.projectPath)
-                  workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id, WORKTREES_ROOT))
+                  workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id))
                   item.taskWorkspace = workspaceCreatedNow
                   item.integrationState = 'pending'
                   item.gitCheckpoint = undefined
@@ -969,7 +975,9 @@ export function apply (ctx: Context): void {
                 item.sessionId = sessionId
                 item.agentPreset = agent.session.header.agentPreset
                 if (firstRun) {
-                  const next = nextColumn(board, item)
+                  const next = executionModeOf(item) === 'auto'
+                    ? board.columns.find(column => column.id === 'in-dev') ?? nextColumn(board, item)
+                    : nextColumn(board, item)
                   if (next !== undefined) {
                     pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: '创建独立 Git worktree 并开始执行' })
                     item.status = next.id

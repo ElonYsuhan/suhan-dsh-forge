@@ -14,7 +14,7 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
   - **自动提交与集成**：人工确认交付后由插件生成单任务提交；同一仓库的最终集成在短时互斥锁内先 rebase 最新目标分支，再以 `ff-only` 更新主工作区
   - **冲突编排**：变基冲突保留在原任务 worktree 和原会话中，由同一 Agent 结合仓库功能与测试自主取舍；插件随后继续 rebase 与 `ff-only` 集成，不再派生冲突任务
   - **agent 工具 `taskboard_progress`**：汇报环节完成、阻塞和待交付；看板每 3 秒刷新执行状态
-  - 数据落盘 `$DSH_HOME/storages/dsh-taskboard/boards.json`；任务 worktree 位于同一运行数据目录的 `worktrees/`
+  - 数据落盘 `$DSH_HOME/storages/dsh-taskboard/boards.json`；新任务 worktree 位于项目内 `.dsh-taskboard-worktrees/`，通过 `.git/info/exclude` 排除，确保 Agent 沙箱可写且不污染 Git 状态
 
 ## 工作项模型
 
@@ -54,6 +54,7 @@ DeepSeek Harness Web 客户端插件：**项目级需求追溯看板**，左侧�
 
 - 启动新任务时项目必须位于正常分支；主工作区可以有未提交改动。插件通过临时 Git index 生成只读基线提交，不修改用户工作区、不改变暂存区，也不替用户提交代码。
 - 不同任务的 Agent 和文件写入完全隔离；只有最终集成会短暂串行。
+- 实际任务目录位于原项目可写边界内，提示词与 Session `cwd` 始终指向同一 worktree；Agent 严禁切回主工作区。
 - 活动任务会话绑定到以“原项目 · 任务标题”命名的临时 DSH Workspace；成功集成后自动分离并清理 Workspace/worktree/任务分支，但不归档 Session 日志，因此历史面板仍可恢复聊天记录。旧版本遗留的临时工作区可在历史任务中手动清理。
 - 代码冲突保留在原任务的 rebase 现场，由原 Agent 编辑冲突文件并验证；Git 暂存、`rebase --continue` 和最终 `ff-only` 仍由插件执行。
 - 若用户切换目标分支或主工作区存在未提交改动，任务保持阻塞且保留现场，绝不覆盖用户改动；恢复目标分支与干净状态后可继续交付。
@@ -124,7 +125,7 @@ CHOKIDAR_USEPOLLING=1
 ## 数据
 
 - 文件：`$DSH_HOME/storages/dsh-taskboard/boards.json`（默认 `$DSH_HOME=~/.dsh`，不随插件升级或重装删除）
-- 任务隔离目录：`$DSH_HOME/storages/dsh-taskboard/worktrees/`（运行时创建；成功、删除、强制关闭或历史手动清理时释放；运行中和待解决冲突保留）
+- 任务隔离目录：新任务使用 `<Git 根>/.dsh-taskboard-worktrees/`，并自动写入仓库本地 `.git/info/exclude`；旧任务继续兼容 `$DSH_HOME/storages/dsh-taskboard/worktrees/`。成功、删除、强制关闭或历史手动清理时释放，运行中和待解决冲突保留。
 - 数据损坏恢复：每次原子写入前保留 `boards.json.bak`；主文件结构损坏时自动读取最近一份有效备份，原文件不删除
 - 旧版迁移：稳定文件不存在且旧包目录仍存在时，Host 会读取一次 `datas/boards.json` 并复制到稳定目录；旧文件保留，不自动删除
 - 自定义：设置 `DSH_TASKBOARD_DATA=<绝对路径>` 覆盖存储位置；显式覆盖时不读取旧默认路径

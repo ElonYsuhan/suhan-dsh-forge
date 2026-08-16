@@ -44,10 +44,10 @@ describe('task worktree integration', () => {
 
   it('runs independent tasks in parallel and linearly integrates both commits', async () => {
     const root = await repository()
-    const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-storage-'))
-    tempDirs.push(storage)
-    const first = await prepareTaskWorkspace(root, 'task-a', storage)
-    const second = await prepareTaskWorkspace(root, 'task-b', storage)
+    const first = await prepareTaskWorkspace(root, 'task-a')
+    const second = await prepareTaskWorkspace(root, 'task-b')
+    expect(first.path).toContain('/.dsh-taskboard-worktrees/')
+    expect(await git(root, 'status', '--porcelain')).toBe('')
 
     await writeFile(join(first.path, 'a.txt'), 'task a\n')
     await writeFile(join(second.path, 'b.txt'), 'task b\n')
@@ -73,8 +73,8 @@ describe('task worktree integration', () => {
     const root = await repository()
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-conflict-'))
     tempDirs.push(storage)
-    const first = await prepareTaskWorkspace(root, 'task-c', storage)
-    const second = await prepareTaskWorkspace(root, 'task-d', storage)
+    const first = await prepareTaskWorkspace(root, 'task-c')
+    const second = await prepareTaskWorkspace(root, 'task-d')
 
     await writeFile(join(first.path, 'shared.txt'), 'first\n')
     await writeFile(join(second.path, 'shared.txt'), 'second\n')
@@ -105,7 +105,7 @@ describe('task worktree integration', () => {
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-dirty-'))
     tempDirs.push(storage)
     await writeFile(join(root, 'shared.txt'), 'dirty\n')
-    const workspace = await prepareTaskWorkspace(root, 'task-dirty', storage)
+    const workspace = await prepareTaskWorkspace(root, 'task-dirty')
 
     expect(await readFile(join(workspace.path, 'shared.txt'), 'utf8')).toBe('dirty\n')
     expect(await git(root, 'status', '--porcelain')).toContain('shared.txt')
@@ -126,10 +126,10 @@ describe('task worktree integration', () => {
     const root = await repository()
     const storage = await mkdtemp(join(tmpdir(), 'dsh-taskboard-recovery-'))
     tempDirs.push(storage)
-    const original = await prepareTaskWorkspace(root, 'task-recovery', storage)
+    const original = await prepareTaskWorkspace(root, 'task-recovery')
     await writeFile(join(original.path, 'partial.txt'), 'preserved partial work\n')
 
-    const recovered = await prepareTaskWorkspace(root, 'task-recovery', storage)
+    const recovered = await prepareTaskWorkspace(root, 'task-recovery')
     expect(recovered).toEqual(original)
     expect(await readFile(join(recovered.path, 'partial.txt'), 'utf8')).toBe('preserved partial work\n')
     await discardTaskWorkspace(recovered)
