@@ -238,19 +238,21 @@ describe('virtual-companion host contract', () => {
     expect(res.body).toEqual({ reply: '你好呀' })
   })
 
-  it('uses the requested character role in opening and chat prompts', async () => {
+  it('uses the requested character role and background info in prompts', async () => {
     const { ctx, routes, stream } = createContext()
     apply(ctx)
 
     const openingRes = response()
-    await routes[0]!.handler(request('POST', '/virtual-companion/opening', { role: 'cool' }), openingRes)
+    await routes[0]!.handler(request('POST', '/virtual-companion/opening', { role: 'cool', background: '  星光森林  ' }), openingRes)
     let options = stream.mock.calls[0]?.[0] as { system?: string } | undefined
     expect(options?.system).toContain('高冷')
+    expect(options?.system).toContain('星光森林')
 
     const chatRes = response()
-    await routes[0]!.handler(request('POST', '/virtual-companion/chat', { text: '你好', role: 'elegant' }), chatRes)
+    await routes[0]!.handler(request('POST', '/virtual-companion/chat', { text: '你好', role: 'elegant', background: '海边' }), chatRes)
     options = stream.mock.calls[1]?.[0] as { system?: string } | undefined
     expect(options?.system).toContain('知性')
+    expect(options?.system).toContain('海边')
   })
 
   it('streams chat sentences and a done event through SSE', async () => {
@@ -370,11 +372,11 @@ describe('virtual-companion host contract', () => {
     apply(ctx, { speechSynth: synth })
 
     const res = audioResponse()
-    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好', voice: 'loli' }), res)
+    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好', voice: 'sweet' }), res)
     expect(res.status).toBe(200)
     expect(res.headers['Content-Type']).toBe('audio/mpeg')
     expect(res.body.toString()).toBe('fake-mp3')
-    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'loli')
+    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'sweet')
   })
 
   it('streams TTS audio chunks through the streaming GET route', async () => {
@@ -389,7 +391,7 @@ describe('virtual-companion host contract', () => {
 
     const res = streamAudioResponse()
     const handling = routes[0]!.handler(
-      request('GET', '/virtual-companion/tts/stream?text=%E4%BD%A0%E5%A5%BD&voice=loli'),
+      request('GET', '/virtual-companion/tts/stream?text=%E4%BD%A0%E5%A5%BD&voice=sweet'),
       res
     )
     await new Promise(resolve => setImmediate(resolve))
@@ -401,7 +403,7 @@ describe('virtual-companion host contract', () => {
     expect(res.headers['Content-Type']).toBe('audio/mpeg')
     expect(res.chunks.map(chunk => chunk.toString()).join('')).toBe('fake-mp3')
     expect(res.ended).toBe(true)
-    expect(synth.stream).toHaveBeenCalledWith('你好', 'loli')
+    expect(synth.stream).toHaveBeenCalledWith('你好', 'sweet')
   })
 
   it('rejects missing streaming TTS text without calling the synthesizer', async () => {
@@ -433,7 +435,7 @@ describe('virtual-companion host contract', () => {
     const res = audioResponse()
     await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好', voice: 'robot' }), res)
     expect(res.status).toBe(200)
-    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'natural')
+    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'gentle')
   })
 
   it('rejects empty TTS text without calling the synthesizer', async () => {

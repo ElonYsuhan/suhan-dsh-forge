@@ -46,9 +46,9 @@ export const ROLE_PRESETS: readonly RolePreset[] = [
   },
   {
     id: 'cool',
-    label: '高冷男神',
-    description: '冷静简洁，惜字如金',
-    systemPrompt: '你是冷静高冷的男神，回答简短直接，不拖泥带水，但仍有礼貌。'
+    label: '高冷御姐',
+    description: '冷静优雅，御姐气场',
+    systemPrompt: '你是冷静优雅的高冷御姐，回答简短直接，不拖泥带水，但仍有礼貌。'
   },
   {
     id: 'cute',
@@ -78,14 +78,100 @@ export function getRolePreset (value: unknown): RolePreset {
   return ROLE_BY_ID[id]
 }
 
-/** Build the full system prompt for a role id. */
-export function getRoleSystemPrompt (value: unknown): string {
+/** Maximum length for user-provided background/scene information. */
+export const BACKGROUND_TEXT_MAX_LENGTH = 500
+
+/** Normalize an untrusted background text value from storage or HTTP. */
+export function normalizeBackgroundText (value: unknown): string {
+  if (typeof value !== 'string') return ''
+  return value.trim().slice(0, BACKGROUND_TEXT_MAX_LENGTH)
+}
+
+/** Build the full system prompt for a role id, optionally including user-defined background info. */
+export function getRoleSystemPrompt (value: unknown, backgroundText = ''): string {
   const preset = getRolePreset(value)
-  return [
+  const parts = [
     '你是运行在 DeepSeek Harness Web 中的 3D 虚拟伙伴。',
     preset.systemPrompt,
     '回答控制在 2-4 句以内，适合语音朗读。'
-  ].join(' ')
+  ]
+  const background = normalizeBackgroundText(backgroundText)
+  if (background.length > 0) {
+    parts.push(`当前场景背景信息：${background}`)
+  }
+  return parts.join(' ')
+}
+
+/** Fairy girl skin presets that change the 3D character's outfit and wings. */
+export type SkinId = 'fairyPink' | 'fairyBlue' | 'fairyPurple' | 'fairyGreen'
+
+export interface SkinPreset {
+  id: SkinId
+  label: string
+  description: string
+  /** Main dress color. */
+  dressColor: number
+  /** Hair accent/ribbon color. */
+  accentColor: number
+  /** Fairy wing color. */
+  wingColor: number
+}
+
+export const DEFAULT_SKIN_ID: SkinId = 'fairyPink'
+
+export const SKIN_PRESETS: readonly SkinPreset[] = [
+  {
+    id: 'fairyPink',
+    label: '仙粉',
+    description: '粉色仙女裙，甜美梦幻',
+    dressColor: 0xf7a8c4,
+    accentColor: 0xffd1e8,
+    wingColor: 0xf5d0e8
+  },
+  {
+    id: 'fairyBlue',
+    label: '仙蓝',
+    description: '淡蓝仙女裙，清冷优雅',
+    dressColor: 0x7ec8e3,
+    accentColor: 0xd6f0ff,
+    wingColor: 0xcdeaff
+  },
+  {
+    id: 'fairyPurple',
+    label: '仙紫',
+    description: '紫罗兰仙女裙，神秘高贵',
+    dressColor: 0xb79ced,
+    accentColor: 0xe3d6ff,
+    wingColor: 0xd9c8ff
+  },
+  {
+    id: 'fairyGreen',
+    label: '仙绿',
+    description: '清新绿仙女裙，自然灵动',
+    dressColor: 0x8fd6a8,
+    accentColor: 0xd9ffe8,
+    wingColor: 0xd0f2d8
+  }
+]
+
+export const SKIN_IDS: readonly SkinId[] = SKIN_PRESETS.map(skin => skin.id)
+
+const SKIN_BY_ID: Readonly<Record<SkinId, SkinPreset>> = Object.fromEntries(
+  SKIN_PRESETS.map(skin => [skin.id, skin])
+) as Readonly<Record<SkinId, SkinPreset>>
+
+/** Validate untrusted skin ids and fall back to the default. */
+export function normalizeSkinId (value: unknown): SkinId {
+  if (typeof value === 'string' && SKIN_IDS.includes(value as SkinId)) {
+    return value as SkinId
+  }
+  return DEFAULT_SKIN_ID
+}
+
+/** Look up a skin preset by id; unknown ids fall back to the default. */
+export function getSkinPreset (value: unknown): SkinPreset {
+  const id = normalizeSkinId(value)
+  return SKIN_BY_ID[id]
 }
 
 /** Chat bubble/panel background presets. */
@@ -159,6 +245,10 @@ export function getChatBackground (value: unknown): ChatBackgroundPreset {
 export interface CompanionSettings {
   roleId: RoleId
   voiceId: VoiceStyleId
+  skinId: SkinId
+  /** User-defined background/scene info sent to the LLM as context. */
+  backgroundText: string
+  /** Kept for backwards-compatible storage; the UI no longer offers color selection. */
   backgroundId: ChatBackgroundId
   /** When true, chat replies are streamed and spoken sentence-by-sentence. */
   realtime: boolean
@@ -167,6 +257,8 @@ export interface CompanionSettings {
 export const DEFAULT_SETTINGS: CompanionSettings = {
   roleId: DEFAULT_ROLE_ID,
   voiceId: DEFAULT_VOICE_STYLE_ID,
+  skinId: DEFAULT_SKIN_ID,
+  backgroundText: '',
   backgroundId: DEFAULT_CHAT_BACKGROUND_ID,
   realtime: true
 }
@@ -177,6 +269,8 @@ export function normalizeSettings (value: unknown): CompanionSettings {
   return {
     roleId: normalizeRoleId(source.roleId),
     voiceId: normalizeVoiceStyle(source.voiceId),
+    skinId: normalizeSkinId(source.skinId),
+    backgroundText: normalizeBackgroundText(source.backgroundText),
     backgroundId: normalizeChatBackgroundId(source.backgroundId),
     realtime: typeof source.realtime === 'boolean' ? source.realtime : DEFAULT_SETTINGS.realtime
   }

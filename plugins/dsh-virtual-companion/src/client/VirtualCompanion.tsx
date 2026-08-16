@@ -2,20 +2,22 @@
  * 虚拟人物浮层组件：
  * - 注册在 `shell.overlay`，可拖拽到页面任意位置
  * - 单击人物开始或停止语音聊天；双击打开设置面板
- * - 设置面板支持人物角色、聊天背景、音色切换和流式实时回复
+ * - 设置面板支持人物角色、人物皮肤、背景信息、女声音色和流式实时回复
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CompanionModelKind } from '../three/companionModels.ts'
 import { CompanionScene } from '../three/companionScene.ts'
 import {
-  CHAT_BACKGROUNDS,
+  BACKGROUND_TEXT_MAX_LENGTH,
   DEFAULT_SETTINGS,
   getChatBackground,
   getRolePreset,
   normalizeSettings,
   ROLE_PRESETS,
-  type RoleId
+  SKIN_PRESETS,
+  type RoleId,
+  type SkinId
 } from '../shared/settings.ts'
 import {
   VOICE_STYLES,
@@ -143,13 +145,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   useEffect(() => {
     const canvas = canvasRef.current
     if (canvas === null) return
-    const scene = new CompanionScene(canvas, 'human' satisfies CompanionModelKind)
+    const scene = new CompanionScene(canvas, 'human' satisfies CompanionModelKind, settings.skinId)
     sceneRef.current = scene
     return () => {
       scene.dispose()
       sceneRef.current = null
     }
-  }, [])
+  }, [settings.skinId])
+
+  useEffect(() => {
+    sceneRef.current?.setModel('human' satisfies CompanionModelKind, settings.skinId)
+  }, [settings.skinId])
 
   useEffect(() => {
     sceneRef.current?.setHovered(hovered)
@@ -172,6 +178,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [settings])
 
   const stopCurrentAudio = useCallback((): void => {
+    sceneRef.current?.setSpeaking(false)
     const audio = audioRef.current
     if (audio !== null) {
       audio.onended = null
@@ -260,6 +267,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
       try {
         await audio.play()
+        sceneRef.current?.setSpeaking(true)
       } catch (error) {
         if (audioRef.current === audio) {
           const done = onSpeechEndRef.current
@@ -328,7 +336,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     setThinking(true)
     setListening(false)
     setSpeechError(null)
-    setBubbleText('正在思考…')
+    setBubbleText(null)
     sentenceQueueRef.current = []
     playingSentenceRef.current = false
     try {
@@ -336,7 +344,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         const response = await fetch('/virtual-companion/chat/stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, role: settings.roleId })
+          body: JSON.stringify({ text, role: settings.roleId, background: settings.backgroundText })
         })
         if (!response.ok) {
           const data = await response.json() as { error?: unknown }
@@ -364,7 +372,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
                 if (typeof data.error === 'string') throw new Error(data.error)
                 if (typeof data.delta === 'string' && data.delta.length > 0) {
                   streamed += data.delta
-                  setBubbleText(streamed)
                 }
                 if (typeof data.sentence === 'string' && data.sentence.length > 0) {
                   sentenceQueueRef.current.push(data.sentence)
@@ -392,7 +399,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         const response = await fetch('/virtual-companion/chat', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, role: settings.roleId })
+          body: JSON.stringify({ text, role: settings.roleId, background: settings.backgroundText })
         })
         const data = await response.json() as { reply?: unknown; error?: unknown }
         if (!response.ok) {
@@ -417,7 +424,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setBubbleText('聊天失败，点击重新开始')
       stopVoiceSession()
     }
-  }, [settings.realtime, settings.roleId, speak, stopVoiceSession])
+  }, [settings.realtime, settings.roleId, settings.backgroundText, speak, stopVoiceSession])
 
   const beginListening = useCallback((): void => {
     if (!interactingRef.current) return
@@ -429,7 +436,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       return
     }
     setSpeechError(null)
-    setBubbleText('我在听，请回答…')
+    setBubbleText(null)
     const recognition = new SpeechRecognitionCtor()
     recognition.lang = 'zh-CN'
     recognition.interimResults = false
@@ -486,13 +493,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     setListening(false)
     setThinking(true)
     setSpeechError(null)
-    setBubbleText('正在开启语音聊天…')
+    setBubbleText(null)
     void (async () => {
       try {
         const response = await fetch('/virtual-companion/opening', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ role: settings.roleId })
+          body: JSON.stringify({ role: settings.roleId, background: settings.backgroundText })
         })
         const data = await response.json() as { reply?: unknown; error?: unknown }
         if (!response.ok) {
@@ -516,7 +523,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         stopVoiceSession()
       }
     })()
-  }, [settings.roleId, speak, stopVoiceSession])
+  }, [settings.roleId, settings.backgroundText, speak, stopVoiceSession])
 
   const toggleVoiceSession = useCallback((): void => {
     if (interactingRef.current) {
@@ -592,7 +599,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
   }, [handleStageClick])
 
-  const statusText = speechError ?? bubbleText ?? (hovered ? '单击语音，双击设置' : null)
+  const activeChat = interacting || listening || thinking
+  const statusText = speechError ?? (!activeChat ? bubbleText : null) ?? (hovered && !activeChat ? '单击语音，双击设置' : null)
   const activeBackground = getChatBackground(settings.backgroundId)
   const activeRole = getRolePreset(settings.roleId)
 
@@ -616,9 +624,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           <div className={css.bubble} style={{ background: activeBackground.css, color: activeBackground.textColor }} role='status'>{statusText}</div>
         )}
         {(listening || thinking || interacting) && (
-          <div className={css.indicator} role='status'>
-            {listening ? '🎤' : thinking ? '…' : interacting ? '●' : ''}
-          </div>
+          <div className={css.indicator} role='status'>🤔</div>
         )}
       </div>
       {panelOpen && (
@@ -644,6 +650,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
             </select>
           </label>
           <label className={css.field}>
+            <span>人物皮肤</span>
+            <select
+              value={settings.skinId}
+              onChange={(event) => setSettings({ ...settings, skinId: event.target.value as SkinId })}
+            >
+              {SKIN_PRESETS.map(skin => (
+                <option key={skin.id} value={skin.id}>{skin.label} - {skin.description}</option>
+              ))}
+            </select>
+          </label>
+          <label className={css.field}>
             <span>音色</span>
             <select
               value={settings.voiceId}
@@ -654,22 +671,16 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               ))}
             </select>
           </label>
-          <div className={css.field}>
-            <span>聊天背景</span>
-            <div className={css.backgrounds}>
-              {CHAT_BACKGROUNDS.map(item => (
-                <button
-                  key={item.id}
-                  type='button'
-                  className={settings.backgroundId === item.id ? css.backgroundActive : undefined}
-                  style={{ background: item.css }}
-                  onClick={() => setSettings({ ...settings, backgroundId: item.id })}
-                  title={item.label}
-                  aria-label={item.label}
-                />
-              ))}
-            </div>
-          </div>
+          <label className={css.field}>
+            <span>背景信息（自己设置）</span>
+            <textarea
+              value={settings.backgroundText}
+              maxLength={BACKGROUND_TEXT_MAX_LENGTH}
+              rows={3}
+              placeholder='例如：我们在一个洒满星光的森林里聊天……'
+              onChange={(event) => setSettings({ ...settings, backgroundText: event.target.value })}
+            />
+          </label>
           <label className={css.field}>
             <span>流式实时回复</span>
             <input

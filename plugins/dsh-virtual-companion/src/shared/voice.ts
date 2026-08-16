@@ -6,13 +6,13 @@
  * so both the Host route and the Client panel can validate the same wire enum.
  */
 
-export type VoiceStyleId = 'natural' | 'cool' | 'loli' | 'mature' | 'young' | 'deep'
+export type VoiceStyleId = 'sweet' | 'gentle' | 'cute' | 'mature' | 'elegant' | 'lively'
 
 export interface VoiceStyle {
   id: VoiceStyleId
   label: string
   description: string
-  /** Microsoft Edge neural TTS short name (zh-CN voices). */
+  /** Microsoft Edge neural TTS short name (zh-CN female voices). */
   edgeVoice: string
   /** msedge-tts ProsodyOptions.rate value. */
   edgeRate: number
@@ -20,56 +20,56 @@ export interface VoiceStyle {
   edgePitch: string
 }
 
-export const DEFAULT_VOICE_STYLE_ID: VoiceStyleId = 'natural'
+export const DEFAULT_VOICE_STYLE_ID: VoiceStyleId = 'gentle'
 
 export const VOICE_STYLES: readonly VoiceStyle[] = [
   {
-    id: 'natural',
-    label: '自然',
-    description: '默认清晰自然',
-    edgeVoice: 'zh-CN-XiaoxiaoNeural',
-    edgeRate: 1,
-    edgePitch: '+0Hz'
-  },
-  {
-    id: 'cool',
-    label: '高冷',
-    description: '清冷低沉、语速略慢',
-    edgeVoice: 'zh-CN-YunjianNeural',
-    edgeRate: 0.9,
-    edgePitch: '-8Hz'
-  },
-  {
-    id: 'loli',
-    label: '萝莉',
-    description: '清脆甜美、音调偏高',
+    id: 'sweet',
+    label: '甜美',
+    description: '清甜明亮、音调偏高',
     edgeVoice: 'zh-CN-XiaoyiNeural',
     edgeRate: 1.08,
     edgePitch: '+12Hz'
   },
   {
+    id: 'gentle',
+    label: '温柔',
+    description: '柔和平缓、亲近自然',
+    edgeVoice: 'zh-CN-XiaoxiaoNeural',
+    edgeRate: 0.96,
+    edgePitch: '+2Hz'
+  },
+  {
+    id: 'cute',
+    label: '可爱',
+    description: '活泼俏皮、少女感强',
+    edgeVoice: 'zh-CN-XiaomengNeural',
+    edgeRate: 1.12,
+    edgePitch: '+16Hz'
+  },
+  {
     id: 'mature',
     label: '御姐',
-    description: '成熟知性、稍低但保持清晰',
-    edgeVoice: 'zh-CN-XiaoxiaoNeural',
-    edgeRate: 0.95,
+    description: '成熟自信、气场沉稳',
+    edgeVoice: 'zh-CN-XiaoruiNeural',
+    edgeRate: 0.94,
     edgePitch: '-4Hz'
   },
   {
-    id: 'young',
-    label: '少年',
-    description: '明亮有活力',
-    edgeVoice: 'zh-CN-YunxiNeural',
-    edgeRate: 1.05,
-    edgePitch: '+4Hz'
+    id: 'elegant',
+    label: '知性',
+    description: '温和知性、表达清晰',
+    edgeVoice: 'zh-CN-XiaohanNeural',
+    edgeRate: 0.98,
+    edgePitch: '+0Hz'
   },
   {
-    id: 'deep',
-    label: '磁性',
-    description: '低沉有磁性',
-    edgeVoice: 'zh-CN-YunjianNeural',
-    edgeRate: 0.85,
-    edgePitch: '-14Hz'
+    id: 'lively',
+    label: '元气',
+    description: '元气满满、活力十足',
+    edgeVoice: 'zh-CN-XiaoxuanNeural',
+    edgeRate: 1.12,
+    edgePitch: '+8Hz'
   }
 ]
 

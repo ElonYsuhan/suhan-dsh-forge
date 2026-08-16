@@ -5,11 +5,11 @@
     "en-US": "Virtual Human"
   },
   "summary": {
-    "zh-CN": "可在 DSH Web 任意位置拖拽且始终置顶的透明浮空 3D 虚拟人物；单击开始语音聊天，双击打开设置面板，支持人物角色、聊天背景、音色切换和流式实时回复。",
-    "en-US": "An always-on-top transparent draggable 3D human companion for DSH Web; click to start proactive voice chat, double-click to open settings for role, background, voice, and streaming replies."
+    "zh-CN": "可在 DSH Web 任意位置拖拽且始终置顶的透明浮空 3D 卡通仙女；单击开始语音聊天，双击打开设置面板，支持人物角色、仙女皮肤、背景信息文本框、六种女声音色和流式实时回复，说话时人物放大 1.2 倍。",
+    "en-US": "An always-on-top transparent draggable 3D fairy girl companion for DSH Web; click to start proactive voice chat, double-click to open settings for role, fairy skin, custom background text, six female voices, and streaming replies with a 1.2x speaking scale."
   },
   "categories": ["productivity", "entertainment"],
-  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "click-to-talk", "virtual-human", "虚拟人物", "语音聊天", "透明浮空", "always-on-top", "edge-tts", "streaming-tts", "神经网络语音", "settings", "streaming"],
+  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "click-to-talk", "virtual-human", "always-on-top", "fairy-girl", "卡通仙女", "虚拟人物", "语音聊天", "透明浮空", "edge-tts", "streaming-tts", "神经网络语音", "女声", "settings", "streaming"],
   "compatibility": {
     "dsh": ">=0.1.0-rc.6 <0.2.0",
     "node": "^22.19.0 || >=24.0.0",

@@ -8,7 +8,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText, streamReplyEvents } from './shared/chat.ts'
-import { getRoleSystemPrompt } from './shared/settings.ts'
+import { getRoleSystemPrompt, normalizeBackgroundText } from './shared/settings.ts'
 import { CHAT_HISTORY_LIMIT, OPENING_REQUEST } from './shared/types.ts'
 import { normalizeVoiceStyle } from './shared/voice.ts'
 import { EdgeTtsSpeechSynth, TtsError, type SpeechSynth } from './tts.ts'
@@ -80,7 +80,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             provider: selection.provider,
             model: selection.model,
             messages: [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), openingMessage],
-            system: getRoleSystemPrompt(body?.role),
+            system: getRoleSystemPrompt(body?.role, normalizeBackgroundText(body?.background)),
             signal: AbortSignal.timeout(30_000)
           }))
           history = appendTurn(history, OPENING_REQUEST, reply, selection.provider, selection.model)
@@ -100,7 +100,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             provider: selection.provider,
             model: selection.model,
             messages: [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), userMessage],
-            system: getRoleSystemPrompt(body?.role),
+            system: getRoleSystemPrompt(body?.role, normalizeBackgroundText(body?.background)),
             signal: AbortSignal.timeout(30_000)
           }))
           history = appendTurn(history, text, reply, selection.provider, selection.model)
@@ -117,7 +117,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             source: { kind: 'user' }
           })
           const messages = [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), userMessage]
-          const system = getRoleSystemPrompt(body?.role)
+          const system = getRoleSystemPrompt(body?.role, normalizeBackgroundText(body?.background))
           res.writeHead(200, {
             'Content-Type': 'text/event-stream; charset=utf-8',
             'Cache-Control': 'no-cache, no-transform',

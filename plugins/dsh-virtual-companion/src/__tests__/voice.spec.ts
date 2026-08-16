@@ -10,7 +10,7 @@ import {
 describe('voice style catalog', () => {
   it('exposes the required switchable styles', () => {
     const ids = VOICE_STYLES.map(style => style.id)
-    expect(ids).toEqual(expect.arrayContaining(['natural', 'cool', 'loli', 'mature', 'young', 'deep']))
+    expect(ids).toEqual(expect.arrayContaining(['sweet', 'gentle', 'cute', 'mature', 'elegant', 'lively']))
   })
 
   it('keeps every style label and Edge TTS tuning usable', () => {
@@ -25,7 +25,7 @@ describe('voice style catalog', () => {
 
 describe('normalizeVoiceStyle', () => {
   it('accepts known ids and falls back on invalid or missing values', () => {
-    expect(normalizeVoiceStyle('loli')).toBe('loli')
+    expect(normalizeVoiceStyle('sweet')).toBe('sweet')
     expect(normalizeVoiceStyle(undefined)).toBe(DEFAULT_VOICE_STYLE_ID)
     expect(normalizeVoiceStyle('robotic')).toBe(DEFAULT_VOICE_STYLE_ID)
     expect(normalizeVoiceStyle({})).toBe(DEFAULT_VOICE_STYLE_ID)

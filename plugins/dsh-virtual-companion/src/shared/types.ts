@@ -24,11 +24,15 @@ export interface ChatRequest {
   text: string
   /** Character role id; missing values fall back to the default role. */
   role?: string
+  /** User-defined background/scene info; normalized on the Host. */
+  background?: string
 }
 
 /** Client -> Host proactive opening request body. */
 export interface OpeningRequest {
   role?: string
+  /** User-defined background/scene info; normalized on the Host. */
+  background?: string
 }
 
 /** Host -> Client chat response body. */
