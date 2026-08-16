@@ -115,6 +115,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const audioUnlockedRef = useRef(false)
   const audioUrlRef = useRef<string | null>(null)
   const noSpeechRetriesRef = useRef(0)
+  const backgroundRecognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const lastSpokenTextRef = useRef('')
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -223,6 +225,67 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     stopCurrentAudio()
   }, [stopCurrentAudio])
 
+  /** 停止她说话期间的后台聆听。 */
+  const stopBackgroundListening = useCallback((): void => {
+    const recognition = backgroundRecognitionRef.current
+    if (recognition !== null) {
+      recognition.onresult = null
+      recognition.onerror = null
+      recognition.onend = null
+      recognition.abort()
+      backgroundRecognitionRef.current = null
+    }
+  }, [])
+
+  /** 她说话期间的后台聆听：检测到你的声音立即打断她并接管对话。 */
+  const startBackgroundListening = useCallback((): void => {
+    if (!interactingRef.current) return
+    stopBackgroundListening()
+    const SpeechRecognitionCtor = getSpeechRecognition()
+    if (SpeechRecognitionCtor === undefined) return
+    const recognition = new SpeechRecognitionCtor()
+    recognition.lang = 'zh-CN'
+    recognition.interimResults = false
+    recognition.continuous = false
+    recognition.onresult = (event): void => {
+      const results: SpeechRecognitionResultLike[] = []
+      for (let index = 0; index < event.results.length; index += 1) {
+        const item = event.results[index]
+        if (item !== undefined) results.push(item)
+      }
+      const finalResult = results.find(result => result.isFinal)
+      const transcript = finalResult?.[0]?.transcript ?? ''
+      if (transcript.trim() === '') return
+      // 防回声：识别结果与她正在朗读的句子一致时忽略
+      const normalize = (value: string): string => value.replace(/[\s，。！？、,.!?]/g, '')
+      const spoken = normalize(lastSpokenTextRef.current)
+      const heard = normalize(transcript)
+      if (spoken.length >= 4 && heard.length >= 4 && (spoken.includes(heard) || heard.includes(spoken))) return
+      stopBackgroundListening()
+      sentenceQueueRef.current = []
+      playingSentenceRef.current = false
+      stopCurrentAudio()
+      setListening(false)
+      sendAnswerRef.current(transcript.trim())
+    }
+    recognition.onerror = () => {
+      if (backgroundRecognitionRef.current === recognition) {
+        backgroundRecognitionRef.current = null
+      }
+    }
+    recognition.onend = () => {
+      if (backgroundRecognitionRef.current === recognition) {
+        backgroundRecognitionRef.current = null
+      }
+    }
+    backgroundRecognitionRef.current = recognition
+    try {
+      recognition.start()
+    } catch {
+      backgroundRecognitionRef.current = null
+    }
+  }, [stopCurrentAudio])
+
   const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
@@ -259,11 +322,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         audioUrlRef.current = url
         audio.src = url
       }
+      lastSpokenTextRef.current = text
       onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
         if (audioRef.current === audio) {
           const done = onSpeechEndRef.current
           onSpeechEndRef.current = null
+          stopBackgroundListening()
           stopCurrentAudio()
           done?.()
         }
@@ -272,6 +337,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         if (audioRef.current === audio) {
           const done = onSpeechEndRef.current
           onSpeechEndRef.current = null
+          stopBackgroundListening()
           setSpeechError('语音播放失败，请稍后重试')
           stopCurrentAudio()
           done?.()
@@ -280,6 +346,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       try {
         await audio.play()
         setSpeaking(true)
+        // 她说话期间后台聆听：你插话她会立刻停下并回复
+        startBackgroundListening()
       } catch (error) {
         if (audioRef.current === audio) {
           const done = onSpeechEndRef.current
@@ -303,7 +371,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setListening(false)
       setThinking(false)
     }
-  }, [settings.voiceId, stopCurrentAudio])
+  }, [settings.voiceId, stopCurrentAudio, startBackgroundListening, stopBackgroundListening])
 
   const stopVoiceSession = useCallback((): void => {
     if (singleClickTimerRef.current !== null) {
@@ -323,8 +391,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     onSpeechEndRef.current = null
     recognitionRef.current?.abort()
     recognitionRef.current = null
+    stopBackgroundListening()
     stopCurrentAudio()
-  }, [stopCurrentAudio])
+  }, [stopCurrentAudio, stopBackgroundListening])
 
   const playNextSentence = useCallback((): void => {
     if (playingSentenceRef.current) return
@@ -440,6 +509,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
 
   const beginListening = useCallback((): void => {
     if (!interactingRef.current) return
+    stopBackgroundListening()
     const SpeechRecognitionCtor = getSpeechRecognition()
     if (SpeechRecognitionCtor === undefined) {
       setSpeechError('当前浏览器不支持语音识别')
