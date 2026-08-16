@@ -216,6 +216,18 @@ describe('virtual-companion host contract', () => {
     expect(res.body).toEqual({ ok: true })
   })
 
+  it('serves the bundled portrait image asset', async () => {
+    const { ctx, routes } = createContext()
+    apply(ctx)
+
+    const res = audioResponse()
+    await routes[0]!.handler(request('GET', '/virtual-companion/portrait'), res)
+    expect(res.status).toBe(200)
+    expect(res.headers['Content-Type']).toBe('image/png')
+    expect(res.body.length).toBeGreaterThan(1_000)
+    expect(res.body.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+  })
+
   it('returns a proactive opening question through the DSH LLM stream', async () => {
     const { ctx, routes, stream } = createContext()
     apply(ctx)

@@ -2,12 +2,11 @@
  * 虚拟人物浮层组件：
  * - 注册在 `shell.overlay`，可拖拽到页面任意位置
  * - 单击人物开始或停止语音聊天；双击打开设置面板
- * - 设置面板支持人物角色、人物皮肤、背景信息、女声音色和流式实时回复
+ * - 人物形象为打包进插件的立绘 PNG（/virtual-companion/portrait），
+ *   说话时以浮动缩放表达「在说话」；设置面板支持角色、背景、音色与流式回复
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import type { CompanionModelKind } from '../three/companionModels.ts'
-import { CompanionScene } from '../three/companionScene.ts'
 import {
   BACKGROUND_TEXT_MAX_LENGTH,
   DEFAULT_SETTINGS,
@@ -15,9 +14,7 @@ import {
   getRolePreset,
   normalizeSettings,
   ROLE_PRESETS,
-  SKIN_PRESETS,
-  type RoleId,
-  type SkinId
+  type RoleId
 } from '../shared/settings.ts'
 import {
   VOICE_STYLES,
@@ -101,8 +98,6 @@ function getSpeechRecognition (): SpeechRecognitionConstructorLike | undefined {
  * @param _props - composed slot props (this entry has no inject face).
  */
 export function VirtualCompanion (_props: VirtualCompanionProps) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const sceneRef = useRef<CompanionScene | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUrlRef = useRef<string | null>(null)
@@ -132,27 +127,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [interacting, setInteracting] = useState(false)
   const [listening, setListening] = useState(false)
   const [thinking, setThinking] = useState(false)
+  const [speaking, setSpeaking] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (canvas === null) return
-    const scene = new CompanionScene(canvas, 'human' satisfies CompanionModelKind, settings.skinId)
-    sceneRef.current = scene
-    return () => {
-      scene.dispose()
-      sceneRef.current = null
-    }
-  }, [settings.skinId])
-
-  useEffect(() => {
-    sceneRef.current?.setModel('human' satisfies CompanionModelKind, settings.skinId)
-  }, [settings.skinId])
-
-  useEffect(() => {
-    sceneRef.current?.setHovered(hovered)
-  }, [hovered])
 
   useEffect(() => {
     try {
@@ -171,7 +148,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [settings])
 
   const stopCurrentAudio = useCallback((): void => {
-    sceneRef.current?.setSpeaking(false)
+    setSpeaking(false)
     const audio = audioRef.current
     if (audio !== null) {
       audio.onended = null
@@ -264,7 +241,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
       try {
         await audio.play()
-        sceneRef.current?.setSpeaking(true)
+        setSpeaking(true)
       } catch (error) {
         if (audioRef.current === audio) {
           const done = onSpeechEndRef.current
@@ -608,7 +585,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       data-testid='virtual-companion'
     >
       <div
-        className={css.stage}
+        className={`${css.stage} ${speaking ? css.speaking : ''} ${hovered ? css.hovered : ''}`}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
@@ -616,7 +593,12 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
       >
-        <canvas ref={canvasRef} className={css.canvas} aria-label='3D 虚拟人物' />
+        <img
+          className={css.portrait}
+          src='/virtual-companion/portrait'
+          alt='虚拟伙伴立绘'
+          draggable={false}
+        />
         {statusText !== null && (
           <div className={css.bubble} style={{ background: activeBackground.css, color: activeBackground.textColor }} role='status'>{statusText}</div>
         )}
@@ -643,17 +625,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
             >
               {ROLE_PRESETS.map(role => (
                 <option key={role.id} value={role.id}>{role.label} - {role.description}</option>
-              ))}
-            </select>
-          </label>
-          <label className={css.field}>
-            <span>人物皮肤</span>
-            <select
-              value={settings.skinId}
-              onChange={(event) => setSettings({ ...settings, skinId: event.target.value as SkinId })}
-            >
-              {SKIN_PRESETS.map(skin => (
-                <option key={skin.id} value={skin.id}>{skin.label} - {skin.description}</option>
               ))}
             </select>
           </label>

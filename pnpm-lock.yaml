@@ -160,9 +160,6 @@ importers:
       msedge-tts:
         specifier: ^2.0.7
         version: 2.0.7
-      three:
-        specifier: ^0.178.0
-        version: 0.178.0
     devDependencies:
       '@types/node':
         specifier: 'catalog:'
@@ -2615,9 +2612,6 @@ packages:
   supports-color@10.2.2:
     resolution: {integrity: sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g==}
     engines: {node: '>=18'}
-
-  three@0.178.0:
-    resolution: {integrity: sha512-ybFIB0+x8mz0wnZgSGy2MO/WCO6xZhQSZnmfytSPyNpM0sBafGRVhdaj+erYh5U+RhQOAg/eXqw5uVDiM2BjhQ==}
 
   tinybench@2.9.0:
     resolution: {integrity: sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg==}
@@ -5335,8 +5329,6 @@ snapshots:
       js-tokens: 9.0.1
 
   supports-color@10.2.2: {}
-
-  three@0.178.0: {}
 
   tinybench@2.9.0: {}
 

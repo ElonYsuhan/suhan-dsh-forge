@@ -6,6 +6,9 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { readFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText, streamReplyEvents } from './shared/chat.ts'
 import { getRoleSystemPrompt, normalizeBackgroundText } from './shared/settings.ts'
@@ -66,6 +69,23 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
 
         if (parts[0] === 'virtual-companion' && parts[1] === 'health' && parts.length === 2 && method === 'GET') {
           sendJson(res, 200, { ok: true })
+          return
+        }
+
+        // 立绘资源：客户端 <img> 直接引用本包内打包的肖像图。
+        if (parts[0] === 'virtual-companion' && parts[1] === 'portrait' && parts.length === 2 && method === 'GET') {
+          const assetPath = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'portrait.png')
+          try {
+            const image = await readFile(assetPath)
+            res.writeHead(200, {
+              'Content-Type': 'image/png',
+              'Cache-Control': 'public, max-age=86400',
+              'Content-Length': image.length
+            })
+            res.end(image)
+          } catch {
+            sendJson(res, 404, { error: 'portrait asset missing' })
+          }
           return
         }
 
