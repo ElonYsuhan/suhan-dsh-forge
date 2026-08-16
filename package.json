@@ -17,10 +17,14 @@
     "dsh:restart": "node scripts/restart-dsh.mjs restart",
     "dsh:start": "node scripts/restart-dsh.mjs start",
     "dsh:stop": "node scripts/restart-dsh.mjs stop",
+    "deploy": "pnpm run build && wrangler deploy",
     "lint": "pnpm --recursive --if-present run lint",
     "pack:check": "pnpm --recursive --if-present run pack:check",
     "test": "pnpm --recursive --if-present run test",
     "typecheck": "pnpm --recursive --if-present run typecheck",
     "validate": "node scripts/validate-plugins.mjs"
+  },
+  "devDependencies": {
+    "wrangler": "4.123.0"
   }
 }
