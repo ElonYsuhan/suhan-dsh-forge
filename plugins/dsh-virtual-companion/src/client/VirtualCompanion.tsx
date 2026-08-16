@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { COMPANION_MODELS, type CompanionModelKind } from '../three/companionModels.ts'
 import { CompanionScene } from '../three/companionScene.ts'
-import { DEFAULT_VOICE_STYLE_ID, normalizeVoiceStyle, resolveSpeechConfig, VOICE_STYLES, type VoiceStyleId } from './voice.ts'
+import { DEFAULT_VOICE_STYLE_ID, normalizeVoiceStyle, VOICE_STYLES, type VoiceStyleId } from '../shared/voice.ts'
 import css from './VirtualCompanion.module.css'
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
@@ -105,6 +105,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const sceneRef = useRef<CompanionScene | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const audioUrlRef = useRef<string | null>(null)
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -169,26 +171,77 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
   }, [voiceStyle])
 
-  useEffect(() => () => {
-    recognitionRef.current?.abort()
-    recognitionRef.current = null
-    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel()
+  const stopCurrentAudio = useCallback((): void => {
+    const audio = audioRef.current
+    if (audio !== null) {
+      audio.onended = null
+      audio.onerror = null
+      audio.pause()
+      audio.removeAttribute('src')
+      audio.load()
+      audioRef.current = null
+    }
+    if (audioUrlRef.current !== null) {
+      URL.revokeObjectURL(audioUrlRef.current)
+      audioUrlRef.current = null
     }
   }, [])
 
-  const speak = useCallback((text: string): void => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
-    const synthesis = window.speechSynthesis
-    synthesis.cancel()
-    const config = resolveSpeechConfig(voiceStyle, synthesis.getVoices())
-    const utterance = new SpeechSynthesisUtterance(text)
-    if (config.voice !== null) utterance.voice = config.voice
-    utterance.lang = config.lang
-    utterance.pitch = config.pitch
-    utterance.rate = config.rate
-    synthesis.speak(utterance)
-  }, [voiceStyle])
+  useEffect(() => () => {
+    recognitionRef.current?.abort()
+    recognitionRef.current = null
+    stopCurrentAudio()
+  }, [stopCurrentAudio])
+
+  const speak = useCallback(async (text: string): Promise<void> => {
+    if (typeof window === 'undefined') return
+    try {
+      const response = await fetch('/virtual-companion/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text, voice: voiceStyle })
+      })
+      if (!response.ok) {
+        let message = `HTTP ${response.status}`
+        try {
+          const data = await response.json() as { error?: unknown }
+          if (typeof data.error === 'string') message = data.error
+        } catch {
+          // keep the HTTP fallback message when the error body is not JSON
+        }
+        throw new Error(message)
+      }
+      const blob = await response.blob()
+      if (blob.size === 0) throw new Error('语音合成返回空音频')
+      stopCurrentAudio()
+      const url = URL.createObjectURL(blob)
+      audioUrlRef.current = url
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => {
+        if (audioRef.current === audio) {
+          stopCurrentAudio()
+        }
+      }
+      audio.onerror = () => {
+        if (audioRef.current === audio) {
+          setSpeechError('语音播放失败，请稍后重试')
+          stopCurrentAudio()
+        }
+      }
+      try {
+        await audio.play()
+      } catch (error) {
+        if (audioRef.current === audio) {
+          stopCurrentAudio()
+        }
+        throw error
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setSpeechError(`语音合成失败：${message}`)
+    }
+  }, [stopCurrentAudio, voiceStyle])
 
   const sendText = useCallback(async (raw: string): Promise<void> => {
     const text = raw.trim()
@@ -211,7 +264,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       const reply = typeof data.reply === 'string' ? data.reply : ''
       if (reply !== '') {
         setMessages(previous => [...previous, { role: 'assistant', text: reply }])
-        speak(reply)
+        void speak(reply)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

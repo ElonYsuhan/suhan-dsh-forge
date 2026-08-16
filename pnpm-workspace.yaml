@@ -24,4 +24,5 @@ failIfNoMatch: true
 allowBuilds:
   esbuild: true
   lightningcss: true
+  msedge-tts: false
   workerd: true

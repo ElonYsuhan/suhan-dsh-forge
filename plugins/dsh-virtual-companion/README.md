@@ -10,17 +10,18 @@ DeepSeek Harness Web 客户端插件：**可拖拽 3D 虚拟伙伴**，可出现
   - `shell.overlay` 条目：全页面透明浮空 3D 伙伴（无背景卡片/边框，直接悬浮在页面上）
   - 拖拽位置、当前模型和语音风格保存到 `localStorage`
   - 鼠标悬浮时播放动画/气泡反馈
-  - 语音聊天：浏览器 `SpeechRecognition` 转文字，`speechSynthesis` 朗读回复；支持自然、高冷、萝莉、御姐、少年、磁性等语音风格；不支持时回退文字输入
+  - 语音聊天：浏览器 `SpeechRecognition` 转文字，客户端请求 Host 合成并播放高自然度神经网络语音；支持自然、高冷、萝莉、御姐、少年、磁性等语音风格；不支持语音输入时回退文字输入
 - **Node 半**（`src/index.ts`）
   - `GET /virtual-companion/health`：健康检查
   - `POST /virtual-companion/chat`：接收文字，使用 DSH 当前默认模型生成回复
+  - `POST /virtual-companion/tts`：通过开源 `msedge-tts` 客户端调用 Microsoft Edge 神经网络语音合成中文 MP3，返回给浏览器播放
   - 对话历史上限 20 条，仅存于 Host 内存，不落盘
 
 ## 配置
 
 - 模型跟随 DSH Web 当前选择的模型；3D 外观可在浮层内切换。
 - 语音风格在聊天面板中切换，选项包括自然、高冷、萝莉、御姐、少年、磁性。
-- 浏览器本地语音由 `speechSynthesis` 提供；实际音色取决于操作系统/浏览器已安装的语音库，插件会尽量匹配中文语音并应用风格化的音调与语速。
+- 语音由 Host 通过开源 `msedge-tts` 客户端调用 Microsoft Edge 神经网络语音合成；客户端只负责播放 MP3，不再依赖浏览器本地的 `speechSynthesis` 音色。
 
 ## 开发命令
 
@@ -64,7 +65,7 @@ dsh plugin --profile web remove @suhan-dsh/virtual-companion
 
 ## 权限
 
-- `network`：仅本地 `/virtual-companion` HTTP 路由前缀
+- `network`：本地 `/virtual-companion` HTTP 路由前缀；Host 向 Microsoft Edge Read Aloud TTS WebSocket（`wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1`）发起语音合成请求
 - `filesystem`：无
 - `process`：无
 - `secrets`：无
@@ -74,4 +75,4 @@ dsh plugin --profile web remove @suhan-dsh/virtual-companion
 - DSH：`>=0.1.0-rc.6 <0.2.0`
 - Node.js：`^22.19.0 || >=24.0.0`
 - Profile：`web`
-- 浏览器：需支持 WebGL 与 Web Speech API（语音输入不支持时自动回退文字输入）
+- 浏览器：需支持 WebGL；语音输入依赖 Web Speech API，不支持时自动回退文字输入；语音播放依赖浏览器 `Audio` 播放能力

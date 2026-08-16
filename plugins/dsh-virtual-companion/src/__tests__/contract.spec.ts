@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.ts'
+import { TtsError, type SpeechSynth } from '../tts.ts'
 
 interface RouteLike {
   path: string
@@ -11,6 +12,12 @@ interface RouteLike {
 interface ResponseLike extends ServerResponse {
   status: number
   body: unknown
+}
+
+interface AudioResponseLike extends ServerResponse {
+  status: number
+  headers: Record<string, string | number | readonly string[] | undefined>
+  body: Buffer
 }
 
 function request (method: string, url: string, body?: unknown): IncomingMessage {
@@ -47,6 +54,27 @@ function response (): ResponseLike {
     }
   } as unknown as ResponseLike
   Object.defineProperty(res, 'status', { get: () => state.status })
+  Object.defineProperty(res, 'body', { get: () => state.body })
+  return res
+}
+
+function audioResponse (): AudioResponseLike {
+  const state: {
+    status: number
+    headers: Record<string, string | number | readonly string[] | undefined>
+    body: Buffer
+  } = { status: 0, headers: {}, body: Buffer.alloc(0) }
+  const res = {
+    writeHead (status: number, headers?: Record<string, string | number | readonly string[] | undefined>): void {
+      state.status = status
+      state.headers = headers ?? {}
+    },
+    end (body: unknown): void {
+      state.body = Buffer.isBuffer(body) ? body : Buffer.from(String(body))
+    }
+  } as unknown as AudioResponseLike
+  Object.defineProperty(res, 'status', { get: () => state.status })
+  Object.defineProperty(res, 'headers', { get: () => state.headers })
   Object.defineProperty(res, 'body', { get: () => state.body })
   return res
 }
@@ -181,6 +209,83 @@ describe('virtual-companion host contract', () => {
     }
 
     expect(lastMessageCount).toBe(20)
+  })
+
+  it('returns synthesized TTS audio for the requested voice style', async () => {
+    const synth: SpeechSynth & { synthesize: ReturnType<typeof vi.fn> } = {
+      synthesize: vi.fn(async (_text: string, _voice: Parameters<SpeechSynth['synthesize']>[1]) => ({
+        buffer: Buffer.from('fake-mp3'),
+        contentType: 'audio/mpeg'
+      })),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = audioResponse()
+    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好', voice: 'loli' }), res)
+    expect(res.status).toBe(200)
+    expect(res.headers['Content-Type']).toBe('audio/mpeg')
+    expect(res.body.toString()).toBe('fake-mp3')
+    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'loli')
+  })
+
+  it('falls back to the default TTS voice for invalid style ids', async () => {
+    const synth: SpeechSynth & { synthesize: ReturnType<typeof vi.fn> } = {
+      synthesize: vi.fn(async (_text: string, _voice: Parameters<SpeechSynth['synthesize']>[1]) => ({
+        buffer: Buffer.from('fake'),
+        contentType: 'audio/mpeg'
+      })),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = audioResponse()
+    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好', voice: 'robot' }), res)
+    expect(res.status).toBe(200)
+    expect(synth.synthesize).toHaveBeenCalledWith('你好', 'natural')
+  })
+
+  it('rejects empty TTS text without calling the synthesizer', async () => {
+    const synth: SpeechSynth & { synthesize: ReturnType<typeof vi.fn> } = {
+      synthesize: vi.fn(async () => ({ buffer: Buffer.from('fake'), contentType: 'audio/mpeg' })),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = response()
+    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '   ' }), res)
+    expect(res.status).toBe(400)
+    expect(synth.synthesize).not.toHaveBeenCalled()
+  })
+
+  it('returns 502 when TTS synthesis fails', async () => {
+    const synth: SpeechSynth = {
+      synthesize: vi.fn(async () => {
+        throw new TtsError('edge down')
+      }),
+      dispose: vi.fn()
+    }
+    const { ctx, routes } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    const res = response()
+    await routes[0]!.handler(request('POST', '/virtual-companion/tts', { text: '你好' }), res)
+    expect(res.status).toBe(502)
+  })
+
+  it('disposes the TTS resource on plugin unload', () => {
+    const synth: SpeechSynth = {
+      synthesize: vi.fn(),
+      dispose: vi.fn()
+    }
+    const { ctx, disposers } = createContext()
+    apply(ctx, { speechSynth: synth })
+
+    for (const disposer of disposers) disposer()
+    expect(synth.dispose).toHaveBeenCalledTimes(1)
   })
 
   it('runs registered disposers without throwing and tolerates repeated calls', () => {

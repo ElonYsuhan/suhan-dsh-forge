@@ -5,11 +5,11 @@
     "en-US": "Virtual Companion"
   },
   "summary": {
-    "zh-CN": "可在 DSH Web 任意位置拖拽的透明浮空 3D 虚拟伙伴，支持模型切换、鼠标悬浮互动与多风格语音聊天。",
-    "en-US": "A transparent floating draggable 3D virtual companion for DSH Web with switchable models, hover reactions, and multiple voice styles."
+    "zh-CN": "可在 DSH Web 任意位置拖拽的透明浮空 3D 虚拟伙伴，支持模型切换、鼠标悬浮互动与多风格高自然度神经网络语音聊天。",
+    "en-US": "A transparent floating draggable 3D virtual companion for DSH Web with switchable models, hover reactions, and multiple high-quality neural voice styles."
   },
   "categories": ["productivity", "entertainment"],
-  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "voice-style", "virtual-pet", "虚拟伙伴", "语音聊天", "透明浮空", "语音风格"],
+  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "voice-style", "virtual-pet", "虚拟伙伴", "语音聊天", "透明浮空", "语音风格", "edge-tts", "神经网络语音"],
   "compatibility": {
     "dsh": ">=0.1.0-rc.6 <0.2.0",
     "node": "^22.19.0 || >=24.0.0",
@@ -17,7 +17,8 @@
   },
   "permissions": {
     "network": [
-      "Local DSH web profile HTTP route prefix /virtual-companion only"
+      "Local DSH web profile HTTP route prefix /virtual-companion only",
+      "Outbound WebSocket to Microsoft Edge Read Aloud TTS endpoint (wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1) for neural Chinese voice synthesis"
     ],
     "filesystem": [],
     "process": [],

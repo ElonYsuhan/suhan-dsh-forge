@@ -9,10 +9,17 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText } from './shared/chat.ts'
 import { CHAT_HISTORY_LIMIT, COMPANION_SYSTEM_PROMPT } from './shared/types.ts'
+import { normalizeVoiceStyle } from './shared/voice.ts'
+import { EdgeTtsSpeechSynth, TtsError, type SpeechSynth } from './tts.ts'
 import { HttpError, readJsonBody, safeDiagnostic, sendJson } from './http.ts'
 
 /** Required Host services. */
 export const inject = ['webServer', 'llm', 'agentDefaultModel']
+
+/** Optional Host dependencies for deterministic tests. */
+export interface VirtualCompanionHostOptions {
+  speechSynth?: SpeechSynth
+}
 
 /** Minimal shape of the DSH default model selection service. */
 interface AgentDefaultModelLike {
@@ -33,13 +40,19 @@ function currentModelSelection (ctx: Context): { provider: string; model: string
 /**
  * 虚拟伙伴插件 body，host 半。
  * @param ctx - host context（webServer / llm / agentDefaultModel）。
+ * @param options - optional dependencies; production callers can omit them.
  */
-export function apply (ctx: Context): void {
+export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}): void {
+  const speechSynth = options.speechSynth ?? new EdgeTtsSpeechSynth()
   let history: Message[] = []
 
   ctx.effect(() => async () => {
     history = []
   }, 'virtual-companion: memory')
+
+  ctx.effect(() => () => {
+    speechSynth.dispose()
+  }, 'virtual-companion: tts')
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -75,6 +88,20 @@ export function apply (ctx: Context): void {
           return
         }
 
+        if (parts[0] === 'virtual-companion' && parts[1] === 'tts' && parts.length === 2 && method === 'POST') {
+          const body = await readJsonBody(req) as Record<string, unknown> | null
+          const text = normalizeChatText(body?.text)
+          const voice = normalizeVoiceStyle(body?.voice)
+          const audio = await speechSynth.synthesize(text, voice)
+          res.writeHead(200, {
+            'Content-Type': audio.contentType,
+            'Content-Length': audio.buffer.length,
+            'Cache-Control': 'no-store'
+          })
+          res.end(audio.buffer)
+          return
+        }
+
         sendJson(res, 404, { error: 'not found' })
       } catch (error) {
         if (error instanceof HttpError) {
@@ -87,6 +114,10 @@ export function apply (ctx: Context): void {
         }
         if (error instanceof ChatReplyError) {
           sendJson(res, 502, { error: '虚拟伙伴暂时无法回复，请稍后再试' })
+          return
+        }
+        if (error instanceof TtsError) {
+          sendJson(res, 502, { error: '语音合成暂时不可用，请稍后再试' })
           return
         }
         process.stderr.write(`[dsh-virtual-companion] request failed: ${safeDiagnostic(error)}\n`)
