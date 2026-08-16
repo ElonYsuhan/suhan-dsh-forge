@@ -112,6 +112,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUnlockedRef = useRef(false)
   const audioUrlRef = useRef<string | null>(null)
+  const noSpeechRetriesRef = useRef(0)
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -458,6 +459,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       const finalResult = results.find(result => result.isFinal)
       const transcript = finalResult?.[0]?.transcript ?? ''
       if (transcript.trim() !== '') {
+        noSpeechRetriesRef.current = 0
         recognition.stop()
         recognitionRef.current = null
         setListening(false)
@@ -465,10 +467,35 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
     }
     recognition.onerror = (event): void => {
-      setListening(false)
-      setSpeechError(event.error ?? '语音识别失败')
-      setBubbleText('语音识别失败，点击重新开始')
+      const error = event.error ?? 'unknown'
       recognition.abort()
+      // 我们自己调用的 abort 会产生 aborted 错误，忽略不计
+      if (error === 'aborted') return
+      // no-speech：窗口期内没听到说话。先友好重听两次，仍无声才结束
+      if (error === 'no-speech') {
+        const retries = noSpeechRetriesRef.current
+        if (retries < 2) {
+          noSpeechRetriesRef.current = retries + 1
+          setListening(false)
+          setBubbleText('没听清，请再说一次～')
+          window.setTimeout(() => {
+            if (interactingRef.current) beginListeningRef.current()
+          }, 400)
+          return
+        }
+        setSpeechError('一直没有听到声音')
+        setBubbleText('没有听到声音，先结束聊天啦；点我重新开始')
+        if (interactingRef.current) stopVoiceSession()
+        return
+      }
+      const message = error === 'not-allowed'
+        ? '麦克风权限未开启，请在浏览器设置中允许麦克风访问'
+        : error === 'network'
+          ? '语音识别服务不可用，请稍后重试'
+          : `语音识别失败：${error}`
+      setListening(false)
+      setSpeechError(message)
+      setBubbleText(message)
       if (interactingRef.current) stopVoiceSession()
     }
     recognition.onend = (): void => {
@@ -497,6 +524,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       return
     }
     interactingRef.current = true
+    noSpeechRetriesRef.current = 0
     setInteracting(true)
     setListening(false)
     setThinking(true)
