@@ -328,7 +328,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
     `【标题】${item.title}`,
     item.desc === '' ? '' : `【描述】${item.desc}`,
     item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
-    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：单轮端到端完成，不拆分空转环节'}`,
+    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：单轮端到端完成，按环节逐列推进卡片'}`,
     `【当前环节】${phase}`,
     '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。',
     '',
@@ -337,7 +337,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '- 所有命令和文件修改必须留在上述实际工作目录；严禁 cd 到原项目主工作区或其他任务目录。',
     mode === 'review'
       ? '- 每个环节都要在会话中给出可审核的结果，再调用 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")。'
-      : '- 在本轮内完成必要分析、实现、针对性测试和最终验证；完成后直接调用 taskboard_progress(outcome="delivery_ready", summary="交付与验证摘要")，不要逐列调用 stage_complete。',
+      : '- 单轮端到端执行：每完成一个环节（分析、排期、开发、测试、验收、上线准备）调用一次 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")，看板会立即把卡片推进到下一列；每个环节只汇报一次，不要重复调用，也不要跳过环节直接交付。',
     mode === 'review'
       ? '- 工具返回“结束本轮执行”后必须立即结束当前 turn；会话完全停稳后看板才会开放人工审核，不能自行进入下一环节。'
       : '- 只执行一个端到端 turn。避免重复扫描仓库、重复跑全量门禁或启动常驻服务；先做针对性检查，最终只跑一次工程要求的完整门禁。',
@@ -482,7 +482,7 @@ function cleanupResolvedWorkspaceAfterAgentIdle (
     if (!lifecycle.active) return
     const file = await loadBoards()
     const board = file.boards[boardKey]
-    const item = board?.items.find(candidate => candidate.id === itemId && candidate.archived)
+    const item = board?.items.find(candidate => candidate.id === itemId)
     if (board === undefined || item === undefined) return
     await withLock(`item:${boardKey}:${itemId}`, async () => {
       await cleanupCompletedWorkspace(ctx, item)
@@ -559,13 +559,12 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   item.commitRef = result.commit
   item.integrationState = 'merged'
   item.executionState = 'idle'
-  item.archived = true
   const finalColumn = board.columns.at(-1)
   if (finalColumn !== undefined && item.status !== finalColumn.id) {
     pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '任务提交已自动集成' })
     item.status = finalColumn.id
   }
-  pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}` })
+  pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}；卡片保留在「${finalColumn?.label ?? '完成'}」列，可手动删除归档` })
   const sessionWarning = await preserveTaskSession(ctx, item)
   await cleanupCompletedWorkspace(ctx, item)
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
@@ -600,7 +599,7 @@ export function apply (ctx: Context): void {
   // Agent 只能通过这个工具改变工作项执行状态。
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'taskboard_progress',
-    description: '向需求看板汇报环节完成、阻塞、待交付或已提交。重大任务会停在每个环节等待人工审核；任何任务最终都必须等待人工确认交付。',
+    description: '向需求看板汇报环节完成、阻塞、待交付或已提交。重大任务会停在每个环节等待人工审核；小任务每次 stage_complete 自动推进到下一列；任何任务最终都必须等待人工确认交付。',
     parameters: {
       outcome: {
         type: 'string',
@@ -651,13 +650,12 @@ export function apply (ctx: Context): void {
         item.commitRef = result.commit
         item.integrationState = 'merged'
         item.executionState = 'idle'
-        item.archived = true
         const finalColumn = foundBoard.columns.at(-1)
         if (finalColumn !== undefined && item.status !== finalColumn.id) {
           pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '冲突已自主解决并完成变基集成' })
           item.status = finalColumn.id
         }
-        pushTimeline(item, { action: 'note', note: `变基集成完成，提交：${result.commit}；历史会话保留可打开` })
+        pushTimeline(item, { action: 'note', note: `变基集成完成，提交：${result.commit}；卡片保留在「${finalColumn?.label ?? '完成'}」列，可手动删除归档` })
         touch(foundBoard, item)
         await saveBoards(file)
         if (exec.agent !== undefined) {
@@ -719,9 +717,20 @@ export function apply (ctx: Context): void {
         publishReviewAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
         return '已记录当前环节产出。请结束本轮执行；会话完全停稳后看板才会进入待审核状态。'
       }
-      if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
-      publishAutoDeliveryAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
-      return '已记录小任务单轮交付结果。请立即结束本轮执行；会话停稳后看板将开放最终交付确认。'
+      // 小任务单轮端到端：stage_complete 立即推进到下一列，卡片在整条流水线可见；
+      // 已到最后一列时按交付处理，等 turn 停稳后再开放人工确认，避免执行中误提交。
+      if (executionStateOf(item) !== 'running') return '当前工作项不在执行中，忽略本次环节汇报。'
+      const next = nextColumn(foundBoard, item)
+      if (next === undefined || next.id === foundBoard.columns.at(-1)?.id) {
+        if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
+        publishAutoDeliveryAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
+        return '已记录最终环节结果。请立即结束本轮执行；会话停稳后看板将开放交付确认。'
+      }
+      pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: `自动推进：${note}` })
+      item.status = next.id
+      touch(foundBoard, item)
+      await saveBoards(file)
+      return `已记录「${columnLabel(foundBoard, next.id)}」环节完成，卡片已推进到该列。请继续执行后续环节。`
       })
     }
   })), 'taskboard: tool')
@@ -975,9 +984,7 @@ export function apply (ctx: Context): void {
                 item.sessionId = sessionId
                 item.agentPreset = agent.session.header.agentPreset
                 if (firstRun) {
-                  const next = executionModeOf(item) === 'auto'
-                    ? board.columns.find(column => column.id === 'in-dev') ?? nextColumn(board, item)
-                    : nextColumn(board, item)
+                  const next = nextColumn(board, item)
                   if (next !== undefined) {
                     pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: '创建独立 Git worktree 并开始执行' })
                     item.status = next.id
