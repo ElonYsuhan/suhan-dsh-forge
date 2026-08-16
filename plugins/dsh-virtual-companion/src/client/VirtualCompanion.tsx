@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { COMPANION_MODELS, type CompanionModelKind } from '../three/companionModels.ts'
 import { CompanionScene } from '../three/companionScene.ts'
+import { DEFAULT_VOICE_STYLE_ID, normalizeVoiceStyle, resolveSpeechConfig, VOICE_STYLES, type VoiceStyleId } from './voice.ts'
 import css from './VirtualCompanion.module.css'
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
@@ -48,6 +49,7 @@ interface SpeechRecognitionConstructorLike {
 
 const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const MODEL_KEY = 'suhan-dsh-virtual-companion-model'
+const VOICE_KEY = 'suhan-dsh-virtual-companion-voice'
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
   x: typeof window === 'undefined' ? 24 : Math.max(24, window.innerWidth - 280),
   y: 96
@@ -78,6 +80,15 @@ function readModel (): CompanionModelKind {
   return 'human'
 }
 
+function readVoiceStyle (): VoiceStyleId {
+  try {
+    return normalizeVoiceStyle(window.localStorage.getItem(VOICE_KEY))
+  } catch {
+    // ignore storage failures and fall back to the default voice style
+  }
+  return DEFAULT_VOICE_STYLE_ID
+}
+
 function getSpeechRecognition (): SpeechRecognitionConstructorLike | undefined {
   const globalObject = window as unknown as {
     SpeechRecognition?: SpeechRecognitionConstructorLike
@@ -104,6 +115,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
 
   const [position, setPosition] = useState(readPosition)
   const [model, setModel] = useState<CompanionModelKind>(readModel)
+  const [voiceStyle, setVoiceStyle] = useState<VoiceStyleId>(readVoiceStyle)
   const [hovered, setHovered] = useState(false)
   const [chatOpen, setChatOpen] = useState(false)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -149,19 +161,34 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
   }, [model])
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(VOICE_KEY, voiceStyle)
+    } catch {
+      // storage may be unavailable; voice still switches for this session
+    }
+  }, [voiceStyle])
+
   useEffect(() => () => {
     recognitionRef.current?.abort()
     recognitionRef.current = null
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel()
+    }
   }, [])
 
   const speak = useCallback((text: string): void => {
     if (typeof window === 'undefined' || !('speechSynthesis' in window)) return
-    window.speechSynthesis.cancel()
+    const synthesis = window.speechSynthesis
+    synthesis.cancel()
+    const config = resolveSpeechConfig(voiceStyle, synthesis.getVoices())
     const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'zh-CN'
-    utterance.rate = 1
-    window.speechSynthesis.speak(utterance)
-  }, [])
+    if (config.voice !== null) utterance.voice = config.voice
+    utterance.lang = config.lang
+    utterance.pitch = config.pitch
+    utterance.rate = config.rate
+    synthesis.speak(utterance)
+  }, [voiceStyle])
 
   const sendText = useCallback(async (raw: string): Promise<void> => {
     const text = raw.trim()
@@ -331,6 +358,24 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
                 {message.text}
               </div>
             ))}
+          </div>
+          <div className={css.voiceRow}>
+            <label className={css.voiceLabel} htmlFor='virtual-companion-voice'>语音</label>
+            <select
+              id='virtual-companion-voice'
+              className={css.voiceSelect}
+              value={voiceStyle}
+              onChange={event => setVoiceStyle(event.target.value as VoiceStyleId)}
+              aria-label='切换语音'
+              title='切换语音'
+            >
+              {VOICE_STYLES.map(style => (
+                <option key={style.id} value={style.id} title={style.description}>{style.label}</option>
+              ))}
+            </select>
+            <span className={css.voiceHint}>
+              {VOICE_STYLES.find(style => style.id === voiceStyle)?.description ?? ''}
+            </span>
           </div>
           {speechError !== null && <div className={css.error} role='alert'>{speechError}</div>}
           <div className={css.inputRow}>

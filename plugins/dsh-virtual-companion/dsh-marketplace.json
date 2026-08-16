@@ -5,11 +5,11 @@
     "en-US": "Virtual Companion"
   },
   "summary": {
-    "zh-CN": "可在 DSH Web 任意位置拖拽的 3D 虚拟伙伴，支持模型切换、鼠标悬浮互动与语音聊天。",
-    "en-US": "A draggable 3D virtual companion for DSH Web with switchable models, hover reactions, and voice chat."
+    "zh-CN": "可在 DSH Web 任意位置拖拽的透明浮空 3D 虚拟伙伴，支持模型切换、鼠标悬浮互动与多风格语音聊天。",
+    "en-US": "A transparent floating draggable 3D virtual companion for DSH Web with switchable models, hover reactions, and multiple voice styles."
   },
   "categories": ["productivity", "entertainment"],
-  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "virtual-pet", "虚拟伙伴", "语音聊天"],
+  "tags": ["virtual-companion", "3d", "threejs", "voice-chat", "voice-style", "virtual-pet", "虚拟伙伴", "语音聊天", "透明浮空", "语音风格"],
   "compatibility": {
     "dsh": ">=0.1.0-rc.6 <0.2.0",
     "node": "^22.19.0 || >=24.0.0",
