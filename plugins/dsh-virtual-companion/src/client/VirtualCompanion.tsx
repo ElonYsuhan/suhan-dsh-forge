@@ -57,6 +57,13 @@ const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const SETTINGS_KEY = 'suhan-dsh-virtual-companion-settings'
 const DRAG_THRESHOLD = 5
 const SINGLE_CLICK_DELAY_MS = 260
+/** 短于该长度的句子走流式接口（边合成边播放，首音延迟低）。 */
+const TTS_STREAM_TEXT_MAX_LENGTH = 500
+
+function buildTtsStreamUrl (text: string, voiceId: VoiceStyleId): string {
+  const params = new URLSearchParams({ text, voice: voiceId })
+  return `/virtual-companion/tts/stream?${params.toString()}`
+}
 /** 0.1s 静音 WAV：在用户手势中播放一次以解锁 Audio 元素的自动播放限制。 */
 const SILENT_WAV = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=='
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
@@ -105,7 +112,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUnlockedRef = useRef(false)
   const audioUrlRef = useRef<string | null>(null)
-  const ttsBrokenRef = useRef(false)
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -213,73 +219,42 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     stopCurrentAudio()
   }, [stopCurrentAudio])
 
-  /** 浏览器自带语音合成兜底：宿主 TTS 不可用或已标记故障时使用。 */
-  const speakViaBrowser = useCallback((text: string, onDone?: () => void): void => {
-    const synth = window.speechSynthesis
-    if (synth === undefined) throw new Error('浏览器语音合成不可用')
-    const utterance = new SpeechSynthesisUtterance(text)
-    utterance.lang = 'zh-CN'
-    utterance.rate = 0.95
-    const voice = synth.getVoices().find(candidate => candidate.lang.toLowerCase().startsWith('zh'))
-    if (voice !== undefined) utterance.voice = voice
-    onSpeechEndRef.current = onDone ?? null
-    utterance.onend = () => {
-      const done = onSpeechEndRef.current
-      onSpeechEndRef.current = null
-      setSpeaking(false)
-      done?.()
-    }
-    utterance.onerror = utterance.onend
-    setSpeaking(true)
-    synth.speak(utterance)
-  }, [])
-
   const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
       if (!interactingRef.current) return
       stopCurrentAudio()
-      // 宿主 TTS 已确认故障时整句直接走浏览器语音，避免每句重复超时等待
-      if (ttsBrokenRef.current) {
-        speakViaBrowser(text, onDone)
-        return
-      }
-      // 统一使用缓冲 POST：HTML5 直连流式 MP3 在部分网络下会卡顿、断裂；
-      // 完整 MP3 缓冲一次取回后本地播放最稳定。失败自动重试一次。
-      const voiceId = settings.voiceId
-      let blob: Blob | null = null
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const response = await fetch('/virtual-companion/tts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text, voice: voiceId })
-          })
-          if (!response.ok) {
-            let message = `HTTP ${response.status}`
-            try {
-              const data = await response.json() as { error?: unknown }
-              if (typeof data.error === 'string') message = data.error
-            } catch {
-              // keep the HTTP fallback message when the error body is not JSON
-            }
-            throw new Error(message)
-          }
-          blob = await response.blob()
-          if (blob.size === 0) throw new Error('语音合成返回空音频')
-          break
-        } catch (error) {
-          if (attempt === 1) throw error
-          await new Promise(resolve => setTimeout(resolve, 500))
-        }
-      }
-      if (!interactingRef.current || blob === null) return
-      stopCurrentAudio()
       const audio = audioRef.current
       if (audio === null) throw new Error('音频播放器未就绪')
-      const url = URL.createObjectURL(blob)
-      audioUrlRef.current = url
-      audio.src = url
+      // 短句走流式接口：Edge 边合成边播放，首音延迟低、体验流畅；
+      // 长句走缓冲 POST，避免超长 URL。
+      if (text.length <= TTS_STREAM_TEXT_MAX_LENGTH) {
+        audio.src = buildTtsStreamUrl(text, settings.voiceId)
+        audioUrlRef.current = null
+      } else {
+        const response = await fetch('/virtual-companion/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice: settings.voiceId })
+        })
+        if (!response.ok) {
+          let message = `HTTP ${response.status}`
+          try {
+            const data = await response.json() as { error?: unknown }
+            if (typeof data.error === 'string') message = data.error
+          } catch {
+            // keep the HTTP fallback message when the error body is not JSON
+          }
+          throw new Error(message)
+        }
+        const blob = await response.blob()
+        if (blob.size === 0) throw new Error('语音合成返回空音频')
+        if (!interactingRef.current) return
+        stopCurrentAudio()
+        const url = URL.createObjectURL(blob)
+        audioUrlRef.current = url
+        audio.src = url
+      }
       onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
         if (audioRef.current === audio) {
@@ -311,13 +286,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         throw error
       }
     } catch (error) {
-      // 宿主 Edge TTS 偶发不可用（502/超时）时降级到浏览器自带语音合成，
-      // 本次会话内记住故障避免每句重复超时等待，音质略降但保证能说话。
-      if (window.speechSynthesis !== undefined) {
-        ttsBrokenRef.current = true
-        speakViaBrowser(text, onDone)
-        return
-      }
       const message = error instanceof Error ? error.message : String(error)
       setSpeechError(`语音合成失败：${message}`)
       setBubbleText('语音合成失败，点击重新开始')
@@ -331,7 +299,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setListening(false)
       setThinking(false)
     }
-  }, [settings.voiceId, stopCurrentAudio, speakViaBrowser])
+  }, [settings.voiceId, stopCurrentAudio])
 
   const stopVoiceSession = useCallback((): void => {
     if (singleClickTimerRef.current !== null) {
@@ -529,7 +497,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       return
     }
     interactingRef.current = true
-    ttsBrokenRef.current = false
     setInteracting(true)
     setListening(false)
     setThinking(true)
