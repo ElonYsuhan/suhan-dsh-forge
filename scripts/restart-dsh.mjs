@@ -116,14 +116,29 @@ function alive (pid) {
   }
 }
 
+/**
+ * 终止以 pid 为组长的整个进程组（负 PID），确保 Agent 会话及其
+ * 子进程（如 vitest fork worker）不会在宿主退出后变成孤儿。
+ * 进程组不存在（非 detached 启动）时回退为仅终止单进程。
+ */
+function killTree (pid, signal) {
+  try {
+    process.kill(-pid, signal)
+    return
+  } catch {}
+  try {
+    process.kill(pid, signal)
+  } catch {}
+}
+
 async function waitForExit (pid) {
   const deadline = Date.now() + STOP_TIMEOUT_MS
   while (alive(pid) && Date.now() < deadline) {
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   if (!alive(pid)) return
-  process.stderr.write(`DSH Web PID ${pid} 在 ${STOP_TIMEOUT_MS / 1000} 秒内未退出，发送 SIGKILL。\n`)
-  process.kill(pid, 'SIGKILL')
+  process.stderr.write(`DSH Web PID ${pid} 在 ${STOP_TIMEOUT_MS / 1000} 秒内未退出，向进程组发送 SIGKILL。\n`)
+  killTree(pid, 'SIGKILL')
 }
 
 function chooseServer (servers) {
@@ -146,8 +161,8 @@ async function stopServer (current) {
     process.stdout.write('DSH Web 当前未运行。\n')
     return
   }
-  process.stdout.write(`正在停止 DSH Web PID ${current.pid}…\n`)
-  process.kill(current.pid, 'SIGTERM')
+  process.stdout.write(`正在停止 DSH Web PID ${current.pid}（含子进程树）…\n`)
+  killTree(current.pid, 'SIGTERM')
   await waitForExit(current.pid)
   process.stdout.write(`DSH Web PID ${current.pid} 已停止。\n`)
 }

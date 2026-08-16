@@ -8,7 +8,7 @@
     "dev": "vite",
     "lint": "node ../../scripts/validate-source.mjs src",
     "preview": "vite preview",
-    "test": "vitest run",
+    "test": "vitest run --pool=threads",
     "typecheck": "vue-tsc --noEmit"
   },
   "dependencies": {

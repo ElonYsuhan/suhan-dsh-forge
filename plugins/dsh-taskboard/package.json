@@ -42,7 +42,7 @@
     "pack": "pnpm pack --pack-destination ../../artifacts",
     "pack:check": "pnpm pack --dry-run",
     "release": "node ../../scripts/release-dsh-plugin.mjs --profile web --health-path /taskboard/boards",
-    "test": "vitest run",
+    "test": "vitest run --pool=threads",
     "watch": "tsdown --watch",
     "typecheck": "tsc -b"
   },
