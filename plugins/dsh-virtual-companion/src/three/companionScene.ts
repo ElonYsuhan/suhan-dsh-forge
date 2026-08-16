@@ -22,6 +22,11 @@ export class CompanionScene {
   private speaking = false
   private currentScale = 1
   private disposed = false
+  private mouth: THREE.Mesh | null = null
+  private eyes: THREE.Mesh[] = []
+  private wings: Array<{ mesh: THREE.Mesh; baseZ: number }> = []
+  private nextBlinkAt = performance.now() + 2_000
+  private blinkUntil = 0
 
   constructor (canvas: HTMLCanvasElement, initialModel: CompanionModelKind, initialSkin: SkinId = DEFAULT_SKIN_ID) {
     this.canvas = canvas
@@ -30,14 +35,18 @@ export class CompanionScene {
     this.renderer.setClearColor(0x000000, 0)
 
     this.scene = new THREE.Scene()
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100)
-    this.camera.position.set(0, 0.2, 3)
-    this.camera.lookAt(0, 0, 0)
+    this.camera = new THREE.PerspectiveCamera(42, 1, 0.1, 100)
+    this.camera.position.set(0, 0.26, 3.15)
+    this.camera.lookAt(0, 0.1, 0)
 
-    const ambient = new THREE.AmbientLight(0xffffff, 1.4)
-    const directional = new THREE.DirectionalLight(0xffffff, 2.2)
-    directional.position.set(1.5, 2, 2)
-    this.scene.add(ambient, directional)
+    // 柔和三灯布光：天光 + 主光 + 背光勾边，减少平光带来的廉价感
+    const ambient = new THREE.AmbientLight(0xffffff, 0.55)
+    const hemisphere = new THREE.HemisphereLight(0xfff3e0, 0x9a7bb8, 0.85)
+    const key = new THREE.DirectionalLight(0xffffff, 1.9)
+    key.position.set(2.2, 2.8, 2.4)
+    const rim = new THREE.DirectionalLight(0xffe9c8, 1.3)
+    rim.position.set(-2.4, 1.6, -2.2)
+    this.scene.add(ambient, hemisphere, key, rim)
 
     this.modelGroup = new THREE.Group()
     this.scene.add(this.modelGroup)
@@ -64,6 +73,16 @@ export class CompanionScene {
     this.currentModel = next
     this.currentSkinId = skinId
     this.modelGroup.add(next)
+    this.mouth = null
+    this.eyes = []
+    this.wings = []
+    next.traverse(child => {
+      if (!(child instanceof THREE.Mesh)) return
+      const role = child.userData.role as unknown
+      if (role === 'mouth') this.mouth = child
+      if (role === 'eyeL' || role === 'eyeR') this.eyes.push(child)
+      if (role === 'wingL' || role === 'wingR') this.wings.push({ mesh: child, baseZ: child.scale.z })
+    })
   }
 
   /** Update hover state used by the animation loop. */
@@ -101,15 +120,39 @@ export class CompanionScene {
   }
 
   private update (_delta: number): void {
-    const time = performance.now() / 1_000
-    // Do not keep spinning the character; scale up only while speaking.
+    const now = performance.now()
+    const time = now / 1_000
+    // 待机呼吸浮动 + 轻微侧摆；说话时整体放大、上下轻跃。
     const targetScale = this.speaking ? 1.2 : (this.hovered ? 1.08 : 1)
     this.currentScale += (targetScale - this.currentScale) * 0.08
-    this.modelGroup.scale.setScalar(this.currentScale)
+    const breathe = this.speaking ? 0 : Math.sin(time * 1.6) * 0.012
+    this.modelGroup.scale.setScalar(this.currentScale + breathe)
     this.modelGroup.rotation.y = 0
+    this.modelGroup.rotation.z = this.speaking ? 0 : Math.sin(time * 1.1) * 0.018
     this.modelGroup.position.y = this.speaking
       ? Math.abs(Math.sin(time * 5)) * 0.08
       : Math.sin(time * 2) * 0.04
+
+    // 眨眼：每 2.5-5 秒一次，约 90ms 快闭快开。
+    if (now >= this.nextBlinkAt) {
+      this.blinkUntil = now + 90
+      this.nextBlinkAt = now + 2_500 + (now % 2_500)
+    }
+    const blinking = now < this.blinkUntil
+    for (const eye of this.eyes) {
+      const targetY = blinking ? 0.08 : 0.78
+      eye.scale.y += (targetY - eye.scale.y) * 0.6
+    }
+
+    // 说话：嘴巴开合；翅膀随说话节奏加快扇动。
+    if (this.mouth !== null) {
+      const targetMouth = this.speaking ? 0.6 + Math.abs(Math.sin(time * 9)) * 1.1 : 0.55
+      this.mouth.scale.y += (targetMouth - this.mouth.scale.y) * 0.5
+    }
+    const flutter = this.speaking ? Math.sin(time * 11) * 0.4 : Math.sin(time * 4) * 0.18
+    for (const wing of this.wings) {
+      wing.mesh.scale.z = wing.baseZ * (1 + flutter)
+    }
   }
 
   private resize (): void {
