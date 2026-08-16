@@ -43,7 +43,7 @@ export const VOICE_STYLES: readonly VoiceStyle[] = [
     id: 'cute',
     label: '可爱',
     description: '活泼俏皮、少女感强',
-    edgeVoice: 'zh-CN-XiaomengNeural',
+    edgeVoice: 'zh-CN-XiaobeiNeural',
     edgeRate: 1.12,
     edgePitch: '+16Hz'
   },
@@ -51,7 +51,7 @@ export const VOICE_STYLES: readonly VoiceStyle[] = [
     id: 'mature',
     label: '御姐',
     description: '成熟自信、气场沉稳',
-    edgeVoice: 'zh-CN-XiaoruiNeural',
+    edgeVoice: 'zh-CN-YunxiaNeural',
     edgeRate: 0.94,
     edgePitch: '-4Hz'
   },
@@ -59,7 +59,7 @@ export const VOICE_STYLES: readonly VoiceStyle[] = [
     id: 'elegant',
     label: '知性',
     description: '温和知性、表达清晰',
-    edgeVoice: 'zh-CN-XiaohanNeural',
+    edgeVoice: 'zh-CN-YunxiNeural',
     edgeRate: 0.98,
     edgePitch: '+0Hz'
   },
