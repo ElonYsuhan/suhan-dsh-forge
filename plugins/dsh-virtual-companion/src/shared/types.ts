@@ -22,9 +22,23 @@ export const OPENING_REQUEST = '用户刚刚单击了你，请主动向用户问
 /** Client -> Host chat request body. */
 export interface ChatRequest {
   text: string
+  /** Character role id; missing values fall back to the default role. */
+  role?: string
+}
+
+/** Client -> Host proactive opening request body. */
+export interface OpeningRequest {
+  role?: string
 }
 
 /** Host -> Client chat response body. */
 export interface ChatResponse {
   reply: string
+}
+
+/** One SSE frame emitted by the streaming chat endpoint. */
+export interface ChatStreamEvent {
+  sentence?: string
+  done?: boolean
+  error?: string
 }

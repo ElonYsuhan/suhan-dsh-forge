@@ -7,11 +7,12 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
-import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText } from './shared/chat.ts'
-import { CHAT_HISTORY_LIMIT, COMPANION_SYSTEM_PROMPT, OPENING_REQUEST } from './shared/types.ts'
+import { appendTurn, ChatInputError, ChatReplyError, collectReply, collectReplySentences, normalizeChatText } from './shared/chat.ts'
+import { getRoleSystemPrompt } from './shared/settings.ts'
+import { CHAT_HISTORY_LIMIT, OPENING_REQUEST } from './shared/types.ts'
 import { normalizeVoiceStyle } from './shared/voice.ts'
 import { EdgeTtsSpeechSynth, TtsError, type SpeechSynth } from './tts.ts'
-import { HttpError, readJsonBody, safeDiagnostic, sendJson } from './http.ts'
+import { HttpError, readJsonBody, safeDiagnostic, sendJson, sendSseEvent } from './http.ts'
 
 /** Required Host services. */
 export const inject = ['webServer', 'llm', 'agentDefaultModel']
@@ -69,6 +70,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
         }
 
         if (parts[0] === 'virtual-companion' && parts[1] === 'opening' && parts.length === 2 && method === 'POST') {
+          const body = await readJsonBody(req) as Record<string, unknown> | null
           const selection = currentModelSelection(ctx)
           const openingMessage = createUserMessage({
             content: [{ type: 'text', text: OPENING_REQUEST }],
@@ -78,7 +80,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             provider: selection.provider,
             model: selection.model,
             messages: [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), openingMessage],
-            system: COMPANION_SYSTEM_PROMPT,
+            system: getRoleSystemPrompt(body?.role),
             signal: AbortSignal.timeout(30_000)
           }))
           history = appendTurn(history, OPENING_REQUEST, reply, selection.provider, selection.model)
@@ -98,11 +100,56 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             provider: selection.provider,
             model: selection.model,
             messages: [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), userMessage],
-            system: COMPANION_SYSTEM_PROMPT,
+            system: getRoleSystemPrompt(body?.role),
             signal: AbortSignal.timeout(30_000)
           }))
           history = appendTurn(history, text, reply, selection.provider, selection.model)
           sendJson(res, 200, { reply })
+          return
+        }
+
+        if (parts[0] === 'virtual-companion' && parts[1] === 'chat' && parts[2] === 'stream' && parts.length === 3 && method === 'POST') {
+          const body = await readJsonBody(req) as Record<string, unknown> | null
+          const text = normalizeChatText(body?.text)
+          const selection = currentModelSelection(ctx)
+          const userMessage = createUserMessage({
+            content: [{ type: 'text', text }],
+            source: { kind: 'user' }
+          })
+          const messages = [...history.slice(-(CHAT_HISTORY_LIMIT - 1)), userMessage]
+          const system = getRoleSystemPrompt(body?.role)
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream; charset=utf-8',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+          })
+          let fullReply = ''
+          try {
+            for await (const sentence of collectReplySentences(ctx.llm.stream({
+              provider: selection.provider,
+              model: selection.model,
+              messages,
+              system,
+              signal: AbortSignal.timeout(30_000)
+            }))) {
+              fullReply += sentence
+              sendSseEvent(res, { sentence })
+            }
+            if (fullReply.trim().length === 0) throw new ChatReplyError('模型没有返回可朗读文本')
+            history = appendTurn(history, text, fullReply.trim(), selection.provider, selection.model)
+            sendSseEvent(res, { done: true })
+            res.end()
+          } catch (error) {
+            if (!res.writableEnded) {
+              if (error instanceof ChatReplyError) {
+                sendSseEvent(res, { error: '虚拟伙伴暂时无法回复，请稍后再试' })
+              } else {
+                sendSseEvent(res, { error: 'virtual companion stream failed' })
+              }
+              res.end()
+            }
+          }
           return
         }
 

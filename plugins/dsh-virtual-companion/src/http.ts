@@ -41,6 +41,11 @@ export function sendJson (res: ServerResponse, status: number, body: unknown): v
   res.end(JSON.stringify(body))
 }
 
+/** Send one SSE data frame. Caller is responsible for headers and end(). */
+export function sendSseEvent (res: ServerResponse, event: unknown): void {
+  res.write(`data: ${JSON.stringify(event)}\n\n`)
+}
+
 /** Keep Host diagnostics small and avoid leaking local absolute paths or credentials. */
 export function safeDiagnostic (value: unknown): string {
   return String(value instanceof Error ? value.message : value)

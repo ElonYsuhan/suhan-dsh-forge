@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
-import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText } from '../shared/chat.ts'
+import {
+  appendTurn,
+  ChatInputError,
+  ChatReplyError,
+  collectReply,
+  collectReplySentences,
+  normalizeChatText,
+  splitReplySentences
+} from '../shared/chat.ts'
 import { CHAT_HISTORY_LIMIT, CHAT_TEXT_MAX_LENGTH } from '../shared/types.ts'
 
 describe('normalizeChatText', () => {
@@ -59,5 +67,48 @@ describe('collectReply', () => {
     }
 
     await expect(collectReply(stream())).rejects.toThrow(ChatReplyError)
+  })
+})
+
+describe('splitReplySentences', () => {
+  it('splits Chinese and English punctuation into trimmed sentences', () => {
+    expect(splitReplySentences('你好！今天好吗？我很好。')).toEqual(['你好！', '今天好吗？', '我很好。'])
+    expect(splitReplySentences('Hi! Bye.')).toEqual(['Hi!', 'Bye.'])
+  })
+
+  it('returns a single trailing sentence without punctuation', () => {
+    expect(splitReplySentences('没有标点的一句话')).toEqual(['没有标点的一句话'])
+    expect(splitReplySentences('')).toEqual([])
+  })
+})
+
+describe('collectReplySentences', () => {
+  it('yields complete sentences as soon as punctuation arrives and flushes the tail', async () => {
+    async function * stream (): AsyncGenerator<StreamChunk> {
+      yield { type: 'text-delta', index: 0, text: '你好！' }
+      yield { type: 'text-delta', index: 0, text: '今天' }
+      yield { type: 'text-delta', index: 0, text: '好吗？' }
+      yield { type: 'text-delta', index: 0, text: '再见' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    }
+
+    const sentences: string[] = []
+    for await (const sentence of collectReplySentences(stream())) {
+      sentences.push(sentence)
+    }
+    expect(sentences).toEqual(['你好！', '今天好吗？', '再见'])
+  })
+
+  it('fails on error finish before flushing incomplete text', async () => {
+    async function * stream (): AsyncGenerator<StreamChunk> {
+      yield { type: 'text-delta', index: 0, text: '部分' }
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: 'boom', code: 'ERR_TEST' } } }
+    }
+
+    await expect(async () => {
+      for await (const _sentence of collectReplySentences(stream())) {
+        // consume
+      }
+    }).rejects.toThrow(ChatReplyError)
   })
 })

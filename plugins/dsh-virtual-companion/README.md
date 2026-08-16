@@ -1,6 +1,6 @@
 # @suhan-dsh/virtual-companion
 
-DeepSeek Harness Web 客户端插件：**透明浮空 3D 虚拟人物**，可拖拽到页面任意位置，无操作面板；单击人物即开始由模型主动提问的语音聊天。
+DeepSeek Harness Web 客户端插件：**透明浮空 3D 虚拟人物**，可拖拽到页面任意位置；单击人物即开始由模型主动提问的语音聊天，双击人物打开设置面板。
 
 > 当前状态：`internal`，仅供隔离开发验证，未公开发布。
 
@@ -8,19 +8,25 @@ DeepSeek Harness Web 客户端插件：**透明浮空 3D 虚拟人物**，可拖
 
 - **浏览器半**（`src/client/`）
   - `shell.overlay` 条目：全页面透明浮空 3D 人物（只保留“人物”一个模型）
-  - 无模型/语音/聊天操作面板；鼠标按住拖动即可移动，单击开始或停止语音聊天
+  - 鼠标按住拖动即可移动，单击开始或停止语音聊天，双击打开设置面板
+  - 设置面板支持人物角色、聊天背景、音色切换和流式实时回复
   - 单击后由 Host 调用 DSH 当前默认模型生成开场问题并朗读，随后自动聆听用户语音回答，形成连续语音对话
 - **Node 半**（`src/index.ts`）
   - `GET /virtual-companion/health`：健康检查
   - `POST /virtual-companion/opening`：让模型主动生成一句开场问候/问题
   - `POST /virtual-companion/chat`：接收用户语音转写的文字，使用 DSH 当前默认模型生成回复
+  - `POST /virtual-companion/chat/stream`：SSE 流式返回按句切分的回复，供客户端边说边朗读
   - `POST /virtual-companion/tts`：通过开源 `msedge-tts` 客户端调用 Microsoft Edge 神经网络语音合成中文 MP3，返回给浏览器播放
   - 对话历史上限 20 条，仅存于 Host 内存，不落盘
 
 ## 配置
 
-- 当前无配置项。模型跟随 DSH Web 当前选择的模型；3D 外观固定为“人物”。
-- 语音固定使用默认真人感中文神经网络音色，不提供切换面板。
+- 双击人物打开设置面板，设置保存在浏览器 `localStorage`，下次打开自动生效。
+- 人物角色：内置贴心伙伴、知性学姐、元气少女、高冷男神、软萌小猫，角色只影响 Host 端系统提示词。
+- 聊天背景：晨光白、落日橙、夜幕蓝、森林绿、透明，应用于气泡与设置面板。
+- 音色：自然、高冷、萝莉、御姐、少年、磁性六种 Edge 神经网络中文音色。
+- 流式实时回复：开启后聊天回复按句通过 SSE 返回并边生成边朗读，降低等待感。
+- 模型跟随 DSH Web 当前选择的模型；3D 外观固定为“人物”。
 - 语音输入依赖浏览器 Web Speech API；浏览器不支持时单击会提示并无法开启语音聊天。
 
 ## 开发命令
@@ -47,7 +53,7 @@ dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-vir
 
 - `pnpm --filter @suhan-dsh/virtual-companion test`
 - 根目录 `pnpm check`
-- 浏览器人工验证：3D 透明浮空人物渲染、拖拽移动、单击开始语音、模型主动提问、语音回答、连续对话、再次单击停止
+- 浏览器人工验证：3D 透明浮空人物渲染、拖拽移动、单击开始语音、双击打开设置、切换角色/背景/音色/实时开关、模型主动提问、语音回答、连续对话、再次单击停止
 
 ## 卸载
 
@@ -55,11 +61,11 @@ dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-vir
 dsh plugin --profile web remove @suhan-dsh/virtual-companion
 ```
 
-卸载会移除 Host 路由、Client slot、Three.js 渲染器、语音识别和语音合成资源；`localStorage` 中的位置偏好默认保留。
+卸载会移除 Host 路由、Client slot、Three.js 渲染器、语音识别和语音合成资源；`localStorage` 中的位置与设置默认保留。
 
 ## 数据
 
-- 浏览器 `localStorage`：`suhan-dsh-virtual-companion-position`
+- 浏览器 `localStorage`：`suhan-dsh-virtual-companion-position`、`suhan-dsh-virtual-companion-settings`
 - Host 内存：最近 20 条聊天消息，服务重启即清空
 - 不读取、不写入文件系统，不保存 secrets
 

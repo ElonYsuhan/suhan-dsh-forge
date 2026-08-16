@@ -20,6 +20,13 @@ interface AudioResponseLike extends ServerResponse {
   body: Buffer
 }
 
+interface SseResponseLike extends ServerResponse {
+  status: number
+  headers: Record<string, string | number | readonly string[] | undefined>
+  chunks: string[]
+  ended: boolean
+}
+
 function request (method: string, url: string, body?: unknown): IncomingMessage {
   const chunks = body === undefined ? [] : [Buffer.from(JSON.stringify(body))]
   return {
@@ -76,6 +83,33 @@ function audioResponse (): AudioResponseLike {
   Object.defineProperty(res, 'status', { get: () => state.status })
   Object.defineProperty(res, 'headers', { get: () => state.headers })
   Object.defineProperty(res, 'body', { get: () => state.body })
+  return res
+}
+
+function sseResponse (): SseResponseLike {
+  const state: {
+    status: number
+    headers: Record<string, string | number | readonly string[] | undefined>
+    chunks: string[]
+    ended: boolean
+  } = { status: 0, headers: {}, chunks: [], ended: false }
+  const res = {
+    writeHead (status: number, headers?: Record<string, string | number | readonly string[] | undefined>): void {
+      state.status = status
+      state.headers = headers ?? {}
+    },
+    write (chunk: unknown): boolean {
+      state.chunks.push(typeof chunk === 'string' ? chunk : Buffer.from(String(chunk)).toString('utf8'))
+      return true
+    },
+    end (): void {
+      state.ended = true
+    }
+  } as unknown as SseResponseLike
+  Object.defineProperty(res, 'status', { get: () => state.status })
+  Object.defineProperty(res, 'headers', { get: () => state.headers })
+  Object.defineProperty(res, 'chunks', { get: () => state.chunks })
+  Object.defineProperty(res, 'ended', { get: () => state.ended })
   return res
 }
 
@@ -146,6 +180,52 @@ describe('virtual-companion host contract', () => {
     expect(stream).toHaveBeenCalledTimes(1)
     expect(res.status).toBe(200)
     expect(res.body).toEqual({ reply: '你好呀' })
+  })
+
+  it('uses the requested character role in opening and chat prompts', async () => {
+    const { ctx, routes, stream } = createContext()
+    apply(ctx)
+
+    const openingRes = response()
+    await routes[0]!.handler(request('POST', '/virtual-companion/opening', { role: 'cool' }), openingRes)
+    let options = stream.mock.calls[0]?.[0] as { system?: string } | undefined
+    expect(options?.system).toContain('高冷')
+
+    const chatRes = response()
+    await routes[0]!.handler(request('POST', '/virtual-companion/chat', { text: '你好', role: 'elegant' }), chatRes)
+    options = stream.mock.calls[1]?.[0] as { system?: string } | undefined
+    expect(options?.system).toContain('知性')
+  })
+
+  it('streams chat sentences and a done event through SSE', async () => {
+    const { ctx, routes } = createContext(async function * () {
+      yield { type: 'text-delta', index: 0, text: '你好！' }
+      yield { type: 'text-delta', index: 0, text: '我在听。' }
+      yield { type: 'finish', reason: { kind: 'stop' } }
+    })
+    apply(ctx)
+
+    const res = sseResponse()
+    await routes[0]!.handler(request('POST', '/virtual-companion/chat/stream', { text: '你好', role: 'warm' }), res)
+    expect(res.status).toBe(200)
+    expect(res.headers['Content-Type']).toContain('text/event-stream')
+    expect(res.chunks.join('')).toContain('data: {"sentence":"你好！"}')
+    expect(res.chunks.join('')).toContain('data: {"sentence":"我在听。"}')
+    expect(res.chunks.join('')).toContain('data: {"done":true}')
+    expect(res.ended).toBe(true)
+  })
+
+  it('emits a safe SSE error event when the streaming LLM fails', async () => {
+    const { ctx, routes } = createContext(async function * () {
+      yield { type: 'finish', reason: { kind: 'error', failure: { message: 'boom', code: 'ERR_TEST' } } }
+    })
+    apply(ctx)
+
+    const res = sseResponse()
+    await routes[0]!.handler(request('POST', '/virtual-companion/chat/stream', { text: '你好' }), res)
+    expect(res.status).toBe(200)
+    expect(res.chunks.join('')).toContain('data: {"error":"虚拟伙伴暂时无法回复，请稍后再试"}')
+    expect(res.ended).toBe(true)
   })
 
   it('rejects invalid chat input without calling the LLM', async () => {

@@ -53,6 +53,11 @@ export function appendTurn (
   return next.length > CHAT_HISTORY_LIMIT ? next.slice(-CHAT_HISTORY_LIMIT) : next
 }
 
+/** Split a reply into sentence-sized chunks suitable for progressive TTS. */
+export function splitReplySentences (text: string): string[] {
+  return text.match(/[^。！？!?；;]+(?:[。！？!?；;]+|$)/g)?.map(item => item.trim()).filter(Boolean) ?? []
+}
+
 /** Collect visible text from an LLM chunk stream and fail on error/abort finish. */
 export async function collectReply (stream: AsyncIterable<StreamChunk>): Promise<string> {
   let text = ''
@@ -66,4 +71,29 @@ export async function collectReply (stream: AsyncIterable<StreamChunk>): Promise
   const reply = text.trim()
   if (reply.length === 0) throw new ChatReplyError('模型没有返回可朗读文本')
   return reply
+}
+
+/**
+ * Stream a reply as complete sentences become available. This lets the
+ * client display and speak the first sentence before the full LLM response
+ * has finished, improving perceived chat latency.
+ */
+export async function * collectReplySentences (stream: AsyncIterable<StreamChunk>): AsyncGenerator<string> {
+  let buffer = ''
+  for await (const chunk of stream) {
+    if (chunk.type === 'text-delta') buffer += chunk.text
+    if (chunk.type === 'finish' && (chunk.reason.kind === 'error' || chunk.reason.kind === 'aborted')) {
+      const failure = chunk.reason.failure
+      throw new ChatReplyError(failure?.message ?? `LLM stream ended with ${chunk.reason.kind}`)
+    }
+    while (true) {
+      const match = buffer.match(/^[\s\S]*?[。！？!?；;]/)
+      if (match === null || match[0] === undefined) break
+      const sentence = match[0].trim()
+      buffer = buffer.slice(match[0].length)
+      if (sentence.length > 0) yield sentence
+    }
+  }
+  const tail = buffer.trim()
+  if (tail.length > 0) yield tail
 }
