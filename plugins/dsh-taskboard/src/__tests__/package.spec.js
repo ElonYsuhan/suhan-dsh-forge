@@ -57,6 +57,9 @@ describe('public package metadata', () => {
     const exportTargets = Object.values(pkg.exports).flatMap(value =>
       typeof value === 'string' ? [value] : Object.values(value),
     )
+    // 全新 worktree / 干净克隆里 lib/ 尚未构建（pnpm check 先 test 后 build）；
+    // 构建产物的磁盘存在性由 pack:check（构建后 dry-run 打包）兜底校验。
+    const hasBuiltLib = await access(join(pluginRoot, 'lib/index.js')).then(() => true, () => false)
     for (const target of exportTargets) {
       const relative = target.replace(/^\.\//, '')
       if (relative === 'package.json') continue
@@ -64,6 +67,7 @@ describe('public package metadata', () => {
         pkg.files.some(entry => matchesWhitelist(entry, relative)),
         `files should cover export ${target}`,
       ).toBe(true)
+      if (relative.startsWith('lib/') && !hasBuiltLib) continue
       await expect(access(join(pluginRoot, relative))).resolves.toBeUndefined()
     }
   })
