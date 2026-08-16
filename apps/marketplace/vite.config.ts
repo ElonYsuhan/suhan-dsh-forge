@@ -24,9 +24,13 @@ function dshPluginCatalog(): Plugin {
 
       const plugins = await Promise.all(directories.map(async directory => {
         const pluginRoot = join(pluginsRoot, directory)
+        const packageJsonPath = join(pluginRoot, 'package.json')
+        const marketplacePath = join(pluginRoot, 'dsh-marketplace.json')
+        this.addWatchFile(packageJsonPath)
+        this.addWatchFile(marketplacePath)
         const [packageJson, marketplace] = await Promise.all([
-          readFile(join(pluginRoot, 'package.json'), 'utf8').then(JSON.parse),
-          readFile(join(pluginRoot, 'dsh-marketplace.json'), 'utf8').then(JSON.parse),
+          readFile(packageJsonPath, 'utf8').then(JSON.parse),
+          readFile(marketplacePath, 'utf8').then(JSON.parse),
         ])
 
         return {
