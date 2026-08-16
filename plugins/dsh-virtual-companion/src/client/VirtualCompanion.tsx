@@ -66,6 +66,30 @@ function buildTtsStreamUrl (text: string, voiceId: VoiceStyleId): string {
   const params = new URLSearchParams({ text, voice: voiceId })
   return `/virtual-companion/tts/stream?${params.toString()}`
 }
+
+/** 去掉空白与标点，便于回声文本比对。 */
+function normalizeForMatch (value: string): string {
+  return value.replace(/[\s，。！？、,.!?~～…"“”'‘’：:；;（）()]/g, '')
+}
+
+/** 字符二元组 Dice 相似度：判断识别结果是否疑似她自己朗读的回声。 */
+function similarity (left: string, right: string): number {
+  if (left.length < 2 || right.length < 2) return 0
+  const grams = (value: string): Set<string> => {
+    const set = new Set<string>()
+    for (let index = 0; index < value.length - 1; index++) {
+      set.add(value.slice(index, index + 2))
+    }
+    return set
+  }
+  const leftGrams = grams(left)
+  const rightGrams = grams(right)
+  let hits = 0
+  for (const gram of leftGrams) {
+    if (rightGrams.has(gram)) hits += 1
+  }
+  return (2 * hits) / (leftGrams.size + rightGrams.size)
+}
 /** 0.1s 静音 WAV：在用户手势中播放一次以解锁 Audio 元素的自动播放限制。 */
 const SILENT_WAV = 'data:audio/wav;base64,UklGRkQDAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YSADAACAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgA=='
 const DEFAULT_POSITION = (): { x: number; y: number } => ({
@@ -116,7 +140,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const audioUrlRef = useRef<string | null>(null)
   const noSpeechRetriesRef = useRef(0)
   const backgroundRecognitionRef = useRef<SpeechRecognitionLike | null>(null)
-  const lastSpokenTextRef = useRef('')
+  const lastSpokenTextsRef = useRef<string[]>([])
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -256,11 +280,12 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       const finalResult = results.find(result => result.isFinal)
       const transcript = finalResult?.[0]?.transcript ?? ''
       if (transcript.trim() === '') return
-      // 防回声：识别结果与她正在朗读的句子一致时忽略
-      const normalize = (value: string): string => value.replace(/[\s，。！？、,.!?]/g, '')
-      const spoken = normalize(lastSpokenTextRef.current)
-      const heard = normalize(transcript)
-      if (spoken.length >= 4 && heard.length >= 4 && (spoken.includes(heard) || heard.includes(spoken))) return
+      // 防回声：识别结果与她最近朗读过的句子高度相似时视为回声忽略。
+      // 回声可能在下一条句子的播放期间才被识别，因此对比最近几句。
+      const heard = normalizeForMatch(transcript)
+      if (heard.length < 2) return
+      const echoLike = lastSpokenTextsRef.current.some(spoken => similarity(spoken, heard) >= 0.45)
+      if (echoLike) return
       stopBackgroundListening()
       sentenceQueueRef.current = []
       playingSentenceRef.current = false
@@ -322,7 +347,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         audioUrlRef.current = url
         audio.src = url
       }
-      lastSpokenTextRef.current = text
+      // 记录最近朗读的句子（最多 3 句），供后台聆听做回声过滤
+      const spokenNorm = normalizeForMatch(text)
+      if (spokenNorm.length >= 2) {
+        lastSpokenTextsRef.current = [...lastSpokenTextsRef.current, spokenNorm].slice(-3)
+      }
       onSpeechEndRef.current = onDone ?? null
       audio.onended = () => {
         if (audioRef.current === audio) {
@@ -391,6 +420,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     onSpeechEndRef.current = null
     recognitionRef.current?.abort()
     recognitionRef.current = null
+    lastSpokenTextsRef.current = []
     stopBackgroundListening()
     stopCurrentAudio()
   }, [stopCurrentAudio, stopBackgroundListening])
