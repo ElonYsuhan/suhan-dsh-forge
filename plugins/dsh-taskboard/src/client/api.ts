@@ -55,6 +55,16 @@ export async function fetchHistory (key: string, offset = 0, limit = 50): Promis
   return jsonResponse<HistoryResponse>(res, 'taskboard: history failed')
 }
 
+/** 释放已完成任务遗留的临时 Workspace/worktree，保留会话聊天日志。 */
+export async function cleanupHistoryWorkspace (key: string, id: string): Promise<WorkItem> {
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/history/${encodeURIComponent(id)}/cleanup`, {
+    method: 'POST'
+  })
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: history cleanup failed')
+  if (body.item === undefined) throw new Error('taskboard: history cleanup response missing item')
+  return body.item
+}
+
 /** 新建工作项 */
 export async function createItem (key: string, input: ItemInput): Promise<WorkItem> {
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items`, {

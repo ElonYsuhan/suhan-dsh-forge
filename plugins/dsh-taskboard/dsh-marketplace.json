@@ -21,7 +21,7 @@
     ],
     "filesystem": [
       "Read/write persistent taskboard state and its recovery backup under $DSH_HOME/storages/dsh-taskboard (overridable via DSH_TASKBOARD_DATA); read the legacy package-local data file once for non-destructive migration",
-      "Create isolated per-task Git worktrees under the taskboard runtime data directory; retain completed worktrees for reopenable session history and remove them when tasks are deleted or force-closed",
+      "Create isolated per-task Git worktrees under the taskboard runtime data directory; remove them after successful integration, deletion, force-close, or explicit history cleanup while retaining session logs",
       "Update a registered workspace only during serialized rebase and fast-forward integration; retain conflict state in the task-owned worktree for same-session resolution"
     ],
     "process": [

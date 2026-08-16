@@ -328,16 +328,20 @@ function executionPrompt (board: Board, item: WorkItem): string {
     `【标题】${item.title}`,
     item.desc === '' ? '' : `【描述】${item.desc}`,
     item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
-    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：可自主逐环节推进'}`,
+    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：单轮端到端完成，不拆分空转环节'}`,
     `【当前环节】${phase}`,
     '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。',
     '',
     '必须遵守：',
     '- 先读取并遵守工作区内的工程指令。只处理本工作项，不覆盖或提交无关改动。',
-    '- 每个环节都要在会话中给出可审核的结果，再调用 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")。',
+    mode === 'review'
+      ? '- 每个环节都要在会话中给出可审核的结果，再调用 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")。'
+      : '- 在本轮内完成必要分析、实现、针对性测试和最终验证；完成后直接调用 taskboard_progress(outcome="delivery_ready", summary="交付与验证摘要")，不要逐列调用 stage_complete。',
     mode === 'review'
       ? '- 工具返回“结束本轮执行”后必须立即结束当前 turn；会话完全停稳后看板才会开放人工审核，不能自行进入下一环节。'
-      : '- 每个 turn 最多完成一个环节。工具返回“结束本轮执行”后必须立即停止；会话停稳后看板才会流转，插件会另发下一环节的新 turn。',
+      : '- 只执行一个端到端 turn。避免重复扫描仓库、重复跑全量门禁或启动常驻服务；先做针对性检查，最终只跑一次工程要求的完整门禁。',
+    '- 交付必须是可实际使用的完整功能：验证主要用户路径、错误路径和资源释放；不得只生成代码或只验证 mock 调用。',
+    '- 控制资源：不要读取构建产物/依赖目录，不输出无界日志，不启动无上限并发，不保留 watcher/dev server；发现疑似内存增长、死循环或性能回退必须先修复再交付。',
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
     '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
     '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。'
@@ -380,17 +384,17 @@ function publishReviewAfterAgentIdle (
 }
 
 /**
- * 小任务也必须等当前 turn 完全结束后才能流转；流转成功后由插件开启下一轮。
- * 同一 turn 的重复 stage_complete 都携带相同 stageStatus，只有第一个能通过校验。
+ * 兼容旧 Agent 的 stage_complete：等当前 turn 停稳后直接开放交付，不再启动下一环节。
+ * 同一 turn 的重复调用只有第一个能通过状态校验。
  */
-function advanceAutoStageAfterAgentIdle (
+function publishAutoDeliveryAfterAgentIdle (
   agent: Agent,
   sessionId: string,
   stageStatus: string,
   note: string,
   lifecycle: LifecycleState
 ): void {
-  const waitAndAdvance = async (): Promise<void> => {
+  const waitAndPublish = async (): Promise<void> => {
     await agent.whenIdle()
     if (!lifecycle.active) return
     const file = await loadBoards()
@@ -400,26 +404,17 @@ function advanceAutoStageAfterAgentIdle (
       await withLock(`item:${board.projectKey}:${item.id}`, async () => {
         if (!lifecycle.active) return
         if (item.archived || executionStateOf(item) !== 'running' || item.status !== stageStatus) return
-        const next = nextColumn(board, item)
-        if (next === undefined) {
-          item.executionState = 'awaiting-delivery'
-          item.deliverySummary = note
-          pushTimeline(item, { action: 'note', note: `全部环节完成，等待人工确认交付：${note}` })
-          touch(board, item)
-          await saveBoards(file)
-          return
-        }
-        pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note })
-        item.status = next.id
+        item.executionState = 'awaiting-delivery'
+        item.deliverySummary = note
+        pushTimeline(item, { action: 'note', note: `小任务单轮执行完成，等待人工确认交付：${note}` })
         touch(board, item)
         await saveBoards(file)
-        followup(agent, `上一环节已在会话停稳后结算。现在进入「${next.label}」环节。请先完成该环节的真实工作并在会话中给出结果；每个 turn 只能在末尾调用一次 taskboard_progress(outcome="stage_complete")。`)
       })
       return
     }
   }
-  waitAndAdvance().catch(() => {
-    // Agent/插件卸载期间不流转，保持原环节，避免空转或重复推进。
+  waitAndPublish().catch(() => {
+    // Agent/插件卸载期间不开放交付，保持 running，避免错误确认。
   })
 }
 
@@ -462,6 +457,42 @@ async function preserveTaskSession (ctx: Context, item: WorkItem): Promise<strin
     errors.push(error instanceof Error ? error.message : String(error))
   }
   return errors.length === 0 ? undefined : errors.join('；')
+}
+
+/** 清理已完成任务的临时 Workspace/worktree，但保留未归档 Session 日志供历史入口打开。 */
+async function cleanupCompletedWorkspace (ctx: Context, item: WorkItem): Promise<void> {
+  const workspace = item.taskWorkspace
+  if (workspace === undefined) return
+  await removeTaskWorkspaceRegistration(ctx, workspace, item.sessionId)
+  await discardTaskWorkspace(workspace)
+  item.taskWorkspace = undefined
+}
+
+/** 冲突解决工具在 Agent turn 内调用；等 turn 停稳后再释放其 cwd 和临时 Workspace。 */
+function cleanupResolvedWorkspaceAfterAgentIdle (
+  ctx: Context,
+  agent: Agent,
+  boardKey: string,
+  itemId: string,
+  lifecycle: LifecycleState
+): void {
+  const cleanup = async (): Promise<void> => {
+    await agent.whenIdle()
+    if (!lifecycle.active) return
+    const file = await loadBoards()
+    const board = file.boards[boardKey]
+    const item = board?.items.find(candidate => candidate.id === itemId && candidate.archived)
+    if (board === undefined || item === undefined) return
+    await withLock(`item:${boardKey}:${itemId}`, async () => {
+      await cleanupCompletedWorkspace(ctx, item)
+      pushTimeline(item, { action: 'note', note: '冲突解决会话已停稳；临时 Workspace/worktree 自动清理，聊天记录保留' })
+      touch(board, item)
+      await saveBoards(file)
+    })
+  }
+  cleanup().catch(() => {
+    // 保留 taskWorkspace 元数据供历史面板手动重试清理，不伪装成功。
+  })
 }
 
 async function requestConflictResolution (
@@ -535,6 +566,7 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   }
   pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}` })
   const sessionWarning = await preserveTaskSession(ctx, item)
+  await cleanupCompletedWorkspace(ctx, item)
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
   touch(board, item)
   await saveBoards(file)
@@ -627,7 +659,10 @@ export function apply (ctx: Context): void {
         pushTimeline(item, { action: 'note', note: `变基集成完成，提交：${result.commit}；历史会话保留可打开` })
         touch(foundBoard, item)
         await saveBoards(file)
-        if (exec.agent !== undefined) retireDeliveredAgent(ctx, sessionId, exec.agent, lifecycle)
+        if (exec.agent !== undefined) {
+          retireDeliveredAgent(ctx, sessionId, exec.agent, lifecycle)
+          cleanupResolvedWorkspaceAfterAgentIdle(ctx, exec.agent, foundBoard.projectKey, item.id, lifecycle)
+        }
         return `冲突已解决并完成变基集成：${result.commit}。历史会话已保留。`
       }
       if (args.outcome === 'blocked') {
@@ -684,8 +719,8 @@ export function apply (ctx: Context): void {
         return '已记录当前环节产出。请结束本轮执行；会话完全停稳后看板才会进入待审核状态。'
       }
       if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
-      advanceAutoStageAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
-      return '已记录当前环节产出。请立即结束本轮执行；会话完全停稳后才会流转，并由看板开启下一环节的新 turn。'
+      publishAutoDeliveryAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
+      return '已记录小任务单轮交付结果。请立即结束本轮执行；会话停稳后看板将开放最终交付确认。'
       })
     }
   })), 'taskboard: tool')
@@ -745,6 +780,21 @@ export function apply (ctx: Context): void {
             .filter(item => item.archived)
             .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
           send(res, 200, { items: history.slice(offset, offset + limit), total: history.length })
+          return
+        }
+
+        // 已完成任务可手动释放旧版本遗留的临时 Workspace/worktree；会话日志继续保留。
+        if (parts.length === 6 && parts[3] === 'history' && parts[5] === 'cleanup' && method === 'POST') {
+          const itemId = parts[4] ?? ''
+          await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+            const item = board.items.find(candidate => candidate.id === itemId && candidate.archived)
+            if (item === undefined) throw new HttpError(404, '历史任务不存在')
+            await cleanupCompletedWorkspace(ctx, item)
+            pushTimeline(item, { action: 'note', note: '人工清理任务临时 Workspace/worktree；会话聊天记录继续保留' })
+            touch(board, item)
+            await saveBoards(file)
+            send(res, 200, { item })
+          })
           return
         }
 

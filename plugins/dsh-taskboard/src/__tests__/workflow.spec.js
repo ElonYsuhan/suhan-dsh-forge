@@ -325,8 +325,9 @@ describe('taskboard execution workflow', () => {
     expect(workspaceMocks.commit).toHaveBeenCalledOnce()
     expect(workspaceMocks.integrate).toHaveBeenCalledOnce()
     expect(archiveSession).not.toHaveBeenCalled()
-    expect(detachSession).not.toHaveBeenCalled()
-    expect(deleteWorkspace).not.toHaveBeenCalled()
+    expect(detachSession).toHaveBeenCalledOnce()
+    expect(deleteWorkspace).toHaveBeenCalledOnce()
+    expect(workspaceMocks.discard).toHaveBeenCalledOnce()
 
     const archivedResponse = response()
     await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), archivedResponse)
@@ -338,8 +339,8 @@ describe('taskboard execution workflow', () => {
     const createAutoResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
       type: 'task',
-      title: '自动任务不可在同一轮空转',
-      desc: '每轮只结算一个环节',
+      title: '自动任务单轮完成',
+      desc: '一个 turn 完成端到端交付',
       priority: 'medium',
       labels: [],
       status: 'todo',
@@ -354,8 +355,8 @@ describe('taskboard execution workflow', () => {
 
     const firstAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '分析完成' }, { agent: autoAgent })
     const duplicateAdvance = await taskTool.execute({ outcome: 'stage_complete', summary: '重复调用' }, { agent: autoAgent })
-    expect(firstAdvance).toContain('会话完全停稳后才会流转')
-    expect(duplicateAdvance).toContain('会话完全停稳后才会流转')
+    expect(firstAdvance).toContain('会话停稳后看板将开放最终交付确认')
+    expect(duplicateAdvance).toContain('会话停稳后看板将开放最终交付确认')
 
     const autoRunningResponse = response()
     await route(request('GET', '/taskboard/boards'), autoRunningResponse)
@@ -368,9 +369,9 @@ describe('taskboard execution workflow', () => {
       const autoAdvancedResponse = response()
       await route(request('GET', '/taskboard/boards'), autoAdvancedResponse)
       const autoAdvancedItem = autoAdvancedResponse.body.boards['workspace-1'].items.find(item => item.id === autoItemId)
-      expect(autoAdvancedItem.status).toBe('scheduled')
-      expect(autoAdvancedItem.executionState).toBe('running')
-      expect(followup).toHaveBeenCalledTimes(4)
+      expect(autoAdvancedItem.status).toBe('analysis')
+      expect(autoAdvancedItem.executionState).toBe('awaiting-delivery')
+      expect(followup).toHaveBeenCalledTimes(3)
     })
 
     const forceCloseResponse = response()
@@ -378,7 +379,7 @@ describe('taskboard execution workflow', () => {
     expect(forceCloseResponse.status).toBe(200)
     expect(forceCloseResponse.body.item.archived).toBe(true)
     expect(autoAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(workspaceMocks.discard).toHaveBeenCalledOnce()
+    expect(workspaceMocks.discard).toHaveBeenCalledTimes(2)
     expect(archiveSession).toHaveBeenCalledOnce()
 
     const createDeleteResponse = response()
@@ -404,7 +405,7 @@ describe('taskboard execution workflow', () => {
     expect(deleteResponse.body.rolledBack).toBe(true)
     expect(deleteResponse.body.item.archived).toBe(true)
     expect(deleteAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
-    expect(workspaceMocks.discard).toHaveBeenCalledTimes(2)
+    expect(workspaceMocks.discard).toHaveBeenCalledTimes(3)
     expect(archiveSession).toHaveBeenCalledTimes(2)
 
     const createPlainResponse = response()
@@ -462,5 +463,16 @@ describe('taskboard execution workflow', () => {
     expect(resolved.integrationState).toBe('merged')
     expect(resolved.commitRef).toBe('resolved-commit')
     expect(resolvedBoardResponse.body.items.some(item => item.conflictOf === conflictSourceId)).toBe(false)
+    await vi.waitFor(async () => {
+      const cleanedHistory = response()
+      await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), cleanedHistory)
+      const cleaned = cleanedHistory.body.items.find(item => item.id === conflictSourceId)
+      expect(cleaned.taskWorkspace).toBeUndefined()
+    })
+    const manualCleanupResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/history/${conflictSourceId}/cleanup`), manualCleanupResponse)
+    expect(manualCleanupResponse.status).toBe(200)
+    expect(manualCleanupResponse.body.item.sessionId).toBe(conflictAgent.id)
+    expect(archiveSession).toHaveBeenCalledTimes(2)
   })
 })

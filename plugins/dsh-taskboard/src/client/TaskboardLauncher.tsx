@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { approveItem, confirmDelivery, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { approveItem, cleanupHistoryWorkspace, confirmDelivery, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
@@ -57,6 +57,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null)
   const [forceCloseTarget, setForceCloseTarget] = useState<WorkItem | null>(null)
   const [deliveryTarget, setDeliveryTarget] = useState<WorkItem | null>(null)
+  const [cleanupTarget, setCleanupTarget] = useState<WorkItem | null>(null)
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
@@ -69,6 +70,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     setHistoryOpen(false)
     setDeleteTarget(null)
     setForceCloseTarget(null)
+    setCleanupTarget(null)
     setError(null)
     setNotice(null)
   }, [])
@@ -241,6 +243,23 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       setError(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const handleHistoryCleanup = async (): Promise<void> => {
+    if (currentKey === null || cleanupTarget === null || running) return
+    setRunning(true)
+    try {
+      const updated = await cleanupHistoryWorkspace(currentKey, cleanupTarget.id)
+      setHistoryItems(previous => previous.map(item => item.id === updated.id ? updated : item))
+      setCleanupTarget(null)
+      setError(null)
+      setNotice('临时 Workspace、worktree 和任务分支已清理；聊天记录仍可从历史任务打开')
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -448,6 +467,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                       closeAll()
                       openSession(sessionId)
                     }}
+                    onCleanup={item => setCleanupTarget(item)}
                     onClose={() => setHistoryOpen(false)}
                   />
                   )
@@ -537,6 +557,16 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
           confirmLabel={running ? '处理中…' : '强制关闭并回退'}
           onCancel={() => setForceCloseTarget(null)}
           onConfirm={() => handleForceClose()}
+        />
+      )}
+
+      {cleanupTarget !== null && (
+        <ConfirmDialog
+          title='清理临时工作区'
+          message={`确定清理「${cleanupTarget.title}」的临时 Workspace、worktree 和任务分支吗？任务已经集成，聊天记录与历史记录会继续保留并可打开。`}
+          confirmLabel={running ? '清理中…' : '清理工作区'}
+          onCancel={() => setCleanupTarget(null)}
+          onConfirm={() => handleHistoryCleanup()}
         />
       )}
     </div>

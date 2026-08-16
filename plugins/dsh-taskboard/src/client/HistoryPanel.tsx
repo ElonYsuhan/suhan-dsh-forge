@@ -9,6 +9,7 @@ export interface HistoryPanelProps {
   loading: boolean
   onLoadMore: () => void
   onOpenSession: (sessionId: string) => void
+  onCleanup: (item: WorkItem) => void
   onClose: () => void
 }
 
@@ -19,7 +20,7 @@ function outcome (item: WorkItem): string {
   return item.executionState === 'failed' ? '失败归档' : '已归档'
 }
 
-export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore, onOpenSession, onClose }: HistoryPanelProps) {
+export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore, onOpenSession, onCleanup, onClose }: HistoryPanelProps) {
   return (
     <section
       id='taskboard-history-panel'
@@ -53,7 +54,12 @@ export function HistoryPanel ({ projectTitle, items, total, loading, onLoadMore,
                 {item.conflictTaskId !== undefined && <p className={css.note}>已生成冲突处理任务：{item.conflictTaskId.slice(0, 8)}</p>}
                 {item.deliverySummary !== undefined && <p className={css.summary}>{item.deliverySummary}</p>}
                 {item.sessionId !== undefined && (
-                  <button type='button' className={css.openSession} onClick={() => onOpenSession(item.sessionId!)}>打开会话</button>
+                  <div className={css.actions}>
+                    <button type='button' className={css.openSession} onClick={() => onOpenSession(item.sessionId!)}>打开会话</button>
+                    {item.taskWorkspace !== undefined && (
+                      <button type='button' className={css.cleanup} onClick={() => onCleanup(item)}>清理临时工作区</button>
+                    )}
+                  </div>
                 )}
               </article>
             ))}
