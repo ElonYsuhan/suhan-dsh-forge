@@ -105,6 +105,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUnlockedRef = useRef(false)
   const audioUrlRef = useRef<string | null>(null)
+  const ttsBrokenRef = useRef(false)
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -212,11 +213,37 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     stopCurrentAudio()
   }, [stopCurrentAudio])
 
+  /** 浏览器自带语音合成兜底：宿主 TTS 不可用或已标记故障时使用。 */
+  const speakViaBrowser = useCallback((text: string, onDone?: () => void): void => {
+    const synth = window.speechSynthesis
+    if (synth === undefined) throw new Error('浏览器语音合成不可用')
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.lang = 'zh-CN'
+    utterance.rate = 0.95
+    const voice = synth.getVoices().find(candidate => candidate.lang.toLowerCase().startsWith('zh'))
+    if (voice !== undefined) utterance.voice = voice
+    onSpeechEndRef.current = onDone ?? null
+    utterance.onend = () => {
+      const done = onSpeechEndRef.current
+      onSpeechEndRef.current = null
+      setSpeaking(false)
+      done?.()
+    }
+    utterance.onerror = utterance.onend
+    setSpeaking(true)
+    synth.speak(utterance)
+  }, [])
+
   const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
       if (!interactingRef.current) return
       stopCurrentAudio()
+      // 宿主 TTS 已确认故障时整句直接走浏览器语音，避免每句重复超时等待
+      if (ttsBrokenRef.current) {
+        speakViaBrowser(text, onDone)
+        return
+      }
       // 统一使用缓冲 POST：HTML5 直连流式 MP3 在部分网络下会卡顿、断裂；
       // 完整 MP3 缓冲一次取回后本地播放最稳定。失败自动重试一次。
       const voiceId = settings.voiceId
@@ -284,6 +311,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         throw error
       }
     } catch (error) {
+      // 宿主 Edge TTS 偶发不可用（502/超时）时降级到浏览器自带语音合成，
+      // 本次会话内记住故障避免每句重复超时等待，音质略降但保证能说话。
+      if (window.speechSynthesis !== undefined) {
+        ttsBrokenRef.current = true
+        speakViaBrowser(text, onDone)
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       setSpeechError(`语音合成失败：${message}`)
       setBubbleText('语音合成失败，点击重新开始')
@@ -297,7 +331,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setListening(false)
       setThinking(false)
     }
-  }, [settings.voiceId, stopCurrentAudio])
+  }, [settings.voiceId, stopCurrentAudio, speakViaBrowser])
 
   const stopVoiceSession = useCallback((): void => {
     if (singleClickTimerRef.current !== null) {
@@ -495,6 +529,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       return
     }
     interactingRef.current = true
+    ttsBrokenRef.current = false
     setInteracting(true)
     setListening(false)
     setThinking(true)
