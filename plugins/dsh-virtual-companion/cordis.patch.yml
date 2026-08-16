@@ -1,0 +1,4 @@
+# DSH bundle patch：将虚拟伙伴 Host + Client 插件挂载到 web profile。
+- insert:
+    - id: virtual-companion
+      name: '@suhan-dsh/virtual-companion'

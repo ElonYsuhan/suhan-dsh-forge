@@ -1,0 +1,102 @@
+{
+  "name": "@suhan-dsh/virtual-companion",
+  "description": "DSH Web draggable 3D virtual companion with switchable models, hover reactions, and voice chat",
+  "version": "0.1.0",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "types": "./lib/types/client/index.d.ts",
+      "default": "./lib/client.js"
+    },
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./dsh-marketplace.json": "./dsh-marketplace.json",
+    "./package.json": "./package.json"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots"
+      ],
+      "platform": "web"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b && tsdown",
+    "bundle": "tsdown",
+    "lint": "node ../../scripts/validate-source.mjs src scripts",
+    "pack": "pnpm pack --pack-destination ../../artifacts",
+    "pack:check": "pnpm pack --dry-run",
+    "release": "node ../../scripts/release-dsh-plugin.mjs --profile web --health-path /virtual-companion/health",
+    "test": "vitest run",
+    "watch": "tsdown --watch",
+    "typecheck": "tsc -b"
+  },
+  "dependencies": {
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "@types/node": "catalog:",
+    "@types/react": "catalog:",
+    "@types/three": "^0.178.0",
+    "lightningcss": "catalog:",
+    "react": "catalog:",
+    "tsdown": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6 <0.2.0",
+    "react": "^18.3.1"
+  },
+  "files": [
+    "lib/index.js",
+    "lib/client.js",
+    "lib/client.js.map",
+    "lib/types/**/*.d.ts",
+    "cordis.patch.yml",
+    "dsh-marketplace.json",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ElonYsuhan/suhan-dsh-forge.git"
+  },
+  "homepage": "https://github.com/ElonYsuhan/suhan-dsh-forge#readme",
+  "bugs": {
+    "url": "https://github.com/ElonYsuhan/suhan-dsh-forge/issues"
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "virtual-companion",
+    "3d",
+    "threejs",
+    "voice-chat",
+    "virtual-pet"
+  ],
+  "author": "ElonYsuhan",
+  "private": true,
+  "publishConfig": {
+    "access": "restricted"
+  }
+}
