@@ -17,6 +17,7 @@ describe('virtual-companion package metadata', () => {
       expect(typeof pkg.scripts?.[script], `scripts.${script}`).toBe('string')
     }
     expect(pkg.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
+    expect(pkg.scripts?.pack).toContain('../../artifacts/dsh-virtual-companion')
     expect(pkg.type).toBe('module')
     expect(pkg.files).toEqual(expect.arrayContaining([
       'lib/index.js',

@@ -38,7 +38,7 @@ pnpm --filter @suhan-dsh/virtual-companion pack:check
 ```bash
 pnpm --filter @suhan-dsh/virtual-companion build
 pnpm --filter @suhan-dsh/virtual-companion run pack
-dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/suhan-dsh-virtual-companion-0.1.0.tgz
+dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-virtual-companion/suhan-dsh-virtual-companion-0.1.0.tgz
 ```
 
 安装或更新后需重启 `dsh web`。

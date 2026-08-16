@@ -5,6 +5,20 @@ import { defineConfig, type Plugin } from 'vite'
 
 const virtualModuleId = 'virtual:dsh-plugins'
 const resolvedVirtualModuleId = `\0${virtualModuleId}`
+const artifactsRoot = resolve(import.meta.dirname, '../../artifacts')
+
+async function listArtifacts(pluginId: string): Promise<string[]> {
+  try {
+    const entries = await readdir(join(artifactsRoot, pluginId), { withFileTypes: true })
+    return entries
+      .filter(entry => entry.isFile() && entry.name.endsWith('.tgz'))
+      .map(entry => entry.name)
+      .sort()
+  } catch (error) {
+    if (error instanceof Error && 'code' in error && (error as { code?: string }).code === 'ENOENT') return []
+    throw error
+  }
+}
 
 function dshPluginCatalog(): Plugin {
   const pluginsRoot = resolve(import.meta.dirname, '../../plugins')
@@ -26,8 +40,12 @@ function dshPluginCatalog(): Plugin {
         const pluginRoot = join(pluginsRoot, directory)
         const packageJsonPath = join(pluginRoot, 'package.json')
         const marketplacePath = join(pluginRoot, 'dsh-marketplace.json')
+        const artifacts = await listArtifacts(directory)
         this.addWatchFile(packageJsonPath)
         this.addWatchFile(marketplacePath)
+        for (const artifact of artifacts) {
+          this.addWatchFile(join(artifactsRoot, directory, artifact))
+        }
         const [packageJson, marketplace] = await Promise.all([
           readFile(packageJsonPath, 'utf8').then(JSON.parse),
           readFile(marketplacePath, 'utf8').then(JSON.parse),
@@ -38,6 +56,7 @@ function dshPluginCatalog(): Plugin {
           packageName: packageJson.name,
           version: packageJson.version,
           description: packageJson.description,
+          artifacts,
           ...marketplace,
         }
       }))

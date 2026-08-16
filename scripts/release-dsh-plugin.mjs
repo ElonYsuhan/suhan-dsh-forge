@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto'
 import { execFile, spawn } from 'node:child_process'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
@@ -131,7 +131,8 @@ async function main () {
   const packageSpec = `${name}@${version}`
   const archiveBase = name.startsWith('@') ? name.slice(1).replaceAll('/', '-') : name
   const archiveName = `${archiveBase}-${version}.tgz`
-  const archivePath = join(root, 'artifacts', archiveName)
+  const artifactDir = join(root, 'artifacts', basename(pluginDir))
+  const archivePath = join(artifactDir, archiveName)
   const shortName = name.split('/').at(-1)
   const tag = `${shortName}-v${version}`
 
@@ -150,7 +151,8 @@ async function main () {
 
   await run('pnpm', ['check'])
   await run('pnpm', ['audit', '--audit-level', 'high'])
-  await run('pnpm', ['pack', '--pack-destination', join(root, 'artifacts')], pluginDir)
+  await mkdir(artifactDir, { recursive: true })
+  await run('pnpm', ['pack', '--pack-destination', artifactDir], pluginDir)
 
   const archive = await readFile(archivePath)
   await smokeTarball(archivePath, name, version, profile)

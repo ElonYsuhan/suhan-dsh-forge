@@ -8,13 +8,14 @@
 pnpm dev:marketplace
 ```
 
-平台位于 `apps/marketplace`，构建时会自动扫描 `plugins/*` 的包信息和 `dsh-marketplace.json`，支持搜索、分类筛选、权限与质量信息展示。
+平台位于 `apps/marketplace`，构建时会自动扫描 `plugins/*` 的包信息、`dsh-marketplace.json` 和 `artifacts/<插件目录>/*.tgz` 本地产物，支持搜索、分类筛选、权限、质量与产物信息展示。
 
 面向 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 的插件开发、验证、测试和打包工作区。
 
 ## 工作区
 
 - `plugins/*`：可安装的 DSH/Cordis 插件。
+- `artifacts/<插件目录>/`：本地打包产物按插件目录隔离，`pack` 与 `release` 自动写入该目录。
 - `scripts/validate-plugins.mjs`：所有插件共享的结构与发布门禁。
 - `standards/`：本仓库在 DSH 官方协议之上的质量规范。
 
@@ -45,7 +46,7 @@ pnpm --filter @suhan-dsh/taskboard build
 ```bash
 pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard run pack
-dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.1.tgz
+dsh plugin --profile web add /absolute/path/to/suhan-dsh-forge/artifacts/dsh-taskboard/suhan-dsh-taskboard-0.1.2.tgz
 ```
 
 当前已验证兼容本机 DSH `0.1.0-rc.6`：隔离 profile 安装后 bundle 自动挂载，真实 `/taskboard/boards` 路由返回成功。

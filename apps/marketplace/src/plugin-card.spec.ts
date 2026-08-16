@@ -38,4 +38,11 @@ describe('plugin card marketplace adjustments', () => {
     expect(viteConfigSource).toContain("this.addWatchFile(packageJsonPath)")
     expect(viteConfigSource).toContain("this.addWatchFile(marketplacePath)")
   })
+
+  it('automatically discovers per-plugin artifacts and shows them in the management page', () => {
+    expect(viteConfigSource).toContain("const artifactsRoot = resolve(import.meta.dirname, '../../artifacts')")
+    expect(viteConfigSource).toContain('readdir(join(artifactsRoot, pluginId)')
+    expect(pluginSource).toContain('本地产物')
+    expect(pluginSource).toContain('artifactCount(plugin)')
+  })
 })

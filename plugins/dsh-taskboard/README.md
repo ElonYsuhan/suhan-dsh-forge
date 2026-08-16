@@ -98,7 +98,7 @@ dsh plugin --profile web add @suhan-dsh/taskboard
 ```bash
 pnpm --filter @suhan-dsh/taskboard build
 pnpm --filter @suhan-dsh/taskboard run pack
-dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/suhan-dsh-taskboard-0.1.2.tgz
+dsh plugin --profile web add /abs/path/to/suhan-dsh-forge/artifacts/dsh-taskboard/suhan-dsh-taskboard-0.1.2.tgz
 ```
 
 插件包已通过 `package.json#dsh.bundle.patch` 声明 `cordis.patch.yml`。若当前 DSH 预览版未自动挂载 bundle，可在 `~/.dsh/profiles/web/cordis.patch.yml` 追加：

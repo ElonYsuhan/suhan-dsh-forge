@@ -92,7 +92,7 @@ button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid 
 .lead { max-width: 620px; margin: 8px 0 0; color: var(--text-secondary); font-size: 14px; line-height: 1.6; }
 .metrics {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   padding: 0 clamp(24px, 7vw, 110px);
   border-bottom: 1px solid var(--line);
   background: var(--surface-muted);
@@ -295,6 +295,31 @@ footer p { margin: 0; }
   line-height: 1.55;
 }
 .permission-list span { color: var(--text-secondary); font: 10px var(--mono); }
+.artifact-list {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+  list-style: none;
+}
+.artifact-list li {
+  padding: 8px 10px;
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow-x: auto;
+}
+.artifact-list code, .artifact-empty code {
+  font: 11px var(--mono);
+  color: var(--text);
+  word-break: break-word;
+}
+.artifact-empty {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
 .install-box {
   margin-top: 18px;
   padding: 12px 14px;

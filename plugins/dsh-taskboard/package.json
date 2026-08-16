@@ -39,7 +39,7 @@
     "build": "tsc -b && tsdown",
     "bundle": "tsdown",
     "lint": "node ../../scripts/validate-source.mjs src scripts",
-    "pack": "pnpm pack --pack-destination ../../artifacts",
+    "pack": "mkdir -p ../../artifacts/dsh-taskboard && pnpm pack --pack-destination ../../artifacts/dsh-taskboard",
     "pack:check": "pnpm pack --dry-run",
     "release": "node ../../scripts/release-dsh-plugin.mjs --profile web --health-path /taskboard/boards",
     "test": "vitest run --pool=threads",

@@ -35,7 +35,7 @@
     "build": "tsc -b && tsdown",
     "bundle": "tsdown",
     "lint": "node ../../scripts/validate-source.mjs src scripts",
-    "pack": "pnpm pack --pack-destination ../../artifacts",
+    "pack": "mkdir -p ../../artifacts/dsh-virtual-companion && pnpm pack --pack-destination ../../artifacts/dsh-virtual-companion",
     "pack:check": "pnpm pack --dry-run",
     "release": "node ../../scripts/release-dsh-plugin.mjs --profile web --health-path /virtual-companion/health",
     "test": "vitest run --pool=threads",

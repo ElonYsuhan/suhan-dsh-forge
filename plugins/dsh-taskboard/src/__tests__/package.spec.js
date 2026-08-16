@@ -32,6 +32,7 @@ describe('public package metadata', () => {
     expect(pkg.keywords.length).toBeGreaterThan(0)
     expect(pkg.publishConfig?.access).toBe('public')
     expect(pkg.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
+    expect(pkg.scripts?.pack).toContain('../../artifacts/dsh-taskboard')
   })
 
   it('keeps exports targets inside the publish whitelist and present on disk', async () => {

@@ -17,6 +17,7 @@ const categories = computed(() => [...new Set(plugins.flatMap(plugin => plugin.c
 const visiblePlugins = computed(() => filterPlugins(plugins, query.value, activeCategory.value))
 const permissionTotal = computed(() => plugins.reduce((total, plugin) => total + permissionCount(plugin), 0))
 const testedTotal = computed(() => plugins.filter(plugin => plugin.quality.unitTests && plugin.quality.contractTests).length)
+const artifactTotal = computed(() => plugins.reduce((total, plugin) => total + (plugin.artifacts?.length ?? 0), 0))
 
 function openPlugin(plugin: PluginListing, event: Event) {
   selectedPlugin.value = plugin
@@ -46,6 +47,10 @@ function qualityCount(plugin: PluginListing) {
   return Object.values(plugin.quality).filter(Boolean).length
 }
 
+function artifactCount(plugin: PluginListing) {
+  return plugin.artifacts?.length ?? 0
+}
+
 function focusSearch(event: KeyboardEvent) {
   if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
     event.preventDefault()
@@ -70,6 +75,7 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
     <div><strong>{{ plugins.length.toString().padStart(2, '0') }}</strong><span>在库插件</span></div>
     <div><strong>{{ testedTotal.toString().padStart(2, '0') }}</strong><span>通过核心测试</span></div>
     <div><strong>{{ permissionTotal.toString().padStart(2, '0') }}</strong><span>透明能力声明</span></div>
+    <div><strong>{{ artifactTotal.toString().padStart(2, '0') }}</strong><span>本地产物</span></div>
     <div><strong>RC.6</strong><span>DSH 基准版本</span></div>
   </section>
 
@@ -118,7 +124,7 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
           </ul>
           <div class="card-footer">
             <span>v{{ plugin.version }}</span>
-            <span>{{ qualityCount(plugin) }}/3 质量项</span>
+            <span>{{ artifactCount(plugin) }} 个产物 · {{ qualityCount(plugin) }}/3 质量项</span>
           </div>
         </article>
       </li>
@@ -152,6 +158,15 @@ onUnmounted(() => window.removeEventListener('keydown', focusSearch))
           <li v-for="item in selectedPlugin.permissions.filesystem" :key="item"><span>文件</span>{{ item }}</li>
           <li v-for="item in selectedPlugin.permissions.process" :key="item"><span>进程</span>{{ item }}</li>
         </ul>
+      </div>
+      <div class="detail-block">
+        <h3>本地产物</h3>
+        <ul v-if="selectedPlugin.artifacts?.length" class="artifact-list">
+          <li v-for="artifact in selectedPlugin.artifacts" :key="artifact">
+            <code>artifacts/{{ selectedPlugin.id }}/{{ artifact }}</code>
+          </li>
+        </ul>
+        <p v-else class="artifact-empty">当前目录还没有本地产物，运行对应插件包的 <code>pnpm run pack</code> 后自动出现在这里。</p>
       </div>
       <div class="install-box">
         <code>dsh plugin --profile web add {{ selectedPlugin.packageName }}</code>

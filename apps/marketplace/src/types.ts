@@ -15,6 +15,8 @@ export interface PluginListing {
   packageName: string
   version: string
   description: string
+  /** 本地产物文件名，按 `artifacts/<插件目录>/` 自动扫描。 */
+  artifacts?: string[]
   displayName: LocalizedText
   summary: LocalizedText
   categories: string[]
