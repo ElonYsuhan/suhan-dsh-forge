@@ -450,6 +450,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     recognition.lang = 'zh-CN'
     recognition.interimResults = false
     recognition.continuous = false
+    let resultReceived = false
+    let handledByError = false
     recognition.onresult = (event): void => {
       const results: SpeechRecognitionResultLike[] = []
       for (let index = 0; index < event.results.length; index += 1) {
@@ -459,6 +461,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       const finalResult = results.find(result => result.isFinal)
       const transcript = finalResult?.[0]?.transcript ?? ''
       if (transcript.trim() !== '') {
+        resultReceived = true
         noSpeechRetriesRef.current = 0
         recognition.stop()
         recognitionRef.current = null
@@ -468,6 +471,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
     recognition.onerror = (event): void => {
       const error = event.error ?? 'unknown'
+      handledByError = true
       recognition.abort()
       // 我们自己调用的 abort 会产生 aborted 错误，忽略不计
       if (error === 'aborted') return
@@ -500,6 +504,16 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
     recognition.onend = (): void => {
       setListening(false)
+      if (handledByError || resultReceived) return
+      // 说话停顿导致的自然结束（非出错、非识别到内容）：
+      // 继续监听，用户停顿后还能接着说。
+      if (interactingRef.current && recognitionRef.current === recognition) {
+        window.setTimeout(() => {
+          if (interactingRef.current && recognitionRef.current === recognition) {
+            beginListeningRef.current()
+          }
+        }, 250)
+      }
     }
     recognitionRef.current = recognition
     setListening(true)
@@ -642,7 +656,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [handleStageClick])
 
   const activeChat = interacting || listening || thinking
-  const statusText = speechError ?? (!activeChat ? bubbleText : null) ?? (hovered && !activeChat ? '单击语音，双击设置' : null)
+  const statusText = speechError ?? bubbleText ?? (hovered && !activeChat ? '单击语音，双击设置' : null)
   const activeBackground = getChatBackground(settings.backgroundId)
   const activeRole = getRolePreset(settings.roleId)
 
@@ -671,7 +685,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         {statusText !== null && (
           <div className={css.bubble} style={{ background: activeBackground.css, color: activeBackground.textColor }} role='status'>{statusText}</div>
         )}
-        {(listening || thinking || interacting) && (
+        {(listening || thinking) && (
           <div className={css.indicator} role='status'>🤔</div>
         )}
       </div>
