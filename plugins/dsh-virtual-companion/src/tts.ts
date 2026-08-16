@@ -105,7 +105,8 @@ async function collectStream (stream: Readable, maxBytes: number): Promise<Buffe
  * retained after a request completes.
  */
 export class EdgeTtsSpeechSynth implements SpeechSynth {
-  async synthesize (text: string, voice: VoiceStyleId): Promise<TtsAudioResult> {
+  /** 单次合成的完整流程；连接类失败允许调用方重试。 */
+  private async synthesizeOnce (text: string, voice: VoiceStyleId): Promise<TtsAudioResult> {
     const style = getVoiceStyle(voice)
     const tts = new MsEdgeTTS()
     let audioStream: Readable | null = null
@@ -137,6 +138,18 @@ export class EdgeTtsSpeechSynth implements SpeechSynth {
       } catch {
         // close() is best-effort cleanup; the original error must not be hidden.
       }
+    }
+  }
+
+  /** 每次请求新建客户端；连接类失败自动换新客户端重试一次。 */
+  async synthesize (text: string, voice: VoiceStyleId): Promise<TtsAudioResult> {
+    try {
+      return await this.synthesizeOnce(text, voice)
+    } catch (error) {
+      if (!(error instanceof TtsError) || error.message.startsWith('TTS synthesis timed out') || error.message.includes('no audio data')) {
+        throw error
+      }
+      return await this.synthesizeOnce(text, voice)
     }
   }
 

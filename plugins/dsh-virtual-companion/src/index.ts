@@ -230,6 +230,7 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
           return
         }
         if (error instanceof TtsError) {
+          process.stderr.write(`[dsh-virtual-companion] tts failed: ${safeDiagnostic(error)}\n`)
           sendJson(res, 502, { error: '语音合成暂时不可用，请稍后再试' })
           return
         }
