@@ -98,6 +98,33 @@
   pointer-events: none;
 }
 
+/* 聆听中：缓慢呼吸式缩放；检测到你的声音：快速来回缩放 */
+.indicator.listening {
+  animation: companion-indicator-idle 1.6s ease-in-out infinite;
+}
+
+.indicator.hearing {
+  animation: companion-indicator-hearing .6s ease-in-out infinite;
+}
+
+@keyframes companion-indicator-idle {
+  0%, 100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.12;
+  }
+}
+
+@keyframes companion-indicator-hearing {
+  0%, 100% {
+    scale: 1;
+  }
+  50% {
+    scale: 1.3;
+  }
+}
+
 @keyframes companion-pop {
   from {
     opacity: 0;

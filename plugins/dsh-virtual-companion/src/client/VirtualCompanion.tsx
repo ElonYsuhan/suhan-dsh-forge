@@ -43,6 +43,8 @@ interface SpeechRecognitionLike {
   continuous: boolean
   onresult: ((event: SpeechRecognitionEventLike) => void) | null
   onerror: ((event: { error?: string }) => void) | null
+  onspeechstart: (() => void) | null
+  onspeechend: (() => void) | null
   onend: (() => void) | null
   start: () => void
   stop: () => void
@@ -138,6 +140,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [hovered, setHovered] = useState(false)
   const [interacting, setInteracting] = useState(false)
   const [listening, setListening] = useState(false)
+  const [speechDetected, setSpeechDetected] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
@@ -472,6 +475,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     recognition.onerror = (event): void => {
       const error = event.error ?? 'unknown'
       handledByError = true
+      setSpeechDetected(false)
       recognition.abort()
       // 我们自己调用的 abort 会产生 aborted 错误，忽略不计
       if (error === 'aborted') return
@@ -502,8 +506,15 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setBubbleText(message)
       if (interactingRef.current) stopVoiceSession()
     }
+    recognition.onspeechstart = (): void => {
+      setSpeechDetected(true)
+    }
+    recognition.onspeechend = (): void => {
+      setSpeechDetected(false)
+    }
     recognition.onend = (): void => {
       setListening(false)
+      setSpeechDetected(false)
       if (handledByError || resultReceived) return
       // 说话停顿导致的自然结束（非出错、非识别到内容）：
       // 继续监听，用户停顿后还能接着说。
@@ -686,7 +697,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           <div className={css.bubble} style={{ background: activeBackground.css, color: activeBackground.textColor }} role='status'>{statusText}</div>
         )}
         {(listening || thinking) && (
-          <div className={css.indicator} role='status'>🤔</div>
+          <div className={`${css.indicator} ${listening ? (speechDetected ? css.hearing : css.listening) : ''}`} role='status'>🤔</div>
         )}
       </div>
       {panelOpen && (
