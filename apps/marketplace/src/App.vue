@@ -32,10 +32,6 @@ onUnmounted(() => window.removeEventListener('hashchange', syncRoute))
           <small>插件管理平台</small>
         </span>
       </a>
-      <nav aria-label="主导航">
-        <a :class="{ 'nav-active': currentRoute === ROUTES.plugins }" href="#/plugins">插件列表</a>
-        <a :class="{ 'nav-active': currentRoute === ROUTES.quality }" href="#/quality">质量门禁</a>
-      </nav>
       <span class="forge-status"><i aria-hidden="true"></i> Forge 正常</span>
     </header>
 
