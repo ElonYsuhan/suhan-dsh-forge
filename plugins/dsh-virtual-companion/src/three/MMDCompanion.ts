@@ -8,6 +8,7 @@
  */
 import {
   AbstractEngine,
+  Bone,
   Color4,
   DefaultRenderingPipeline,
   DirectionalLight,
@@ -21,7 +22,6 @@ import {
   Scene,
   ShadowGenerator,
   Texture,
-  TransformNode,
   UniversalCamera,
   Vector3,
   WebGPUEngine
@@ -55,7 +55,7 @@ const GESTURE_DURATIONS: Record<GestureName, number> = {
 }
 
 interface BoneTarget {
-  bone: TransformNode
+  bone: Bone
   base: Vector3
 }
 
@@ -94,7 +94,6 @@ export class MMDCompanion {
   private thinking = false
   private speechLevel = 0
   private fitDistance = 30
-  private baseScale = 1
   private baseY = 0
   private centerY = 10
   private gesture: { name: GestureName; startAt: number } | null = null
@@ -111,6 +110,34 @@ export class MMDCompanion {
   constructor (canvas: HTMLCanvasElement, options: MMDCompanionOptions = {}) {
     this.canvas = canvas
     this.options = options
+    // 调试钩子：控制台/无头浏览器可读写场景状态，用于朝向等视觉问题诊断
+    const self = this
+    ;(globalThis as unknown as { __mmdDebug?: unknown }).__mmdDebug = {
+      get camera () { return self.scene?.activeCamera ?? null },
+      get meshes () { return self.meshes },
+      get skeleton () { return self.mesh?.skeleton ?? null },
+      rotateRoots (angle: number): string[] {
+        const skeleton = self.mesh?.skeleton
+        if (skeleton === null || skeleton === undefined) return []
+        const rotated: string[] = []
+        for (const bone of skeleton.bones) {
+          if (bone.getParent() === null) {
+            bone.setRotation(new Vector3(0, angle, 0))
+            rotated.push(bone.name)
+          }
+        }
+        return rotated
+      },
+      boneMatrix (name: string): number[] {
+        const mesh = self.mesh
+        const skeleton = mesh?.skeleton
+        if (mesh === null || skeleton === null || skeleton === undefined) return []
+        const mats = skeleton.getTransformMatrices(mesh)
+        const idx = skeleton.bones.findIndex(b => b.name === name)
+        if (idx < 0) return []
+        return Array.from(mats.slice(idx * 16, idx * 16 + 16)).map(v => Math.round(v * 100) / 100)
+      }
+    }
   }
 
   /** 加载 PMX 模型与可选表情 VMD；重复调用即切换模型。 */
@@ -132,7 +159,9 @@ export class MMDCompanion {
       pluginOptions: {
         mmdmodel: {
           materialBuilder: new PBRMaterialBuilder(),
-          useSdef: true,
+          // SDEF 球形变形参数是模型原始单位，骨骼整体缩放后失配会
+          // 把顶点压碎；BDEF 是尺度不变的，牺牲少量肩肘形变质量
+          useSdef: false,
           buildMorph: true,
           buildSkeleton: true
         }
@@ -150,30 +179,32 @@ export class MMDCompanion {
       this.shadowGen?.addShadowCaster(mesh, true)
     }
 
-    // babylon-mmd 使用 PMX 原始坐标（不翻 X），实测模型正面朝 -Z
-    // （面1 法线 (0,-0.25,-0.97)），相机在 +Z 看到的是背面。
-    // 蒙皮网格的渲染变换由骨骼决定（转 mesh 无效），且根骨骼可能
-    // 不止一根（如「操作中心」与「全ての親」并存），必须把全部
-    // 根骨骼都转 180° 才能让模型面向 +Z 相机。
-    const skeleton0 = root.skeleton
-    if (skeleton0 !== null) {
-      for (const bone of skeleton0.bones) {
-        if (bone.getParent() === null) {
-          (bone as unknown as TransformNode).rotation.y = Math.PI
-        }
+    // babylon-mmd 使用 PMX 原始坐标，模型正面朝 -Z，相机在 +Z，
+    // 根骨骼必须转 180°；Babylon 的 Bone 继承 Node 而非
+    // TransformNode，直接赋 rotation 是惰性的、不会触发矩阵更新，
+    // 必须用 setRotation。
+
+    // 高度归一化 + 脚底贴地：必须在骨骼层完成——babylon-mmd 的
+    // CPU 蒙皮渲染只读骨骼世界矩阵，mesh 的位置/缩放对渲染无效
+    // （实测移动网格 8 单位画面不变）。缩放/旋转/平移全部只作用
+    // 于根骨骼（局部变换沿骨骼链逐级相乘，若对每根骨骼 setScale
+    // 会按深度累积导致深层骨骼塌缩成点）；根骨骼可能不止一根
+    // （「操作中心」与「全ての親」并存），必须全部处理。
+    const info = this.measureModel()
+    const skeletonScale = info.height > 0 ? TARGET_MODEL_HEIGHT / info.height : 1
+    this.baseY = -info.minY * skeletonScale
+    this.centerY = info.centerY * skeletonScale + this.baseY
+    const skeleton1 = root.skeleton
+    if (skeleton1 !== null) {
+      const s = new Vector3(skeletonScale, skeletonScale, skeletonScale)
+      for (const bone of skeleton1.bones) {
+        if (bone.getParent() !== null) continue
+        const m = bone.getWorldMatrix()
+        bone.setScale(s)
+        bone.setRotation(new Vector3(0, Math.PI, 0))
+        bone.setPosition(new Vector3(m.m[12] ?? 0, (m.m[13] ?? 0) + this.baseY, m.m[14] ?? 0))
       }
     }
-
-    // 高度归一化 + 脚底贴地
-    const info = this.measureModel()
-    if (info.height > 0) {
-      root.scaling.scaleInPlace(TARGET_MODEL_HEIGHT / info.height)
-      this.baseScale = root.scaling.y
-    }
-    const after = this.measureModel()
-    this.baseY = -after.minY
-    root.position.y = this.baseY
-    this.centerY = after.centerY
 
     // morph 名称索引
     this.morphManager = root.morphTargetManager ?? null
@@ -194,15 +225,15 @@ export class MMDCompanion {
     const skeleton = root.skeleton
     if (skeleton !== null) {
       for (const name of BODY_BONE_CANDIDATES) {
-        const bone = skeleton.bones.find(b => b.name === name) as unknown as TransformNode | undefined
+        const bone = skeleton.bones.find(b => b.name === name)
         if (bone === undefined) continue
-        const base = bone.rotation.clone()
+        const base = bone.getRotation()
         const offset = ARM_POSE_OFFSETS[name]
         if (offset !== undefined) {
           base.x += offset.x ?? 0
           base.z += offset.z ?? 0
         }
-        bone.rotation = base
+        bone.setRotation(base)
         this.bodyBones.set(name, { bone, base })
       }
     }
@@ -214,7 +245,7 @@ export class MMDCompanion {
       this.ground.material = new ShadowOnlyMaterial('companion-shadow', scene)
       this.ground.receiveShadows = true
     }
-    this.ground.position.y = this.baseY + 0.02
+    this.ground.position.y = 0.02
 
     // 表情 VMD（仅 morph 轨道；自解析，兼容未知 morph 名）
     if (expressionUrl !== undefined) {
@@ -223,7 +254,7 @@ export class MMDCompanion {
 
     // 相机满框取景（高度填满画布）
     const halfFov = 30 * Math.PI / 360
-    this.fitDistance = after.height / 2 / Math.tan(halfFov) * 1.02
+    this.fitDistance = (TARGET_MODEL_HEIGHT / 2 / Math.tan(halfFov)) * 1.02
     const camera = scene.activeCamera
     if (camera instanceof UniversalCamera) {
       camera.position.set(0, this.centerY, this.fitDistance)
@@ -394,11 +425,14 @@ export class MMDCompanion {
   }
 
   private measureModel (): { height: number; minY: number; centerY: number } {
-    const mesh = this.mesh
-    if (mesh === null) return { height: 0, minY: 0, centerY: 0 }
-    const info = mesh.getBoundingInfo()
-    const min = info.boundingBox.minimumWorld
-    const max = info.boundingBox.maximumWorld
+    if (this.meshes.length === 0) return { height: 0, minY: 0, centerY: 0 }
+    let min = new Vector3(Infinity, Infinity, Infinity)
+    let max = new Vector3(-Infinity, -Infinity, -Infinity)
+    for (const mesh of this.meshes) {
+      const info = mesh.getBoundingInfo()
+      min = Vector3.Minimize(min, info.boundingBox.minimumWorld)
+      max = Vector3.Maximize(max, info.boundingBox.maximumWorld)
+    }
     return {
       height: max.y - min.y,
       minY: min.y,
@@ -414,15 +448,11 @@ export class MMDCompanion {
   }
 
   private update (_delta: number, now: number): void {
-    const mesh = this.mesh
-    if (mesh === null) return
+    if (this.mesh === null) return
     const time = now / 1_000
 
-    // 站稳：轻微呼吸缩放，不做漂浮摇摆
-    const breathe = Math.sin(time * 1.6) * 0.003
-    mesh.scaling.setAll(this.baseScale * (1 + breathe + (this.speaking ? 0.008 : 0)))
-    mesh.position.y = this.baseY
-
+    // 站稳：不做 mesh 级漂浮摇摆（CPU 蒙皮忽略 mesh 变换），
+    // 呼吸/摆动在骨骼层（updateBodyPose）完成。
     this.updateBodyPose(time, now)
     this.applyGesture(now)
   }
@@ -446,11 +476,11 @@ export class MMDCompanion {
     for (const [name, delta] of Object.entries(deltas)) {
       const target = this.bodyBones.get(name)
       if (target === undefined) continue
-      target.bone.rotation.set(
+      target.bone.setRotation(new Vector3(
         target.base.x + (delta.x ?? 0),
         target.base.y + (delta.y ?? 0),
         target.base.z + (delta.z ?? 0)
-      )
+      ))
     }
 
     // 视线跟随 + 思考表情
@@ -459,12 +489,14 @@ export class MMDCompanion {
     const head = this.bodyBones.get('頭')
     if (head !== undefined) {
       // 模型已整体旋转 180°，视线左右映射取反
-      head.bone.rotation.y += -this.currentLook.x * 0.32
-      head.bone.rotation.x += -this.currentLook.y * 0.16
+      const headRot = head.bone.getRotation()
+      headRot.y += -this.currentLook.x * 0.32
+      headRot.x += -this.currentLook.y * 0.16
       if (this.thinking) {
-        head.bone.rotation.z += 0.16
-        head.bone.rotation.x += 0.05
+        headRot.z += 0.16
+        headRot.x += 0.05
       }
+      head.bone.setRotation(headRot)
     }
 
     // 眨眼
@@ -534,9 +566,11 @@ export class MMDCompanion {
     const addBone = (boneName: string, dx: number, dy: number, dz: number): void => {
       const target = this.bodyBones.get(boneName)
       if (target === undefined) return
-      target.bone.rotation.x += dx
-      target.bone.rotation.y += dy
-      target.bone.rotation.z += dz
+      const rot = target.bone.getRotation()
+      rot.x += dx
+      rot.y += dy
+      rot.z += dz
+      target.bone.setRotation(rot)
     }
 
     switch (name) {
