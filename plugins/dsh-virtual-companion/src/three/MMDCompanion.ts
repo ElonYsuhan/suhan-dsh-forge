@@ -25,6 +25,17 @@ const VMD_FPS = 30
 /** 待机肢体动作涉及的 MMD 标准骨骼名（按日文名匹配，缺失则跳过）。 */
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
+/**
+ * 手背后姿势偏移：MMD 默认站姿双臂外张，这里把上臂后摆、手肘折叠，
+ * 叠加到模型初始旋转上（左右镜像符号）。若某些模型方向相反再调整。
+ */
+const ARM_POSE_OFFSETS: Record<string, { x: number }> = {
+  左腕: { x: -0.95 },
+  右腕: { x: 0.95 },
+  左ひじ: { x: -1.9 },
+  右ひじ: { x: 1.9 }
+}
+
 interface BoneTarget {
   bone: THREE.Bone
   base: THREE.Euler
@@ -107,12 +118,17 @@ export class MMDCompanion {
     this.mouthMorphs = MOUTH_CANDIDATES.filter(name => names.includes(name))
     this.blinkMorph = BLINK_CANDIDATES.find(name => names.includes(name))
 
-    // 收集待机肢体动作所需的骨骼及其基础旋转
+    // 收集待机肢体动作所需的骨骼及其基础旋转；
+    // 手背后姿势偏移直接烘焙进基础旋转并立即应用。
     this.bodyBones.clear()
     for (const name of BODY_BONE_CANDIDATES) {
       const bone = mesh.skeleton.getBoneByName(name)
       if (bone !== undefined) {
-        this.bodyBones.set(name, { bone, base: bone.rotation.clone() })
+        const base = bone.rotation.clone()
+        const offset = ARM_POSE_OFFSETS[name]
+        if (offset !== undefined) base.x += offset.x
+        bone.rotation.copy(base)
+        this.bodyBones.set(name, { bone, base })
       }
     }
 
@@ -154,10 +170,10 @@ export class MMDCompanion {
     this.options.onStatus?.('ready')
   }
 
-  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；0.3x-8x，可拉近至脸部特写。 */
+  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；0.25x-12x，可拉近至局部特写。 */
   zoomBy (deltaY: number): void {
     if (this.fitDistance <= 0) return
-    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.1 : 0.9), 0.3, 8)
+    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.1 : 0.9), 0.25, 12)
     this.camera.position.z = this.fitDistance * this.zoomFactor
   }
 
