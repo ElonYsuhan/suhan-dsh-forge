@@ -8,7 +8,6 @@
  */
 import {
   AbstractEngine,
-  ArcRotateCamera,
   Color4,
   DefaultRenderingPipeline,
   DirectionalLight,
@@ -23,6 +22,7 @@ import {
   ShadowGenerator,
   Texture,
   TransformNode,
+  UniversalCamera,
   Vector3,
   WebGPUEngine
 } from '@babylonjs/core'
@@ -219,13 +219,9 @@ export class MMDCompanion {
     const halfFov = 30 * Math.PI / 360
     this.fitDistance = after.height / 2 / Math.tan(halfFov) * 1.02
     const camera = scene.activeCamera
-    if (camera instanceof ArcRotateCamera) {
-      camera.setTarget(new Vector3(0, this.centerY, 0))
-      camera.alpha = Math.PI
-      camera.beta = 0
-      camera.radius = this.fitDistance
-      // setTarget 会按 alpha/beta 重算位置，最后再显式钉死 +Z
+    if (camera instanceof UniversalCamera) {
       camera.position.set(0, this.centerY, this.fitDistance)
+      camera.setTarget(new Vector3(0, this.centerY, 0))
     }
     this.resize()
     this.start()
@@ -288,7 +284,7 @@ export class MMDCompanion {
     const height = Math.max(1, parent?.clientHeight ?? this.canvas.clientHeight)
     this.engine?.setSize(width, height)
     const camera = this.scene?.activeCamera
-    if (camera instanceof ArcRotateCamera) {
+    if (camera instanceof UniversalCamera) {
       camera.fov = (30 * Math.PI) / 180
     }
   }
@@ -320,10 +316,12 @@ export class MMDCompanion {
     scene.clearColor = new Color4(0, 0, 0, 0)
     this.scene = scene
 
-    // 相机：Babylon 的 ArcRotateCamera alpha=0 位于 -Z（模型背后），
-    // 用 alpha=π 落到 +Z 正面；禁用输入实现固定满框取景
-    const camera = new ArcRotateCamera('companion-cam', Math.PI, 0, 30, new Vector3(0, this.centerY, 0), scene)
-    camera.inputs.clear()
+    // 相机：UniversalCamera 位置与朝向完全显式（无任何隐式重算），
+    // 置于模型正面 +Z、看向模型中心
+    const camera = new UniversalCamera('companion-cam', new Vector3(0, this.centerY, 30), scene)
+    camera.minZ = 0.1
+    camera.maxZ = 200
+    camera.fov = (30 * Math.PI) / 180
     scene.activeCamera = camera
 
     // 灯光：主光 + 面部直射光 + 半球环境
