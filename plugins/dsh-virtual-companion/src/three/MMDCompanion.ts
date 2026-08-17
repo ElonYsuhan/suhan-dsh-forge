@@ -41,14 +41,15 @@ const GESTURE_DURATIONS: Record<GestureName, number> = {
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
 /**
- * 手臂自然垂落偏移（根据 PMX 骨骼局部轴推导：双腕 +z 内收）：
- * 把 MMD 默认 A-pose 外张的双臂收到身侧，自然下垂。
+ * 手臂自然垂落偏移。three MMD 骨骼静止旋转为恒等（局部轴=世界轴）：
+ * 左臂 -z 内收、右臂 +z 内收（镜像）；+x 为前摆（双侧同号）。
+ * 实测 MMD 默认站姿双臂外张约 12°，内收 11.5° 后贴近身体。
  */
 const ARM_POSE_OFFSETS: Record<string, { x?: number; z?: number }> = {
-  左腕: { z: 0.15 },
-  右腕: { z: 0.15 },
-  左ひじ: { z: 0.08 },
-  右ひじ: { z: 0.08 }
+  左腕: { x: 0.06, z: -0.2 },
+  右腕: { x: 0.06, z: 0.2 },
+  左ひじ: { x: 0.1 },
+  右ひじ: { x: 0.1 }
 }
 
 interface BoneTarget {

@@ -322,8 +322,10 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }))
   }, [stageWidth, stageHeight])
 
-  // 设置面板：默认在画布外侧（右侧放不下翻到左侧），支持拖拽移动
-  const [panelOffset, setPanelOffset] = useState({ x: 0, y: 0 })
+  // 设置面板：默认在画布外侧（右侧放不下翻到左侧）；拖拽后变为
+  // 全屏自由浮动（绝对坐标，钳制在视口内）
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [panelPosition, setPanelPosition] = useState<{ x: number; y: number } | null>(null)
   const panelDragRef = useRef<{
     pointerId: number
     startX: number
@@ -335,30 +337,30 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const PANEL_GAP = 12
   const panelOnLeft = position.x + stageWidth + PANEL_WIDTH + PANEL_GAP > window.innerWidth
   const panelDefaultLeft = panelOnLeft ? -PANEL_WIDTH - PANEL_GAP : stageWidth + PANEL_GAP
-  const panelLeft = Math.min(
-    Math.max(panelDefaultLeft + panelOffset.x, 8 - (panelOnLeft ? 0 : stageWidth) - PANEL_GAP),
-    window.innerWidth - PANEL_WIDTH - 8
-  )
-  const panelTop = Math.min(Math.max(panelOffset.y, 8), window.innerHeight - 260)
+  const panelLeft = panelPosition?.x ?? panelDefaultLeft
+  const panelTop = panelPosition?.y ?? 0
 
   const startPanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
+    const rect = panelRef.current?.getBoundingClientRect()
     panelDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: panelOffset.x,
-      originY: panelOffset.y
+      originX: rect?.left ?? panelLeft,
+      originY: rect?.top ?? 0
     }
     event.currentTarget.setPointerCapture(event.pointerId)
-  }, [panelOffset])
+  }, [panelLeft])
 
   const movePanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = panelDragRef.current
     if (state === null || state.pointerId !== event.pointerId) return
-    setPanelOffset({
-      x: state.originX + (event.clientX - state.startX),
-      y: state.originY + (event.clientY - state.startY)
+    const width = panelRef.current?.offsetWidth ?? PANEL_WIDTH
+    const height = panelRef.current?.offsetHeight ?? 260
+    setPanelPosition({
+      x: Math.min(Math.max(state.originX + (event.clientX - state.startX), 8), window.innerWidth - width - 8),
+      y: Math.min(Math.max(state.originY + (event.clientY - state.startY), 8), window.innerHeight - height - 8)
     })
   }, [])
 
@@ -1090,6 +1092,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       </div>
       {panelOpen && (
         <div
+          ref={panelRef}
           className={css.panel}
           style={{ left: panelLeft, top: panelTop, background: activeBackground.css, color: activeBackground.textColor }}
           role='dialog'
@@ -1103,7 +1106,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
             onPointerCancel={endPanelDrag}
           >
             <span>虚拟人物设置</span>
-            <button className={css.closeButton} type='button' onClick={closeSettings} aria-label='关闭设置'>×</button>
+            <button
+              className={css.closeButton}
+              type='button'
+              onClick={closeSettings}
+              onPointerDown={(event) => event.stopPropagation()}
+              aria-label='关闭设置'
+            >×</button>
           </div>
           <label className={css.field}>
             <span>人物角色：{activeRole.label}</span>
