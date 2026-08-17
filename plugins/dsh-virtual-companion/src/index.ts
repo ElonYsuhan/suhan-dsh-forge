@@ -82,9 +82,10 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
   let history: Message[] = []
 
   // 连接预热：启动时静默合成一次，把 Edge 握手（约 0.8s）提前付掉，
-  // 用户第一句话的首音延迟与后续一致。
+  // 用户第一句话的首音延迟与后续一致。文本必须是可合成内容
+  // （纯省略号会被 Edge 服务拒绝导致预热失败）。
   if (options.speechSynth === undefined) {
-    void speechSynth.synthesize('…', DEFAULT_VOICE_STYLE_ID).catch(() => {
+    void speechSynth.synthesize('你好', DEFAULT_VOICE_STYLE_ID).catch(() => {
       // 预热失败不影响运行，首次合成时按需重建连接
     })
   }
