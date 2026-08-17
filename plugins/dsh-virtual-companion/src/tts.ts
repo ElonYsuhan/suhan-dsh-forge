@@ -147,7 +147,10 @@ export class EdgeTtsSpeechSynth implements SpeechSynth {
       let audioStream: Readable | null = null
       try {
         return await withTimeout((async () => {
-          await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
+          // 第三个参数必须传空对象：msedge-tts 在同参数二次调用时
+          // 若省略会因 _metadataOptions 为 undefined 崩溃；元数据未变
+          // 且连接仍打开时 setMetadata 会跳过重建，复用连接
+          await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3, {})
           const stream = tts.toStream(text, {
             rate: style.edgeRate,
             pitch: style.edgePitch
@@ -204,7 +207,7 @@ export class EdgeTtsSpeechSynth implements SpeechSynth {
 
     try {
       await withTimeout((async () => {
-        await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
+        await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3, {})
         const result = tts.toStream(text, {
           rate: style.edgeRate,
           pitch: style.edgePitch
