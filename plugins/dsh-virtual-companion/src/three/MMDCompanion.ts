@@ -177,17 +177,18 @@ export class MMDCompanion {
       }
     }
 
-    // 相机适配：完整取景 + 轻微俯视。
-    // 放大通过组件放大画布 DOM 实现（相机保持取景距离不变），
-    // 模型随画布同步变大。
+    // 相机适配：模型按画布满框取景——高度恰好填满画布（脚贴底、
+    // 头贴顶），宽度超过画布时按宽度取景。相机与模型中心等高。
+    // 放大通过组件放大画布 DOM 实现（相机保持取景距离不变）。
     const box = new THREE.Box3().setFromObject(mesh)
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
-    const radius = Math.max(size.x, size.y, size.z) * 0.72
-    const distance = radius / Math.tan((this.camera.fov * Math.PI) / 360)
-    this.fitDistance = distance * 1.25
-    this.camera.position.set(0, center.y + size.y * 0.28, this.fitDistance)
-    this.camera.lookAt(0, center.y + size.y * 0.18, 0)
+    const halfFov = (this.camera.fov * Math.PI) / 360
+    const heightFit = size.y / 2 / Math.tan(halfFov)
+    const widthFit = size.x / 2 / (Math.tan(halfFov) * (this.camera.aspect || 0.6))
+    this.fitDistance = Math.max(heightFit, widthFit) * 1.02
+    this.camera.position.set(0, center.y, this.fitDistance)
+    this.camera.lookAt(0, center.y, 0)
     this.resize()
     this.options.onStatus?.('ready')
   }
@@ -265,11 +266,11 @@ export class MMDCompanion {
     if (mesh === null) return
     const time = now / 1_000
 
-    // 待机呼吸：轻微缩放与上下浮动
-    const breathe = Math.sin(time * 1.6) * 0.004
-    mesh.scale.setScalar(1 + breathe + (this.speaking ? 0.01 : 0))
-    mesh.position.y = Math.sin(time * 2) * 0.08
-    mesh.rotation.y = Math.sin(time * 0.6) * 0.02
+    // 站稳：不做整体漂浮/摇摆，只保留轻微呼吸缩放与骨骼级生机
+    const breathe = Math.sin(time * 1.6) * 0.003
+    mesh.scale.setScalar(1 + breathe + (this.speaking ? 0.008 : 0))
+    mesh.position.y = 0
+    mesh.rotation.y = 0
     this.updateBodyPose(time)
 
     // 视线跟随：头部朝目标平滑微转
@@ -385,22 +386,22 @@ export class MMDCompanion {
     }
   }
 
-  /** 程序化肢体待机动作：呼吸、重心摆动、手臂轻摆与头部轻动。 */
+  /** 程序化肢体待机动作：极小幅度的呼吸与头部生机，身体站稳不晃。 */
   private updateBodyPose (time: number): void {
     if (this.bodyBones.size === 0) return
-    const intensity = this.speaking ? 1.6 : 1
-    const breathe = Math.sin(time * 1.6) * 0.02 * intensity
-    const sway = Math.sin(time * 0.7) * 0.03 * intensity
-    const headYaw = Math.sin(time * 0.4) * 0.05 * intensity
+    const intensity = this.speaking ? 1.5 : 1
+    const breathe = Math.sin(time * 1.6) * 0.012 * intensity
+    const sway = Math.sin(time * 0.7) * 0.008 * intensity
+    const headYaw = Math.sin(time * 0.4) * 0.03 * intensity
     const deltas: Record<string, { x?: number; y?: number; z?: number }> = {
       上半身: { x: breathe },
       首: { x: breathe * 0.5 },
       頭: { x: -breathe * 0.5, y: headYaw, z: sway * 0.4 },
       腰: { z: sway },
-      左腕: { z: sway * 1.2 },
-      右腕: { z: -sway * 1.2 },
-      左ひじ: { z: -breathe * 0.6 },
-      右ひじ: { z: -breathe * 0.6 }
+      左腕: { z: sway },
+      右腕: { z: -sway },
+      左ひじ: { z: -breathe * 0.4 },
+      右ひじ: { z: -breathe * 0.4 }
     }
     for (const [name, delta] of Object.entries(deltas)) {
       const target = this.bodyBones.get(name)

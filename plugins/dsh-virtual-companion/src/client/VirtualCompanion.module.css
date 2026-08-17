@@ -23,7 +23,7 @@
   cursor: grabbing;
 }
 
-/* 3D 人物画布：铺满舞台，说话时浮动脉动 */
+/* 3D 人物画布：铺满舞台，画面稳定不浮动（人物站稳） */
 .canvas {
   position: absolute;
   inset: 0;
@@ -31,15 +31,10 @@
   height: 100%;
   display: block;
   pointer-events: none;
-  animation: companion-float 4s ease-in-out infinite;
 }
 
 .stage.hovered .canvas {
-  transform: scale(1.04);
-}
-
-.stage.speaking .canvas {
-  animation: companion-float 1.6s ease-in-out infinite, companion-pulse .5s ease-in-out infinite;
+  transform: scale(1.02);
 }
 
 /* 立绘占位：模型加载完成后淡出 */
