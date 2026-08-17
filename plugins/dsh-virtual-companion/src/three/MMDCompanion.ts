@@ -145,6 +145,11 @@ export class MMDCompanion {
     this.mesh = root
     this.shadowGen?.addShadowCaster(root, true)
 
+    // babylon-mmd 坐标系下模型面朝 -Z，相机在 +Z 看到的是背面；
+    // 整体旋转 180° 面向相机（骨骼局部空间随根节点一起转，
+    // 姿态/手势方向保持相对模型不变）
+    root.rotation.y = Math.PI
+
     // 高度归一化 + 脚底贴地
     const info = this.measureModel()
     if (info.height > 0) {
@@ -436,7 +441,8 @@ export class MMDCompanion {
     this.currentLook.y += (this.lookTarget.y - this.currentLook.y) * 0.08
     const head = this.bodyBones.get('頭')
     if (head !== undefined) {
-      head.bone.rotation.y += this.currentLook.x * 0.32
+      // 模型已整体旋转 180°，视线左右映射取反
+      head.bone.rotation.y += -this.currentLook.x * 0.32
       head.bone.rotation.x += -this.currentLook.y * 0.16
       if (this.thinking) {
         head.bone.rotation.z += 0.16
