@@ -43,6 +43,26 @@ function gestureFor (text: string): GestureName | undefined {
   return undefined
 }
 
+/** LLM 情绪标签 → 手势（复杂语义动作由模型标注，本地映射）。 */
+const EMOTION_GESTURES: Record<string, GestureName> = {
+  微笑: 'smile',
+  开心: 'smile',
+  害羞: 'smile',
+  惊讶: 'shake',
+  难过: 'bow',
+  思考: 'tilt',
+  认真: 'nod'
+}
+
+/** 拆解句子开头的【情绪】标签；返回情绪手势与清洗后的朗读文本。 */
+function extractEmotion (text: string): { emotion: GestureName | undefined; clean: string } {
+  const match = /^【([^】]{1,6})】/.exec(text)
+  const label = match?.[1]
+  if (match === null || label === undefined) return { emotion: undefined, clean: text }
+  const emotion = EMOTION_GESTURES[label]
+  return { emotion, clean: text.slice(match[0].length).trimStart() }
+}
+
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
 
 interface SpeechRecognitionAlternative {
@@ -518,20 +538,25 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     if (typeof window === 'undefined') return
     try {
       if (!interactingRef.current) return
-      // 回复语义触发手势（本地规则）
-      triggerGesture(text)
+      // 情绪标签优先（LLM 语义动作），本地规则兜底
+      const { emotion, clean } = extractEmotion(text)
+      if (emotion !== undefined) {
+        mmdRef.current?.playGesture(emotion)
+      } else {
+        triggerGesture(clean)
+      }
       stopCurrentAudio()
       const audio = audioRef.current
       if (audio === null) throw new Error('音频播放器未就绪')
-      const blob = ttsCacheRef.current.get(text) ?? await synthesizeSentence(text)
-      ttsCacheRef.current.set(text, blob)
+      const blob = ttsCacheRef.current.get(clean) ?? await synthesizeSentence(clean)
+      ttsCacheRef.current.set(clean, blob)
       if (!interactingRef.current) return
       stopCurrentAudio()
       const url = URL.createObjectURL(blob)
       audioUrlRef.current = url
       audio.src = url
       // 记录最近朗读的句子（最多 3 句），供后台聆听做回声过滤
-      const spokenNorm = normalizeForMatch(text)
+      const spokenNorm = normalizeForMatch(clean)
       if (spokenNorm.length >= 2) {
         lastSpokenTextsRef.current = [...lastSpokenTextsRef.current, spokenNorm].slice(-3)
       }
@@ -932,6 +957,14 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [position, unlockAudio])
 
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+    // 视线跟随：指针在画布内的位置 → 头部朝向（无论是否拖拽）
+    const stage = stageRef.current
+    if (stage !== null) {
+      const rect = stage.getBoundingClientRect()
+      const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
+      const ny = ((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1
+      mmdRef.current?.setLookTarget(nx, ny)
+    }
     const state = dragStateRef.current
     if (state === null || state.pointerId !== event.pointerId) return
     const deltaX = event.clientX - state.startX
@@ -982,7 +1015,10 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => setHovered(false)}
+        onPointerLeave={() => {
+          setHovered(false)
+          mmdRef.current?.setLookTarget(0, 0)
+        }}
       >
         <canvas ref={canvasRef} className={css.canvas} aria-label='虚拟伙伴 3D 人物' />
         <img

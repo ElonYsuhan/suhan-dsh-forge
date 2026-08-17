@@ -73,6 +73,8 @@ export class MMDCompanion {
   private speechLevel = 0
   private fitDistance = 20
   private gesture: { name: GestureName; startAt: number } | null = null
+  private lookTarget = { x: 0, y: 0 }
+  private currentLook = { x: 0, y: 0 }
   private disposed = false
   private rafId = 0
   private lastTime = performance.now()
@@ -211,6 +213,14 @@ export class MMDCompanion {
     this.speechLevel = Math.min(1, Math.max(0, level))
   }
 
+  /** 视线跟随目标（-1..1 归一化，组件把指针位置映射进来）。 */
+  setLookTarget (x: number, y: number): void {
+    this.lookTarget = {
+      x: Math.min(1, Math.max(-1, x)),
+      y: Math.min(1, Math.max(-1, y))
+    }
+  }
+
   /** 启动渲染循环。 */
   start (): void {
     this.rafId = requestAnimationFrame(this.tick)
@@ -261,6 +271,15 @@ export class MMDCompanion {
     mesh.position.y = Math.sin(time * 2) * 0.08
     mesh.rotation.y = Math.sin(time * 0.6) * 0.02
     this.updateBodyPose(time)
+
+    // 视线跟随：头部朝目标平滑微转
+    this.currentLook.x += (this.lookTarget.x - this.currentLook.x) * 0.08
+    this.currentLook.y += (this.lookTarget.y - this.currentLook.y) * 0.08
+    const head = this.bodyBones.get('頭')
+    if (head !== undefined) {
+      head.bone.rotation.y += this.currentLook.x * 0.32
+      head.bone.rotation.x += -this.currentLook.y * 0.16
+    }
 
     // 眨眼：每 2.5-5 秒一次，约 90ms 快闭快开
     if (now >= this.nextBlinkAt) {

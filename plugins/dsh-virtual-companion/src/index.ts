@@ -14,7 +14,7 @@ import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText, streamReplyEvents } from './shared/chat.ts'
 import { getRoleSystemPrompt, normalizeBackgroundText } from './shared/settings.ts'
 import { CHAT_HISTORY_LIMIT, OPENING_REQUEST } from './shared/types.ts'
-import { normalizeVoiceStyle } from './shared/voice.ts'
+import { DEFAULT_VOICE_STYLE_ID, normalizeVoiceStyle } from './shared/voice.ts'
 import { EdgeTtsSpeechSynth, TtsError, type SpeechSynth } from './tts.ts'
 import { HttpError, readJsonBody, safeDiagnostic, sendJson, sendSseEvent } from './http.ts'
 
@@ -80,6 +80,14 @@ function currentModelSelection (ctx: Context): { provider: string; model: string
 export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}): void {
   const speechSynth = options.speechSynth ?? new EdgeTtsSpeechSynth()
   let history: Message[] = []
+
+  // 连接预热：启动时静默合成一次，把 Edge 握手（约 0.8s）提前付掉，
+  // 用户第一句话的首音延迟与后续一致。
+  if (options.speechSynth === undefined) {
+    void speechSynth.synthesize('…', DEFAULT_VOICE_STYLE_ID).catch(() => {
+      // 预热失败不影响运行，首次合成时按需重建连接
+    })
+  }
 
   ctx.effect(() => async () => {
     history = []

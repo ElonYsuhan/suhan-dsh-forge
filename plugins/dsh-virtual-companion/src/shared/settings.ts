@@ -93,7 +93,8 @@ export function getRoleSystemPrompt (value: unknown, backgroundText = ''): strin
   const parts = [
     '你是运行在 DeepSeek Harness Web 中的 3D 虚拟伙伴。',
     preset.systemPrompt,
-    '回答控制在 2-4 句以内，适合语音朗读。'
+    '回答控制在 2-4 句以内，适合语音朗读。',
+    '表情约定：当你需要表达情绪时，在该句开头加一个方括号情绪标签（微笑/开心/惊讶/难过/思考/害羞/认真），例如：【微笑】你好呀。没有明显情绪时不要加标签。'
   ]
   const background = normalizeBackgroundText(backgroundText)
   if (background.length > 0) {
