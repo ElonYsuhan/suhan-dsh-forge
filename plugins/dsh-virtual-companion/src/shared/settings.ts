@@ -246,6 +246,8 @@ export interface CompanionSettings {
   roleId: RoleId
   voiceId: VoiceStyleId
   skinId: SkinId
+  /** 本地模型目录里的模型 id（对应 /virtual-companion/models 列表）。 */
+  modelId: string
   /** User-defined background/scene info sent to the LLM as context. */
   backgroundText: string
   /** Kept for backwards-compatible storage; the UI no longer offers color selection. */
@@ -254,10 +256,13 @@ export interface CompanionSettings {
   realtime: boolean
 }
 
+export const DEFAULT_MODEL_ID = 'ganyu'
+
 export const DEFAULT_SETTINGS: CompanionSettings = {
   roleId: DEFAULT_ROLE_ID,
   voiceId: DEFAULT_VOICE_STYLE_ID,
   skinId: DEFAULT_SKIN_ID,
+  modelId: DEFAULT_MODEL_ID,
   backgroundText: '',
   backgroundId: DEFAULT_CHAT_BACKGROUND_ID,
   realtime: true
@@ -270,6 +275,9 @@ export function normalizeSettings (value: unknown): CompanionSettings {
     roleId: normalizeRoleId(source.roleId),
     voiceId: normalizeVoiceStyle(source.voiceId),
     skinId: normalizeSkinId(source.skinId),
+    modelId: typeof source.modelId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(source.modelId)
+      ? source.modelId
+      : DEFAULT_MODEL_ID,
     backgroundText: normalizeBackgroundText(source.backgroundText),
     backgroundId: normalizeChatBackgroundId(source.backgroundId),
     realtime: typeof source.realtime === 'boolean' ? source.realtime : DEFAULT_SETTINGS.realtime

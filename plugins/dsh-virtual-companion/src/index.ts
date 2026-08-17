@@ -6,7 +6,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
@@ -40,6 +40,15 @@ function modelRoot (): string {
   const override = process.env.DSH_VIRTUAL_COMPANION_MODELS?.trim()
   if (override !== undefined && override !== '') return resolve(override)
   return resolve(resolveDshHome(undefined, process.env), 'storages', 'dsh-virtual-companion', 'models')
+}
+
+/** 模型展示名（目录 id → 中文名）。 */
+const MODEL_LABELS: Record<string, string> = {
+  ganyu: '甘雨',
+  changye: '王昭君·长夜焕生',
+  alice: '爱丽丝',
+  qianxiao: '千咲',
+  jialuo: '伽罗·最初的交响'
 }
 
 /** 模型静态资产内容类型（按扩展名）。 */
@@ -107,6 +116,29 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             res.end(image)
           } catch {
             sendJson(res, 404, { error: 'portrait asset missing' })
+          }
+          return
+        }
+
+        // 可用人物模型列表（含 model.pmx 的子目录）。
+        if (parts[0] === 'virtual-companion' && parts[1] === 'models' && parts.length === 2 && method === 'GET') {
+          try {
+            const root = modelRoot()
+            const entries = await readdir(root, { withFileTypes: true })
+            const models: Array<{ id: string; label: string }> = []
+            for (const entry of entries) {
+              if (!entry.isDirectory() || entry.name === 'motions') continue
+              try {
+                const info = await stat(resolve(root, entry.name, 'model.pmx'))
+                if (info.isFile()) models.push({ id: entry.name, label: MODEL_LABELS[entry.name] ?? entry.name })
+              } catch {
+                // 没有 model.pmx 的目录不是模型
+              }
+            }
+            models.sort((left, right) => left.id.localeCompare(right.id))
+            sendJson(res, 200, { models })
+          } catch {
+            sendJson(res, 200, { models: [] })
           }
           return
         }

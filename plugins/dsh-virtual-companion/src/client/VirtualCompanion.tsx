@@ -176,7 +176,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
 
-  // MMD 人物模型场景：加载本地 PMX 模型（甘雨）与表情 VMD；
+  // MMD 人物模型场景：挂载时创建，模型切换时重新加载；
   // 加载期间立绘占位，失败时保持立绘不受影响。
   useEffect(() => {
     const canvas = canvasRef.current
@@ -189,14 +189,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       }
     })
     mmdRef.current = mmd
-    void mmd.load(
-      `/virtual-companion/model/${encodeURIComponent('ganyu')}/${encodeURIComponent('甘雨.pmx')}`,
-      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
-    ).catch(() => {
-      // 模型缺失/损坏时静默退回立绘展示
-    }).finally(() => {
-      mmd.start()
-    })
+    mmd.start()
     return () => {
       disposed = true
       mmdRef.current = null
@@ -204,10 +197,47 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
   }, [])
 
+  useEffect(() => {
+    const mmd = mmdRef.current
+    if (mmd === null) return
+    setModelReady(false)
+    void mmd.loadModel(
+      `/virtual-companion/model/${encodeURIComponent(settings.modelId)}/model.pmx`,
+      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
+    ).catch(() => {
+      // 模型缺失/损坏时静默退回立绘展示
+    })
+  }, [settings.modelId])
+
   // 说话状态同步给模型（口型）
   useEffect(() => {
     mmdRef.current?.setSpeaking(speaking)
   }, [speaking])
+
+  // 滚轮缩放人物（原生监听，passive:false 才能 preventDefault）
+  useEffect(() => {
+    const stage = stageRef.current
+    if (stage === null) return
+    const onWheel = (event: WheelEvent): void => {
+      event.preventDefault()
+      mmdRef.current?.zoomBy(event.deltaY)
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', onWheel)
+  }, [])
+
+  // 可用模型列表（设置面板选择器）
+  const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([])
+  useEffect(() => {
+    void fetch('/virtual-companion/models')
+      .then(async response => response.json())
+      .then((data: { models?: Array<{ id: string; label: string }> }) => {
+        setModelOptions(data.models ?? [])
+      })
+      .catch(() => {
+        // 列表获取失败时选择器退回显示当前模型 id
+      })
+  }, [])
 
   // 唯一的 Audio 元素：浏览器要求媒体播放由用户手势解锁，元素在挂载时
   // 创建、在首次指针交互时播放一次静音片段完成解锁，之后复用播放所有句子。
@@ -857,6 +887,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
             >
               {ROLE_PRESETS.map(role => (
                 <option key={role.id} value={role.id}>{role.label} - {role.description}</option>
+              ))}
+            </select>
+          </label>
+          <label className={css.field}>
+            <span>人物模型</span>
+            <select
+              value={settings.modelId}
+              onChange={(event) => setSettings({ ...settings, modelId: event.target.value })}
+            >
+              {(modelOptions.length > 0 ? modelOptions : [{ id: settings.modelId, label: settings.modelId }]).map(model => (
+                <option key={model.id} value={model.id}>{model.label}</option>
               ))}
             </select>
           </label>

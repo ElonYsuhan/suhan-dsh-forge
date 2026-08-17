@@ -4,6 +4,7 @@ import {
   CHAT_BACKGROUNDS,
   CHAT_BACKGROUND_IDS,
   DEFAULT_CHAT_BACKGROUND_ID,
+  DEFAULT_MODEL_ID,
   DEFAULT_ROLE_ID,
   DEFAULT_SETTINGS,
   DEFAULT_SKIN_ID,
@@ -91,6 +92,7 @@ describe('companion settings', () => {
       roleId: 'cool',
       voiceId: 'sweet',
       skinId: 'fairyBlue',
+      modelId: DEFAULT_MODEL_ID,
       backgroundText: '森林',
       backgroundId: 'night',
       realtime: false

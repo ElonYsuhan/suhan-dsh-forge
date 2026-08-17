@@ -45,6 +45,8 @@ export class MMDCompanion {
   private vmdMorphs: VmdMorphTrack[] = []
   private bodyBones = new Map<string, BoneTarget>()
   private speaking = false
+  private fitDistance = 20
+  private zoomFactor = 1
   private disposed = false
   private rafId = 0
   private lastTime = performance.now()
@@ -60,22 +62,38 @@ export class MMDCompanion {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.outputEncoding = THREE.sRGBEncoding
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.1
 
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200)
 
-    // 柔和三灯布光；总强度控制在 1 附近，避免 MMD 卡通材质过曝发白
-    const ambient = new THREE.AmbientLight(0xffffff, 0.38)
-    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.32)
-    const key = new THREE.DirectionalLight(0xffffff, 0.78)
+    // 低强度三灯布光 + ACES 色调映射，避免 MMD 卡通材质过曝发白
+    const ambient = new THREE.AmbientLight(0xffffff, 0.32)
+    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.16)
+    const key = new THREE.DirectionalLight(0xffffff, 0.55)
     key.position.set(3, 6, 5)
-    const rim = new THREE.DirectionalLight(0xffe9c8, 0.4)
+    const rim = new THREE.DirectionalLight(0xffe9c8, 0.22)
     rim.position.set(-4, 3, -4)
     this.scene.add(ambient, hemisphere, key, rim)
   }
 
-  /** 加载 PMX 模型与可选表情 VMD。 */
-  async load (modelUrl: string, expressionUrl?: string): Promise<void> {
+  /** 释放当前模型（切换模型前调用）。 */
+  private clearModel (): void {
+    this.vmdMorphs = []
+    this.bodyBones.clear()
+    this.mouthMorphs = []
+    this.blinkMorph = undefined
+    if (this.mesh !== null) {
+      this.scene.remove(this.mesh)
+      this.disposeObject(this.mesh)
+      this.mesh = null
+    }
+  }
+
+  /** 加载 PMX 模型与可选表情 VMD；重复调用即切换模型。 */
+  async loadModel (modelUrl: string, expressionUrl?: string): Promise<void> {
+    this.clearModel()
     const loader = new MMDLoader()
     this.options.onStatus?.('loading')
     const mesh = await loader.loadAsync(modelUrl)
@@ -121,16 +139,25 @@ export class MMDCompanion {
       }
     }
 
-    // 相机适配：完整取景 + 轻微俯视
+    // 相机适配：完整取景 + 轻微俯视；记录基准距离供滚轮缩放
     const box = new THREE.Box3().setFromObject(mesh)
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
     const radius = Math.max(size.x, size.y, size.z) * 0.72
     const distance = radius / Math.tan((this.camera.fov * Math.PI) / 360)
-    this.camera.position.set(0, center.y + size.y * 0.28, distance * 1.25)
+    this.fitDistance = distance * 1.25
+    this.camera.position.set(0, center.y + size.y * 0.28, this.fitDistance)
     this.camera.lookAt(0, center.y + size.y * 0.18, 0)
+    this.zoomFactor = 1
     this.resize()
     this.options.onStatus?.('ready')
+  }
+
+  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；钳制在 0.55x-2.2x。 */
+  zoomBy (deltaY: number): void {
+    if (this.fitDistance <= 0) return
+    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.08 : 0.92), 0.55, 2.2)
+    this.camera.position.z = this.fitDistance * this.zoomFactor
   }
 
   /** 说话状态：驱动口型 morph 循环。 */
