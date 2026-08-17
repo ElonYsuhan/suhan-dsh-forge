@@ -220,9 +220,12 @@ export class MMDCompanion {
     this.fitDistance = after.height / 2 / Math.tan(halfFov) * 1.02
     const camera = scene.activeCamera
     if (camera instanceof ArcRotateCamera) {
-      camera.position.set(0, this.centerY, this.fitDistance)
       camera.setTarget(new Vector3(0, this.centerY, 0))
+      camera.alpha = Math.PI
+      camera.beta = 0
       camera.radius = this.fitDistance
+      // setTarget 会按 alpha/beta 重算位置，最后再显式钉死 +Z
+      camera.position.set(0, this.centerY, this.fitDistance)
     }
     this.resize()
     this.start()
@@ -317,8 +320,9 @@ export class MMDCompanion {
     scene.clearColor = new Color4(0, 0, 0, 0)
     this.scene = scene
 
-    // 相机：位于模型正前方（+Z），禁用输入实现固定满框取景
-    const camera = new ArcRotateCamera('companion-cam', 0, 0, 30, new Vector3(0, this.centerY, 0), scene)
+    // 相机：Babylon 的 ArcRotateCamera alpha=0 位于 -Z（模型背后），
+    // 用 alpha=π 落到 +Z 正面；禁用输入实现固定满框取景
+    const camera = new ArcRotateCamera('companion-cam', Math.PI, 0, 30, new Vector3(0, this.centerY, 0), scene)
     camera.inputs.clear()
     scene.activeCamera = camera
 
