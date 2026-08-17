@@ -80,6 +80,7 @@ export class MMDCompanion {
   private engine: AbstractEngine | null = null
   private scene: Scene | null = null
   private mesh: Mesh | null = null
+  private meshes: Mesh[] = []
   private morphManager: MorphTargetManager | null = null
   private bodyBones = new Map<string, BoneTarget>()
   private mouthMorphs: string[] = []
@@ -137,18 +138,25 @@ export class MMDCompanion {
         }
       }
     })
-    const root = result.meshes.find(m => m.getTotalVertices() > 0) as Mesh | undefined
-    if (root === undefined) {
+    const meshes = result.meshes.filter(m => m instanceof Mesh)
+    const root = meshes.find(m => m.getTotalVertices() > 0)
+    if (root === undefined || meshes.length === 0) {
       this.options.onStatus?.('error')
       throw new Error('PMX 加载失败：未找到网格')
     }
+    this.meshes = meshes
     this.mesh = root
-    this.shadowGen?.addShadowCaster(root, true)
+    for (const mesh of meshes) {
+      this.shadowGen?.addShadowCaster(mesh, true)
+    }
 
-    // babylon-mmd 坐标系下模型面朝 -Z，相机在 +Z 看到的是背面；
-    // 整体旋转 180° 面向相机（骨骼局部空间随根节点一起转，
-    // 姿态/手势方向保持相对模型不变）
-    root.rotation.y = Math.PI
+    // babylon-mmd 坐标系下模型面朝 -Z，相机在 +Z 看到的是背面。
+    // 蒙皮网格的渲染变换由骨骼决定（转 mesh 无效），因此旋转
+    // 骨骼根（bones[0]，通常为 全ての親）180° 使模型面向相机。
+    const topBone = root.skeleton?.bones[0] as unknown as TransformNode | undefined
+    if (topBone !== undefined) {
+      topBone.rotation.y = Math.PI
+    }
 
     // 高度归一化 + 脚底贴地
     const info = this.measureModel()
@@ -370,10 +378,11 @@ export class MMDCompanion {
     this.mouthMorphs = []
     this.blinkMorph = undefined
     this.smileMorph = undefined
-    if (this.mesh !== null) {
-      this.mesh.dispose(false, true)
-      this.mesh = null
+    for (const mesh of this.meshes) {
+      mesh.dispose(false, true)
     }
+    this.meshes = []
+    this.mesh = null
   }
 
   private measureModel (): { height: number; minY: number; centerY: number } {
