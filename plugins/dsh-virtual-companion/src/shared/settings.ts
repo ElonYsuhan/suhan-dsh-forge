@@ -251,6 +251,8 @@ export interface CompanionSettings {
   modelId: string
   /** 模型亮度（色调映射曝光，0.4-1.6）。 */
   brightness: number
+  /** 面部直射光强度（0-2）。 */
+  faceLight: number
   /** User-defined background/scene info sent to the LLM as context. */
   backgroundText: string
   /** Kept for backwards-compatible storage; the UI no longer offers color selection. */
@@ -263,6 +265,9 @@ export const DEFAULT_MODEL_ID = 'ganyu'
 export const DEFAULT_BRIGHTNESS = 0.85
 export const BRIGHTNESS_MIN = 0.4
 export const BRIGHTNESS_MAX = 1.6
+export const DEFAULT_FACE_LIGHT = 0.85
+export const FACE_LIGHT_MIN = 0
+export const FACE_LIGHT_MAX = 2
 
 export const DEFAULT_SETTINGS: CompanionSettings = {
   roleId: DEFAULT_ROLE_ID,
@@ -270,6 +275,7 @@ export const DEFAULT_SETTINGS: CompanionSettings = {
   skinId: DEFAULT_SKIN_ID,
   modelId: DEFAULT_MODEL_ID,
   brightness: DEFAULT_BRIGHTNESS,
+  faceLight: DEFAULT_FACE_LIGHT,
   backgroundText: '',
   backgroundId: DEFAULT_CHAT_BACKGROUND_ID,
   realtime: true
@@ -288,6 +294,9 @@ export function normalizeSettings (value: unknown): CompanionSettings {
     brightness: typeof source.brightness === 'number' && Number.isFinite(source.brightness)
       ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, source.brightness))
       : DEFAULT_BRIGHTNESS,
+    faceLight: typeof source.faceLight === 'number' && Number.isFinite(source.faceLight)
+      ? Math.min(FACE_LIGHT_MAX, Math.max(FACE_LIGHT_MIN, source.faceLight))
+      : DEFAULT_FACE_LIGHT,
     backgroundText: normalizeBackgroundText(source.backgroundText),
     backgroundId: normalizeChatBackgroundId(source.backgroundId),
     realtime: typeof source.realtime === 'boolean' ? source.realtime : DEFAULT_SETTINGS.realtime

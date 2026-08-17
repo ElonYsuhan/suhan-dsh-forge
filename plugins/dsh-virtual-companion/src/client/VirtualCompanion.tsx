@@ -12,6 +12,8 @@ import {
   BRIGHTNESS_MAX,
   BRIGHTNESS_MIN,
   DEFAULT_SETTINGS,
+  FACE_LIGHT_MAX,
+  FACE_LIGHT_MIN,
   getChatBackground,
   getRolePreset,
   normalizeSettings,
@@ -260,6 +262,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   useEffect(() => {
     mmdRef.current?.setBrightness(settings.brightness)
   }, [settings.brightness])
+
+  // 面部光强度同步给模型
+  useEffect(() => {
+    mmdRef.current?.setFaceLight(settings.faceLight)
+  }, [settings.faceLight])
 
   // 全局视线跟随：监听整个窗口的指针移动，按「指针相对人物中心的
   // 方向」计算头部朝向，指针越远偏转越大（在模型侧饱和）
@@ -1137,6 +1144,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               step={0.05}
               value={settings.brightness}
               onChange={(event) => setSettings({ ...settings, brightness: Number(event.target.value) })}
+            />
+          </label>
+          <label className={css.field}>
+            <span>面部光：{settings.faceLight.toFixed(2)}</span>
+            <input
+              type='range'
+              min={FACE_LIGHT_MIN}
+              max={FACE_LIGHT_MAX}
+              step={0.05}
+              value={settings.faceLight}
+              onChange={(event) => setSettings({ ...settings, faceLight: Number(event.target.value) })}
             />
           </label>
           <label className={css.field}>

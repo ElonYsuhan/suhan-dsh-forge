@@ -23,6 +23,8 @@ const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
 const SMILE_CANDIDATES = ['笑い', 'にこり', '微笑', '笑顔']
 const VMD_FPS = 30
+/** 所有模型统一归一化到该世界高度（甘雨原生高度 19.9）。 */
+const TARGET_MODEL_HEIGHT = 20
 
 export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
 
@@ -75,6 +77,9 @@ export class MMDCompanion {
   private gesture: { name: GestureName; startAt: number } | null = null
   private lookTarget = { x: 0, y: 0 }
   private currentLook = { x: 0, y: 0 }
+  private baseScale = 1
+  private baseY = 0
+  private faceLight: THREE.DirectionalLight
   private disposed = false
   private rafId = 0
   private lastTime = performance.now()
@@ -103,7 +108,10 @@ export class MMDCompanion {
     key.position.set(3, 6, 5)
     const rim = new THREE.DirectionalLight(0xffe9c8, 0.12)
     rim.position.set(-4, 3, -4)
-    this.scene.add(ambient, key, rim)
+    // 面部直射光：从正面补光照亮面部，强度可由设置面板动态调整
+    this.faceLight = new THREE.DirectionalLight(0xffffff, 0.85)
+    this.faceLight.position.set(0, 2, 6)
+    this.scene.add(ambient, key, rim, this.faceLight)
   }
 
   /** 释放当前模型（切换模型前调用）。 */
@@ -128,6 +136,19 @@ export class MMDCompanion {
     if (this.disposed) return
     this.scene.add(mesh)
     this.mesh = mesh
+
+    // 高度归一化：所有模型缩放到统一世界高度，脚底贴地（y=0），
+    // 换模型时取景与站姿保持一致。
+    const rawBox = new THREE.Box3().setFromObject(mesh)
+    const rawSize = rawBox.getSize(new THREE.Vector3())
+    if (rawSize.y > 0) {
+      mesh.scale.multiplyScalar(TARGET_MODEL_HEIGHT / rawSize.y)
+    }
+    this.baseScale = mesh.scale.y
+    mesh.updateMatrixWorld(true)
+    const groundedBox = new THREE.Box3().setFromObject(mesh)
+    this.baseY = -groundedBox.min.y
+    mesh.position.y = this.baseY
 
     const dictionary = mesh.morphTargetDictionary as Record<string, number> | undefined
     const names = dictionary === undefined ? [] : Object.keys(dictionary)
@@ -177,16 +198,15 @@ export class MMDCompanion {
       }
     }
 
-    // 相机适配：模型按画布满框取景——高度恰好填满画布（脚贴底、
-    // 头贴顶），宽度超过画布时按宽度取景。相机与模型中心等高。
+    // 相机适配：高度归一化后按画布满框取景——高度恰好填满画布
+    // （脚贴底、头贴顶），宽裙摆等超宽部分允许横向出画。
     // 放大通过组件放大画布 DOM 实现（相机保持取景距离不变）。
+    mesh.updateMatrixWorld(true)
     const box = new THREE.Box3().setFromObject(mesh)
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
     const halfFov = (this.camera.fov * Math.PI) / 360
-    const heightFit = size.y / 2 / Math.tan(halfFov)
-    const widthFit = size.x / 2 / (Math.tan(halfFov) * (this.camera.aspect || 0.6))
-    this.fitDistance = Math.max(heightFit, widthFit) * 1.02
+    this.fitDistance = size.y / 2 / Math.tan(halfFov) * 1.02
     this.camera.position.set(0, center.y, this.fitDistance)
     this.camera.lookAt(0, center.y, 0)
     this.resize()
@@ -220,6 +240,11 @@ export class MMDCompanion {
       x: Math.min(1, Math.max(-1, x)),
       y: Math.min(1, Math.max(-1, y))
     }
+  }
+
+  /** 面部直射光强度（0-2），设置面板滑杆动态调整。 */
+  setFaceLight (intensity: number): void {
+    this.faceLight.intensity = Math.min(2, Math.max(0, intensity))
   }
 
   /** 启动渲染循环。 */
@@ -268,8 +293,8 @@ export class MMDCompanion {
 
     // 站稳：不做整体漂浮/摇摆，只保留轻微呼吸缩放与骨骼级生机
     const breathe = Math.sin(time * 1.6) * 0.003
-    mesh.scale.setScalar(1 + breathe + (this.speaking ? 0.008 : 0))
-    mesh.position.y = 0
+    mesh.scale.setScalar(this.baseScale * (1 + breathe + (this.speaking ? 0.008 : 0)))
+    mesh.position.y = this.baseY
     mesh.rotation.y = 0
     this.updateBodyPose(time)
 
