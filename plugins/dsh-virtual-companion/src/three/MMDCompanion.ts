@@ -22,6 +22,13 @@ export interface MMDCompanionOptions {
 const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
 const VMD_FPS = 30
+/** 待机肢体动作涉及的 MMD 标准骨骼名（按日文名匹配，缺失则跳过）。 */
+const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
+
+interface BoneTarget {
+  bone: THREE.Bone
+  base: THREE.Euler
+}
 
 /**
  * 管理 one 人物模型的三维场景与动画循环。
@@ -36,6 +43,7 @@ export class MMDCompanion {
   private mouthMorphs: string[] = []
   private blinkMorph: string | undefined
   private vmdMorphs: VmdMorphTrack[] = []
+  private bodyBones = new Map<string, BoneTarget>()
   private speaking = false
   private disposed = false
   private rafId = 0
@@ -56,11 +64,12 @@ export class MMDCompanion {
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200)
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.95)
-    const hemisphere = new THREE.HemisphereLight(0xfff3e0, 0x8a7a9a, 0.7)
-    const key = new THREE.DirectionalLight(0xffffff, 1.25)
+    // 柔和三灯布光；总强度控制在 1 附近，避免 MMD 卡通材质过曝发白
+    const ambient = new THREE.AmbientLight(0xffffff, 0.38)
+    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.32)
+    const key = new THREE.DirectionalLight(0xffffff, 0.78)
     key.position.set(3, 6, 5)
-    const rim = new THREE.DirectionalLight(0xffe9c8, 0.9)
+    const rim = new THREE.DirectionalLight(0xffe9c8, 0.4)
     rim.position.set(-4, 3, -4)
     this.scene.add(ambient, hemisphere, key, rim)
   }
@@ -78,6 +87,15 @@ export class MMDCompanion {
     const names = dictionary === undefined ? [] : Object.keys(dictionary)
     this.mouthMorphs = MOUTH_CANDIDATES.filter(name => names.includes(name))
     this.blinkMorph = BLINK_CANDIDATES.find(name => names.includes(name))
+
+    // 收集待机肢体动作所需的骨骼及其基础旋转
+    this.bodyBones.clear()
+    for (const name of BODY_BONE_CANDIDATES) {
+      const bone = mesh.skeleton.getBoneByName(name)
+      if (bone !== undefined) {
+        this.bodyBones.set(name, { bone, base: bone.rotation.clone() })
+      }
+    }
 
     // 表情 VMD：morphs 为扁平关键帧数组，按名称分组后逐轨插值；
     // 未知 morph 名静默跳过（不同模型的表情名不一致，由待机口型/眨眼兜底）。
@@ -169,7 +187,8 @@ export class MMDCompanion {
     const breathe = Math.sin(time * 1.6) * 0.004
     mesh.scale.setScalar(1 + breathe + (this.speaking ? 0.01 : 0))
     mesh.position.y = Math.sin(time * 2) * 0.08
-    mesh.rotation.y = Math.sin(time * 0.6) * 0.06
+    mesh.rotation.y = Math.sin(time * 0.6) * 0.02
+    this.updateBodyPose(time)
 
     // 眨眼：每 2.5-5 秒一次，约 90ms 快闭快开
     if (now >= this.nextBlinkAt) {
@@ -221,6 +240,34 @@ export class MMDCompanion {
           this.setMorph(track.name, weight)
         }
       }
+    }
+  }
+
+  /** 程序化肢体待机动作：呼吸、重心摆动、手臂轻摆与头部轻动。 */
+  private updateBodyPose (time: number): void {
+    if (this.bodyBones.size === 0) return
+    const intensity = this.speaking ? 1.6 : 1
+    const breathe = Math.sin(time * 1.6) * 0.02 * intensity
+    const sway = Math.sin(time * 0.7) * 0.03 * intensity
+    const headYaw = Math.sin(time * 0.4) * 0.05 * intensity
+    const deltas: Record<string, { x?: number; y?: number; z?: number }> = {
+      上半身: { x: breathe },
+      首: { x: breathe * 0.5 },
+      頭: { x: -breathe * 0.5, y: headYaw, z: sway * 0.4 },
+      腰: { z: sway },
+      左腕: { z: sway * 1.2 },
+      右腕: { z: -sway * 1.2 },
+      左ひじ: { z: -breathe * 0.6 },
+      右ひじ: { z: -breathe * 0.6 }
+    }
+    for (const [name, delta] of Object.entries(deltas)) {
+      const target = this.bodyBones.get(name)
+      if (target === undefined) continue
+      target.bone.rotation.set(
+        target.base.x + (delta.x ?? 0),
+        target.base.y + (delta.y ?? 0),
+        target.base.z + (delta.z ?? 0)
+      )
     }
   }
 
