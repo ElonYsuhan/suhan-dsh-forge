@@ -261,6 +261,23 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     mmdRef.current?.setBrightness(settings.brightness)
   }, [settings.brightness])
 
+  // 全局视线跟随：监听整个窗口的指针移动，按「指针相对人物中心的
+  // 方向」计算头部朝向，指针越远偏转越大（在模型侧饱和）
+  useEffect(() => {
+    const onPointerMove = (event: PointerEvent): void => {
+      const stage = stageRef.current
+      if (stage === null) return
+      const rect = stage.getBoundingClientRect()
+      const centerX = rect.left + rect.width / 2
+      const centerY = rect.top + rect.height / 2
+      const nx = (event.clientX - centerX) / Math.max(1, window.innerWidth / 2)
+      const ny = (event.clientY - centerY) / Math.max(1, window.innerHeight / 2)
+      mmdRef.current?.setLookTarget(nx, ny)
+    }
+    window.addEventListener('pointermove', onPointerMove)
+    return () => window.removeEventListener('pointermove', onPointerMove)
+  }, [])
+
   // 滚轮缩放：画布 DOM 与模型同步放大，最大高度=整个网页高度
   const [zoomLevel, setZoomLevel] = useState(1)
   const maxStageHeight = typeof window === 'undefined' ? BASE_STAGE_HEIGHT : window.innerHeight - 16
@@ -957,14 +974,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [position, unlockAudio])
 
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-    // 视线跟随：指针在画布内的位置 → 头部朝向（无论是否拖拽）
-    const stage = stageRef.current
-    if (stage !== null) {
-      const rect = stage.getBoundingClientRect()
-      const nx = ((event.clientX - rect.left) / Math.max(1, rect.width)) * 2 - 1
-      const ny = ((event.clientY - rect.top) / Math.max(1, rect.height)) * 2 - 1
-      mmdRef.current?.setLookTarget(nx, ny)
-    }
     const state = dragStateRef.current
     if (state === null || state.pointerId !== event.pointerId) return
     const deltaX = event.clientX - state.startX
@@ -1015,10 +1024,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
         onPointerEnter={() => setHovered(true)}
-        onPointerLeave={() => {
-          setHovered(false)
-          mmdRef.current?.setLookTarget(0, 0)
-        }}
+        onPointerLeave={() => setHovered(false)}
       >
         <canvas ref={canvasRef} className={css.canvas} aria-label='虚拟伙伴 3D 人物' />
         <img
