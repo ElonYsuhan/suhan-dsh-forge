@@ -26,14 +26,14 @@ const VMD_FPS = 30
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
 /**
- * 手背后姿势偏移：MMD 默认站姿双臂外张，这里把上臂后摆、手肘折叠，
- * 叠加到模型初始旋转上（左右镜像符号）。若某些模型方向相反再调整。
+ * 双手抱胸姿势偏移（根据 PMX 骨骼局部轴推导：左臂 +x 向后、右臂 +x 向前）：
+ * 上臂前摆 + 内收，手肘折叠把前臂抬至胸前交叉。叠加到模型初始旋转上。
  */
-const ARM_POSE_OFFSETS: Record<string, { x: number }> = {
-  左腕: { x: 0.95 },
-  右腕: { x: -0.95 },
-  左ひじ: { x: 1.9 },
-  右ひじ: { x: -1.9 }
+const ARM_POSE_OFFSETS: Record<string, { x?: number; z?: number }> = {
+  左腕: { x: -0.55, z: 0.35 },
+  右腕: { x: 0.55, z: 0.35 },
+  左ひじ: { x: -1.45, z: 0.25 },
+  右ひじ: { x: 1.45, z: 0.25 }
 }
 
 interface BoneTarget {
@@ -57,7 +57,6 @@ export class MMDCompanion {
   private bodyBones = new Map<string, BoneTarget>()
   private speaking = false
   private fitDistance = 20
-  private zoomFactor = 1
   private disposed = false
   private rafId = 0
   private lastTime = performance.now()
@@ -125,7 +124,10 @@ export class MMDCompanion {
       if (bone !== undefined) {
         const base = bone.rotation.clone()
         const offset = ARM_POSE_OFFSETS[name]
-        if (offset !== undefined) base.x += offset.x
+        if (offset !== undefined) {
+          base.x += offset.x ?? 0
+          base.z += offset.z ?? 0
+        }
         bone.rotation.copy(base)
         this.bodyBones.set(name, { bone, base })
       }
@@ -155,7 +157,9 @@ export class MMDCompanion {
       }
     }
 
-    // 相机适配：完整取景 + 轻微俯视；记录基准距离供滚轮缩放
+    // 相机适配：完整取景 + 轻微俯视。
+    // 放大通过组件放大画布 DOM 实现（相机保持取景距离不变），
+    // 模型随画布同步变大。
     const box = new THREE.Box3().setFromObject(mesh)
     const center = box.getCenter(new THREE.Vector3())
     const size = box.getSize(new THREE.Vector3())
@@ -164,16 +168,8 @@ export class MMDCompanion {
     this.fitDistance = distance * 1.25
     this.camera.position.set(0, center.y + size.y * 0.28, this.fitDistance)
     this.camera.lookAt(0, center.y + size.y * 0.18, 0)
-    this.zoomFactor = 1
     this.resize()
     this.options.onStatus?.('ready')
-  }
-
-  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；0.25x-12x，可拉近至局部特写。 */
-  zoomBy (deltaY: number): void {
-    if (this.fitDistance <= 0) return
-    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.1 : 0.9), 0.25, 12)
-    this.camera.position.z = this.fitDistance * this.zoomFactor
   }
 
   /** 说话状态：驱动口型 morph 循环。 */
@@ -319,7 +315,8 @@ export class MMDCompanion {
     }
   }
 
-  private resize (): void {
+  /** 画布尺寸变化时由组件调用（滚轮缩放/窗口变化）。 */
+  resize (): void {
     const parent = this.canvas.parentElement
     const width = Math.max(1, parent?.clientWidth ?? this.canvas.clientWidth)
     const height = Math.max(1, parent?.clientHeight ?? this.canvas.clientHeight)

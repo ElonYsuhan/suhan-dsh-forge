@@ -62,6 +62,9 @@ const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const SETTINGS_KEY = 'suhan-dsh-virtual-companion-settings'
 const DRAG_THRESHOLD = 5
 const SINGLE_CLICK_DELAY_MS = 260
+/** 画布基准尺寸；滚轮缩放即放大画布 DOM，模型随之同步放大。 */
+const BASE_STAGE_WIDTH = 260
+const BASE_STAGE_HEIGHT = 440
 /** 短于该长度的句子走流式接口（边合成边播放，首音延迟低）。 */
 const TTS_STREAM_TEXT_MAX_LENGTH = 500
 
@@ -221,17 +224,38 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     mmdRef.current?.setBrightness(settings.brightness)
   }, [settings.brightness])
 
-  // 滚轮缩放人物（原生监听，passive:false 才能 preventDefault）
+  // 滚轮缩放：画布 DOM 与模型同步放大，最大高度=整个网页高度
+  const [zoomLevel, setZoomLevel] = useState(1)
+  const maxStageHeight = typeof window === 'undefined' ? BASE_STAGE_HEIGHT : window.innerHeight - 16
+  const stageHeight = Math.min(Math.round(BASE_STAGE_HEIGHT * zoomLevel), maxStageHeight)
+  const stageWidth = Math.round(BASE_STAGE_WIDTH * (stageHeight / BASE_STAGE_HEIGHT))
+
+  const changeZoom = useCallback((factor: number): void => {
+    setZoomLevel(level => Math.min(Math.max(level * factor, 0.3), Math.max(0.3, maxStageHeight / BASE_STAGE_HEIGHT)))
+  }, [maxStageHeight])
+
   useEffect(() => {
     const stage = stageRef.current
     if (stage === null) return
     const onWheel = (event: WheelEvent): void => {
       event.preventDefault()
-      mmdRef.current?.zoomBy(event.deltaY)
+      changeZoom(event.deltaY > 0 ? 1 / 1.1 : 1.1)
     }
     stage.addEventListener('wheel', onWheel, { passive: false })
     return () => stage.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [changeZoom])
+
+  // 画布尺寸变化：重设渲染尺寸，并把位置钳回视口内
+  useEffect(() => {
+    mmdRef.current?.resize()
+    const margin = 8
+    const maxX = Math.max(margin, window.innerWidth - stageWidth - margin)
+    const maxY = Math.max(margin, window.innerHeight - stageHeight - margin)
+    setPosition(current => ({
+      x: Math.min(Math.max(current.x, margin), maxX),
+      y: Math.min(Math.max(current.y, margin), maxY)
+    }))
+  }, [stageWidth, stageHeight])
 
   // 可用模型列表（设置面板选择器）
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([])
@@ -848,12 +872,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   return (
     <div
       className={css.companion}
-      style={{ left: position.x, top: position.y }}
+      style={{ left: position.x, top: position.y, width: stageWidth }}
       data-testid='virtual-companion'
     >
       <div
         ref={stageRef}
         className={`${css.stage} ${speaking ? css.speaking : ''} ${hovered ? css.hovered : ''}`}
+        style={{ width: stageWidth, height: stageHeight }}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
