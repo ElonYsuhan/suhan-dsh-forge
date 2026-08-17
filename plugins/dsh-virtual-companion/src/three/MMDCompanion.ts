@@ -30,10 +30,10 @@ const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右�
  * 叠加到模型初始旋转上（左右镜像符号）。若某些模型方向相反再调整。
  */
 const ARM_POSE_OFFSETS: Record<string, { x: number }> = {
-  左腕: { x: -0.95 },
-  右腕: { x: 0.95 },
-  左ひじ: { x: -1.9 },
-  右ひじ: { x: 1.9 }
+  左腕: { x: 0.95 },
+  右腕: { x: -0.95 },
+  左ひじ: { x: 1.9 },
+  右ひじ: { x: -1.9 }
 }
 
 interface BoneTarget {
@@ -79,15 +79,14 @@ export class MMDCompanion {
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200)
 
-    // MMD 卡通材质按光源累加着色，总强度必须压低（约 0.9），
-    // 否则浅色模型整体泛白；ACES 同时柔和高光滚降
-    const ambient = new THREE.AmbientLight(0xffffff, 0.22)
-    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.1)
-    const key = new THREE.DirectionalLight(0xffffff, 0.48)
+    // 无方向的环境光/半球光会给模型所有面均匀加白（“雾感”来源），
+    // 只保留极弱环境补光 + 主光 + 背光，靠方向光塑造明暗
+    const ambient = new THREE.AmbientLight(0xffffff, 0.1)
+    const key = new THREE.DirectionalLight(0xffffff, 0.52)
     key.position.set(3, 6, 5)
-    const rim = new THREE.DirectionalLight(0xffe9c8, 0.16)
+    const rim = new THREE.DirectionalLight(0xffe9c8, 0.12)
     rim.position.set(-4, 3, -4)
-    this.scene.add(ambient, hemisphere, key, rim)
+    this.scene.add(ambient, key, rim)
   }
 
   /** 释放当前模型（切换模型前调用）。 */
