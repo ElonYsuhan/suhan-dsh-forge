@@ -268,6 +268,10 @@ function clientConfig(id: string, entry: string): UserConfig {
       // /packages/<group>/<package>/src directories; sourcesContent keeps them usable
       // without exposing that tree as an HTTP route.
       sourcemapPathTransform: browserSourcePath,
+      // DSH 客户端模块表只回答平台模块，无法解析 chunk 间的相对
+      // require()；必须把动态 import（Babylon 内部大量使用）全部
+      // 内联成单一 client.js 闭包。
+      inlineDynamicImports: true,
       banner: `window.__ModuleLoader__.load({ id: ${JSON.stringify(id)}, factory: (require) => {`,
       footer: 'return module.exports; } });',
       intro: 'var module = { exports: {} }; var exports = module.exports;',

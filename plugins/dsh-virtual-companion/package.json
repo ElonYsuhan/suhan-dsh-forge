@@ -74,8 +74,6 @@
     "lib/index.js",
     "lib/client.js",
     "lib/client.js.map",
-    "lib/*.cjs",
-    "lib/*.cjs.map",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "dsh-marketplace.json",
