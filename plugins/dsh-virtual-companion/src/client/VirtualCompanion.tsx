@@ -65,13 +65,6 @@ const SINGLE_CLICK_DELAY_MS = 260
 /** 画布基准尺寸；滚轮缩放即放大画布 DOM，模型随之同步放大。 */
 const BASE_STAGE_WIDTH = 260
 const BASE_STAGE_HEIGHT = 440
-/** 短于该长度的句子走流式接口（边合成边播放，首音延迟低）。 */
-const TTS_STREAM_TEXT_MAX_LENGTH = 500
-
-function buildTtsStreamUrl (text: string, voiceId: VoiceStyleId): string {
-  const params = new URLSearchParams({ text, voice: voiceId })
-  return `/virtual-companion/tts/stream?${params.toString()}`
-}
 
 /** 去掉空白与标点，便于回声文本比对。 */
 function normalizeForMatch (value: string): string {
@@ -149,6 +142,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const noSpeechRetriesRef = useRef(0)
   const backgroundRecognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const lastSpokenTextsRef = useRef<string[]>([])
+  const ttsCacheRef = useRef(new Map<string, Blob>())
+  const prefetchInFlightRef = useRef(new Set<string>())
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -409,6 +404,50 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }
   }, [stopCurrentAudio])
 
+  /** 合成并缓存一句语音；缓存命中直接复用（同句不回炉）。 */
+  const synthesizeSentence = useCallback(async (text: string): Promise<Blob> => {
+    const response = await fetch('/virtual-companion/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, voice: settings.voiceId })
+    })
+    if (!response.ok) {
+      let message = `HTTP ${response.status}`
+      try {
+        const data = await response.json() as { error?: unknown }
+        if (typeof data.error === 'string') message = data.error
+      } catch {
+        // keep the HTTP fallback message when the error body is not JSON
+      }
+      throw new Error(message)
+    }
+    const blob = await response.blob()
+    if (blob.size === 0) throw new Error('语音合成返回空音频')
+    return blob
+  }, [settings.voiceId])
+
+  /** 后台预生成队列中下一句的语音，播放到时零合成延迟。 */
+  const prefetchNextSentence = useCallback((): void => {
+    const next = sentenceQueueRef.current[0]
+    if (next === undefined) return
+    if (ttsCacheRef.current.has(next) || prefetchInFlightRef.current.has(next)) return
+    prefetchInFlightRef.current.add(next)
+    void synthesizeSentence(next)
+      .then(blob => {
+        ttsCacheRef.current.set(next, blob)
+        if (ttsCacheRef.current.size > 6) {
+          const oldest = ttsCacheRef.current.keys().next().value
+          if (oldest !== undefined) ttsCacheRef.current.delete(oldest)
+        }
+      })
+      .catch(() => {
+        // 预生成失败不影响主流程，播放时重新合成
+      })
+      .finally(() => {
+        prefetchInFlightRef.current.delete(next)
+      })
+  }, [synthesizeSentence])
+
   const speak = useCallback(async (text: string, onDone?: () => void): Promise<void> => {
     if (typeof window === 'undefined') return
     try {
@@ -416,35 +455,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       stopCurrentAudio()
       const audio = audioRef.current
       if (audio === null) throw new Error('音频播放器未就绪')
-      // 短句走流式接口：Edge 边合成边播放，首音延迟低、体验流畅；
-      // 长句走缓冲 POST，避免超长 URL。
-      if (text.length <= TTS_STREAM_TEXT_MAX_LENGTH) {
-        audio.src = buildTtsStreamUrl(text, settings.voiceId)
-        audioUrlRef.current = null
-      } else {
-        const response = await fetch('/virtual-companion/tts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice: settings.voiceId })
-        })
-        if (!response.ok) {
-          let message = `HTTP ${response.status}`
-          try {
-            const data = await response.json() as { error?: unknown }
-            if (typeof data.error === 'string') message = data.error
-          } catch {
-            // keep the HTTP fallback message when the error body is not JSON
-          }
-          throw new Error(message)
-        }
-        const blob = await response.blob()
-        if (blob.size === 0) throw new Error('语音合成返回空音频')
-        if (!interactingRef.current) return
-        stopCurrentAudio()
-        const url = URL.createObjectURL(blob)
-        audioUrlRef.current = url
-        audio.src = url
-      }
+      const blob = ttsCacheRef.current.get(text) ?? await synthesizeSentence(text)
+      ttsCacheRef.current.set(text, blob)
+      if (!interactingRef.current) return
+      stopCurrentAudio()
+      const url = URL.createObjectURL(blob)
+      audioUrlRef.current = url
+      audio.src = url
       // 记录最近朗读的句子（最多 3 句），供后台聆听做回声过滤
       const spokenNorm = normalizeForMatch(text)
       if (spokenNorm.length >= 2) {
@@ -457,6 +474,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           onSpeechEndRef.current = null
           stopBackgroundListening()
           stopCurrentAudio()
+          // 预生成下一句，消除句间合成空隙
+          prefetchNextSentence()
           done?.()
         }
       }
@@ -498,7 +517,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setListening(false)
       setThinking(false)
     }
-  }, [settings.voiceId, stopCurrentAudio, startBackgroundListening, stopBackgroundListening])
+  }, [settings.voiceId, stopCurrentAudio, startBackgroundListening, stopBackgroundListening, synthesizeSentence, prefetchNextSentence])
 
   const stopVoiceSession = useCallback((): void => {
     if (singleClickTimerRef.current !== null) {
@@ -519,6 +538,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     recognitionRef.current?.abort()
     recognitionRef.current = null
     lastSpokenTextsRef.current = []
+    ttsCacheRef.current.clear()
+    prefetchInFlightRef.current.clear()
     stopBackgroundListening()
     stopCurrentAudio()
   }, [stopCurrentAudio, stopBackgroundListening])
@@ -649,7 +670,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     setBubbleText(null)
     const recognition = new SpeechRecognitionCtor()
     recognition.lang = 'zh-CN'
-    recognition.interimResults = false
+    recognition.interimResults = true
     recognition.continuous = false
     let resultReceived = false
     let handledByError = false
@@ -668,6 +689,13 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         recognitionRef.current = null
         setListening(false)
         sendAnswerRef.current(transcript.trim())
+        return
+      }
+      // 中间结果实时上屏，用户能看到 ASR 正在出字
+      const interim = results.map(result => result[0]?.transcript ?? '').join('')
+      if (interim.trim() !== '') {
+        setSpeechDetected(true)
+        setBubbleText(`听到了：${interim.trim()}`)
       }
     }
     recognition.onerror = (event): void => {

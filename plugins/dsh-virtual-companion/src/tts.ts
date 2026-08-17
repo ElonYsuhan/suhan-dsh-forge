@@ -105,43 +105,68 @@ async function collectStream (stream: Readable, maxBytes: number): Promise<Buffe
  * retained after a request completes.
  */
 export class EdgeTtsSpeechSynth implements SpeechSynth {
+  /** 复用的 Edge 连接（建立约 0.7s，复用可大幅降低首音延迟）。 */
+  private client: MsEdgeTTS | null = null
+  /** 同一连接上串行化请求（Edge WS 不支持并发流）。 */
+  private tail: Promise<void> = Promise.resolve()
+
+  private async acquireClient (): Promise<MsEdgeTTS> {
+    if (this.client === null) this.client = new MsEdgeTTS()
+    return this.client
+  }
+
+  /** 请求失败后连接可能已损坏，关闭并重建。 */
+  private invalidateClient (): void {
+    if (this.client === null) return
+    try {
+      this.client.close()
+    } catch {
+      // best-effort cleanup
+    }
+    this.client = null
+  }
+
+  /** 在共享连接上串行执行一次合成；失败自动重建连接。 */
+  private async withClient<T> (action: (tts: MsEdgeTTS) => Promise<T>): Promise<T> {
+    const run = this.tail.then(async () => {
+      try {
+        return await action(await this.acquireClient())
+      } catch (error) {
+        this.invalidateClient()
+        throw error
+      }
+    })
+    this.tail = run.then(() => {}, () => {})
+    return run
+  }
+
   /** 单次合成的完整流程；连接类失败允许调用方重试。 */
   private async synthesizeOnce (text: string, voice: VoiceStyleId): Promise<TtsAudioResult> {
     const style = getVoiceStyle(voice)
-    const tts = new MsEdgeTTS()
-    let audioStream: Readable | null = null
-    try {
-      return await withTimeout((async () => {
-        await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
-        const stream = tts.toStream(text, {
-          rate: style.edgeRate,
-          pitch: style.edgePitch
-        })
-        audioStream = stream.audioStream
-        const buffer = await collectStream(audioStream, TTS_MAX_BYTES)
-        if (buffer.length === 0) throw new TtsError('TTS returned no audio data')
-        return { buffer, contentType: 'audio/mpeg' }
-      })(), TTS_TIMEOUT_MS, () => {
-        audioStream?.destroy()
-        try {
-          tts.close()
-        } catch {
-          // best-effort timeout cleanup; do not mask the timeout error
-        }
-      })
-    } catch (error) {
-      if (error instanceof TtsError) throw error
-      throw new TtsError(`Edge TTS synthesis failed: ${safeDiagnostic(error)}`)
-    } finally {
+    return await this.withClient(async tts => {
+      let audioStream: Readable | null = null
       try {
-        tts.close()
-      } catch {
-        // close() is best-effort cleanup; the original error must not be hidden.
+        return await withTimeout((async () => {
+          await tts.setMetadata(style.edgeVoice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3)
+          const stream = tts.toStream(text, {
+            rate: style.edgeRate,
+            pitch: style.edgePitch
+          })
+          audioStream = stream.audioStream
+          const buffer = await collectStream(audioStream, TTS_MAX_BYTES)
+          if (buffer.length === 0) throw new TtsError('TTS returned no audio data')
+          return { buffer, contentType: 'audio/mpeg' }
+        })(), TTS_TIMEOUT_MS, () => {
+          audioStream?.destroy()
+        })
+      } catch (error) {
+        if (error instanceof TtsError) throw error
+        throw new TtsError(`Edge TTS synthesis failed: ${safeDiagnostic(error)}`)
       }
-    }
+    })
   }
 
-  /** 每次请求新建客户端；连接类失败自动换新客户端重试一次。 */
+  /** 复用连接串行合成；连接类失败重建连接并重试一次。 */
   async synthesize (text: string, voice: VoiceStyleId): Promise<TtsAudioResult> {
     try {
       return await this.synthesizeOnce(text, voice)
@@ -202,6 +227,6 @@ export class EdgeTtsSpeechSynth implements SpeechSynth {
   }
 
   dispose (): void {
-    // Per-request clients are already closed by synthesize()/stream().
+    this.invalidateClient()
   }
 }
