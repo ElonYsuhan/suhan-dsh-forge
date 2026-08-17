@@ -213,7 +213,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [hovered, setHovered] = useState(false)
   const [interacting, setInteracting] = useState(false)
   const [listening, setListening] = useState(false)
-  const [speechDetected, setSpeechDetected] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [modelReady, setModelReady] = useState(false)
@@ -267,6 +266,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   useEffect(() => {
     mmdRef.current?.setFaceLight(settings.faceLight)
   }, [settings.faceLight])
+
+  // 聆听状态同步给模型（思考表情）
+  useEffect(() => {
+    mmdRef.current?.setThinking(listening)
+  }, [listening])
 
   // 全局视线跟随：监听整个窗口的指针移动，按「指针相对人物中心的
   // 方向」计算头部朝向，指针越远偏转越大（在模型侧饱和）
@@ -862,14 +866,12 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       // 中间结果实时上屏，用户能看到 ASR 正在出字
       const interim = results.map(result => result[0]?.transcript ?? '').join('')
       if (interim.trim() !== '') {
-        setSpeechDetected(true)
         setBubbleText(`听到了：${interim.trim()}`)
       }
     }
     recognition.onerror = (event): void => {
       const error = event.error ?? 'unknown'
       handledByError = true
-      setSpeechDetected(false)
       recognition.abort()
       // 我们自己调用的 abort 会产生 aborted 错误，忽略不计
       if (error === 'aborted') return
@@ -900,15 +902,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       setBubbleText(message)
       if (interactingRef.current) stopVoiceSession()
     }
-    recognition.onspeechstart = (): void => {
-      setSpeechDetected(true)
-    }
-    recognition.onspeechend = (): void => {
-      setSpeechDetected(false)
-    }
     recognition.onend = (): void => {
       setListening(false)
-      setSpeechDetected(false)
       if (handledByError || resultReceived) return
       // 说话停顿导致的自然结束（非出错、非识别到内容）：
       // 继续监听，用户停顿后还能接着说。
@@ -1091,9 +1086,6 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         />
         {statusText !== null && (
           <div className={css.bubble} style={{ background: activeBackground.css, color: activeBackground.textColor }} role='status'>{statusText}</div>
-        )}
-        {(listening || thinking) && (
-          <div className={`${css.indicator} ${listening ? (speechDetected ? css.hearing : css.listening) : ''}`} role='status'>🤔</div>
         )}
       </div>
       {panelOpen && (

@@ -41,14 +41,14 @@ const GESTURE_DURATIONS: Record<GestureName, number> = {
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
 /**
- * 双手抱胸姿势偏移（根据 PMX 骨骼局部轴推导：左臂 +x 向后、右臂 +x 向前）：
- * 上臂前摆 + 内收，手肘折叠把前臂抬至胸前交叉。叠加到模型初始旋转上。
+ * 手臂自然垂落偏移（根据 PMX 骨骼局部轴推导：双腕 +z 内收）：
+ * 把 MMD 默认 A-pose 外张的双臂收到身侧，自然下垂。
  */
 const ARM_POSE_OFFSETS: Record<string, { x?: number; z?: number }> = {
-  左腕: { x: -0.55, z: 0.35 },
-  右腕: { x: 0.55, z: 0.35 },
-  左ひじ: { x: -1.45, z: 0.25 },
-  右ひじ: { x: 1.45, z: 0.25 }
+  左腕: { z: 0.15 },
+  右腕: { z: 0.15 },
+  左ひじ: { z: 0.08 },
+  右ひじ: { z: 0.08 }
 }
 
 interface BoneTarget {
@@ -72,6 +72,7 @@ export class MMDCompanion {
   private vmdMorphs: VmdMorphTrack[] = []
   private bodyBones = new Map<string, BoneTarget>()
   private speaking = false
+  private thinking = false
   private speechLevel = 0
   private fitDistance = 20
   private gesture: { name: GestureName; startAt: number } | null = null
@@ -247,6 +248,11 @@ export class MMDCompanion {
     this.faceLight.intensity = Math.min(2, Math.max(0, intensity))
   }
 
+  /** 思考表情：聆听用户说话时头部微歪微仰。 */
+  setThinking (thinking: boolean): void {
+    this.thinking = thinking
+  }
+
   /** 启动渲染循环。 */
   start (): void {
     this.rafId = requestAnimationFrame(this.tick)
@@ -305,6 +311,11 @@ export class MMDCompanion {
     if (head !== undefined) {
       head.bone.rotation.y += this.currentLook.x * 0.32
       head.bone.rotation.x += -this.currentLook.y * 0.16
+      // 思考表情：聆听时头部微歪 + 微仰
+      if (this.thinking) {
+        head.bone.rotation.z += 0.16
+        head.bone.rotation.x += 0.05
+      }
     }
 
     // 眨眼：每 2.5-5 秒一次，约 90ms 快闭快开
