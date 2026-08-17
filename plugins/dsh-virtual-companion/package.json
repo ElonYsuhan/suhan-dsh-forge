@@ -43,9 +43,11 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
+    "@babylonjs/core": "^9.21.2",
+    "@babylonjs/materials": "^9.21.2",
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
-    "msedge-tts": "^2.0.7",
-    "three": "0.149.0"
+    "babylon-mmd": "^1.3.0",
+    "msedge-tts": "^2.0.7"
   },
   "devDependencies": {
     "@types/node": "catalog:",
@@ -53,6 +55,7 @@
     "@types/three": "^0.149.0",
     "lightningcss": "catalog:",
     "react": "catalog:",
+    "three": "0.149.0",
     "tsdown": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"
@@ -71,6 +74,8 @@
     "lib/index.js",
     "lib/client.js",
     "lib/client.js.map",
+    "lib/*.cjs",
+    "lib/*.cjs.map",
     "lib/types/**/*.d.ts",
     "cordis.patch.yml",
     "dsh-marketplace.json",
