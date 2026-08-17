@@ -1,7 +1,7 @@
 .companion {
   position: fixed;
   z-index: 2147483647;
-  width: 150px;
+  width: 180px;
   pointer-events: auto;
   user-select: none;
   font-family: inherit;
@@ -9,8 +9,8 @@
 
 .stage {
   position: relative;
-  width: 150px;
-  height: 268px;
+  width: 180px;
+  height: 320px;
   border: none;
   background: transparent;
   box-shadow: none;
@@ -23,25 +23,40 @@
   cursor: grabbing;
 }
 
-/* 透明立绘：无边框无背景，投影跟随人物轮廓 */
+/* 3D 人物画布：铺满舞台，说话时浮动脉动 */
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  pointer-events: none;
+  animation: companion-float 4s ease-in-out infinite;
+}
+
+.stage.hovered .canvas {
+  transform: scale(1.04);
+}
+
+.stage.speaking .canvas {
+  animation: companion-float 1.6s ease-in-out infinite, companion-pulse .5s ease-in-out infinite;
+}
+
+/* 立绘占位：模型加载完成后淡出 */
 .portrait {
+  position: absolute;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
   object-fit: contain;
   pointer-events: none;
   filter: drop-shadow(0 6px 14px rgba(20, 24, 40, .28));
-  animation: companion-float 4s ease-in-out infinite;
-  transition: transform .2s ease, filter .2s ease;
+  transition: opacity .45s ease;
 }
 
-.stage.hovered .portrait {
-  transform: scale(1.05);
-  filter: drop-shadow(0 10px 20px rgba(20, 24, 40, .38));
-}
-
-.stage.speaking .portrait {
-  animation: companion-float 1.6s ease-in-out infinite, companion-pulse .5s ease-in-out infinite;
+.portraitHidden {
+  opacity: 0;
 }
 
 @keyframes companion-float {

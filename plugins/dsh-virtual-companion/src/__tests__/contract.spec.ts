@@ -1,6 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 import { EventEmitter } from 'node:events'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { StreamChunk } from '@deepseek-ai/dsh-llm'
 import { apply } from '../index.ts'
@@ -226,6 +229,33 @@ describe('virtual-companion host contract', () => {
     expect(res.headers['Content-Type']).toBe('image/png')
     expect(res.body.length).toBeGreaterThan(1_000)
     expect(res.body.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a')
+  })
+
+  it('serves model assets from the local data directory and blocks traversal', async () => {
+    const { ctx, routes } = createContext()
+    apply(ctx)
+
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-companion-models-'))
+    process.env.DSH_VIRTUAL_COMPANION_MODELS = dir
+    await writeFile(join(dir, 'test.pmx'), Buffer.from('pmx-data'))
+    try {
+      const ok = audioResponse()
+      await routes[0]!.handler(request('GET', '/virtual-companion/model/test.pmx'), ok)
+      expect(ok.status).toBe(200)
+      expect(ok.headers['Content-Type']).toBe('application/octet-stream')
+      expect(ok.body.toString()).toBe('pmx-data')
+
+      const missing = response()
+      await routes[0]!.handler(request('GET', '/virtual-companion/model/missing.pmx'), missing)
+      expect(missing.status).toBe(404)
+
+      const traversal = response()
+      await routes[0]!.handler(request('GET', '/virtual-companion/model/..%2F..%2Fetc%2Fpasswd'), traversal)
+      expect(traversal.status).not.toBe(200)
+    } finally {
+      delete process.env.DSH_VIRTUAL_COMPANION_MODELS
+      await rm(dir, { recursive: true, force: true })
+    }
   })
 
   it('returns a proactive opening question through the DSH LLM stream', async () => {

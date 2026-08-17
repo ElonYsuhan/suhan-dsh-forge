@@ -7,8 +7,9 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import { readFile } from 'node:fs/promises'
-import { dirname, resolve } from 'node:path'
+import { dirname, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { createUserMessage, type Message } from '@deepseek-ai/dsh-llm'
 import { appendTurn, ChatInputError, ChatReplyError, collectReply, normalizeChatText, streamReplyEvents } from './shared/chat.ts'
 import { getRoleSystemPrompt, normalizeBackgroundText } from './shared/settings.ts'
@@ -28,6 +29,27 @@ export interface VirtualCompanionHostOptions {
 /** Minimal shape of the DSH default model selection service. */
 interface AgentDefaultModelLike {
   currentSelection: () => { provider: string; model: string }
+}
+
+/**
+ * 人物模型根目录：用户本地数据（默认 $DSH_HOME/storages/dsh-virtual-companion/
+ * models）。模型版权规则禁止二次配布，因此不随 npm 包与 git 分发；
+ * 用户自行放置 PMX/纹理后即可被客户端加载。
+ */
+function modelRoot (): string {
+  const override = process.env.DSH_VIRTUAL_COMPANION_MODELS?.trim()
+  if (override !== undefined && override !== '') return resolve(override)
+  return resolve(resolveDshHome(undefined, process.env), 'storages', 'dsh-virtual-companion', 'models')
+}
+
+/** 模型静态资产内容类型（按扩展名）。 */
+function modelContentType (path: string): string {
+  const lower = path.toLowerCase()
+  if (lower.endsWith('.png')) return 'image/png'
+  if (lower.endsWith('.bmp')) return 'image/bmp'
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg'
+  if (lower.endsWith('.tga')) return 'image/x-tga'
+  return 'application/octet-stream'
 }
 
 /** Read the DSH web profile's currently selected provider/model. */
@@ -85,6 +107,29 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             res.end(image)
           } catch {
             sendJson(res, 404, { error: 'portrait asset missing' })
+          }
+          return
+        }
+
+        // 人物模型资产（PMX/VMD/纹理）：从本地数据目录按相对路径提供。
+        if (parts[0] === 'virtual-companion' && parts[1] === 'model' && parts.length >= 3 && method === 'GET') {
+          const relativePath = parts.slice(2).join('/')
+          const root = modelRoot()
+          const target = resolve(root, relativePath)
+          if (target !== root && !target.startsWith(root + sep)) {
+            sendJson(res, 400, { error: 'invalid model path' })
+            return
+          }
+          try {
+            const data = await readFile(target)
+            res.writeHead(200, {
+              'Content-Type': modelContentType(target),
+              'Cache-Control': 'public, max-age=86400',
+              'Content-Length': data.length
+            })
+            res.end(data)
+          } catch {
+            sendJson(res, 404, { error: 'model asset not found' })
           }
           return
         }

@@ -5,8 +5,8 @@
     "en-US": "Virtual Human"
   },
   "summary": {
-    "zh-CN": "可在 DSH Web 任意位置拖拽且始终置顶的高清立绘虚拟伙伴；单击开始语音聊天，双击打开设置面板，支持人物角色、背景信息、六种女声音色和流式实时回复，说话时人物轻轻浮动。",
-    "en-US": "An always-on-top draggable HD portrait companion for DSH Web; click to start proactive voice chat, double-click to open settings for role, custom background text, six female voices, and streaming replies with a gentle speaking animation."
+    "zh-CN": "可在 DSH Web 任意位置拖拽且始终置顶的 3D 虚拟伙伴（three.js MMD 模型，待机呼吸/眨眼/说话口型/表情包）；单击开始语音聊天、说话可随时打断，双击打开设置面板，支持人物角色、背景信息、六种女声音色和流式实时回复。",
+    "en-US": "An always-on-top draggable 3D companion for DSH Web (three.js MMD model with idle breathing, blinking, lip-sync morphs and an expression pack); click to start voice chat with barge-in, double-click for settings: role, background, six female voices and streaming replies."
   },
   "categories": [
     "productivity",

@@ -43,12 +43,14 @@
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "msedge-tts": "^2.0.7"
+    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.6",
+    "msedge-tts": "^2.0.7",
+    "three": "0.149.0"
   },
   "devDependencies": {
     "@types/node": "catalog:",
     "@types/react": "catalog:",
-    "@types/three": "^0.178.0",
+    "@types/three": "^0.149.0",
     "lightningcss": "catalog:",
     "react": "catalog:",
     "tsdown": "catalog:",

@@ -20,6 +20,7 @@ import {
   VOICE_STYLES,
   type VoiceStyleId
 } from '../shared/voice.ts'
+import { MMDCompanion } from '../three/MMDCompanion.ts'
 import css from './VirtualCompanion.module.css'
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
@@ -134,6 +135,8 @@ function getSpeechRecognition (): SpeechRecognitionConstructorLike | undefined {
  */
 export function VirtualCompanion (_props: VirtualCompanionProps) {
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const mmdRef = useRef<MMDCompanion | null>(null)
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const audioUnlockedRef = useRef(false)
@@ -169,8 +172,42 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [speechDetected, setSpeechDetected] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
+  const [modelReady, setModelReady] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
+
+  // MMD 人物模型场景：加载本地 PMX 模型（甘雨）与表情 VMD；
+  // 加载期间立绘占位，失败时保持立绘不受影响。
+  useEffect(() => {
+    const canvas = canvasRef.current
+    if (canvas === null) return
+    let disposed = false
+    const mmd = new MMDCompanion(canvas, {
+      onStatus: (status) => {
+        if (disposed) return
+        setModelReady(status === 'ready')
+      }
+    })
+    mmdRef.current = mmd
+    void mmd.load(
+      `/virtual-companion/model/${encodeURIComponent('ganyu')}/${encodeURIComponent('甘雨.pmx')}`,
+      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
+    ).catch(() => {
+      // 模型缺失/损坏时静默退回立绘展示
+    }).finally(() => {
+      mmd.start()
+    })
+    return () => {
+      disposed = true
+      mmdRef.current = null
+      mmd.dispose()
+    }
+  }, [])
+
+  // 说话状态同步给模型（口型）
+  useEffect(() => {
+    mmdRef.current?.setSpeaking(speaking)
+  }, [speaking])
 
   // 唯一的 Audio 元素：浏览器要求媒体播放由用户手势解锁，元素在挂载时
   // 创建、在首次指针交互时播放一次静音片段完成解锁，之后复用播放所有句子。
@@ -787,8 +824,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
       >
+        <canvas ref={canvasRef} className={css.canvas} aria-label='虚拟伙伴 3D 人物' />
         <img
-          className={css.portrait}
+          className={`${css.portrait} ${modelReady ? css.portraitHidden : ''}`}
           src='/virtual-companion/portrait'
           alt='虚拟伙伴立绘'
           draggable={false}
