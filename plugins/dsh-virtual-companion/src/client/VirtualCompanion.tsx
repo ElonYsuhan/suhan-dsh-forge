@@ -311,6 +311,55 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     }))
   }, [stageWidth, stageHeight])
 
+  // 设置面板：默认在画布外侧（右侧放不下翻到左侧），支持拖拽移动
+  const [panelOffset, setPanelOffset] = useState({ x: 0, y: 0 })
+  const panelDragRef = useRef<{
+    pointerId: number
+    startX: number
+    startY: number
+    originX: number
+    originY: number
+  } | null>(null)
+  const PANEL_WIDTH = 280
+  const PANEL_GAP = 12
+  const panelOnLeft = position.x + stageWidth + PANEL_WIDTH + PANEL_GAP > window.innerWidth
+  const panelDefaultLeft = panelOnLeft ? -PANEL_WIDTH - PANEL_GAP : stageWidth + PANEL_GAP
+  const panelLeft = Math.min(
+    Math.max(panelDefaultLeft + panelOffset.x, 8 - (panelOnLeft ? 0 : stageWidth) - PANEL_GAP),
+    window.innerWidth - PANEL_WIDTH - 8
+  )
+  const panelTop = Math.min(Math.max(panelOffset.y, 8), window.innerHeight - 260)
+
+  const startPanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+    if (event.pointerType === 'mouse' && event.button !== 0) return
+    panelDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: panelOffset.x,
+      originY: panelOffset.y
+    }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }, [panelOffset])
+
+  const movePanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+    const state = panelDragRef.current
+    if (state === null || state.pointerId !== event.pointerId) return
+    setPanelOffset({
+      x: state.originX + (event.clientX - state.startX),
+      y: state.originY + (event.clientY - state.startY)
+    })
+  }, [])
+
+  const endPanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
+    const state = panelDragRef.current
+    if (state === null || state.pointerId !== event.pointerId) return
+    panelDragRef.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+  }, [])
+
   // 可用模型列表（设置面板选择器）
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([])
   useEffect(() => {
@@ -1043,11 +1092,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       {panelOpen && (
         <div
           className={css.panel}
-          style={{ background: activeBackground.css, color: activeBackground.textColor }}
+          style={{ left: panelLeft, top: panelTop, background: activeBackground.css, color: activeBackground.textColor }}
           role='dialog'
           aria-label='虚拟人物设置'
         >
-          <div className={css.panelHeader}>
+          <div
+            className={css.panelHeader}
+            onPointerDown={startPanelDrag}
+            onPointerMove={movePanelDrag}
+            onPointerUp={endPanelDrag}
+            onPointerCancel={endPanelDrag}
+          >
             <span>虚拟人物设置</span>
             <button className={css.closeButton} type='button' onClick={closeSettings} aria-label='关闭设置'>×</button>
           </div>

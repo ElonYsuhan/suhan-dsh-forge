@@ -148,7 +148,6 @@
 
 .panel {
   position: absolute;
-  left: 280px;
   top: 0;
   width: 280px;
   padding: 14px;
@@ -168,6 +167,9 @@
   margin-bottom: 10px;
   font-weight: 600;
   font-size: 14px;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
 }
 
 .closeButton {
