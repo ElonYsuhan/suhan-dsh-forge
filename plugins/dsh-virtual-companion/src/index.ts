@@ -113,7 +113,14 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
 
         // 人物模型资产（PMX/VMD/纹理）：从本地数据目录按相对路径提供。
         if (parts[0] === 'virtual-companion' && parts[1] === 'model' && parts.length >= 3 && method === 'GET') {
-          const relativePath = parts.slice(2).join('/')
+          let relativePath: string
+          try {
+            // URL.pathname 不会解码百分号编码，必须逐段 decodeURIComponent
+            relativePath = parts.slice(2).map(segment => decodeURIComponent(segment)).join('/')
+          } catch {
+            sendJson(res, 400, { error: 'invalid model path' })
+            return
+          }
           const root = modelRoot()
           const target = resolve(root, relativePath)
           if (target !== root && !target.startsWith(root + sep)) {

@@ -238,12 +238,19 @@ describe('virtual-companion host contract', () => {
     const dir = await mkdtemp(join(tmpdir(), 'dsh-companion-models-'))
     process.env.DSH_VIRTUAL_COMPANION_MODELS = dir
     await writeFile(join(dir, 'test.pmx'), Buffer.from('pmx-data'))
+    await writeFile(join(dir, '甘雨.pmx'), Buffer.from('chinese-name-data'))
     try {
       const ok = audioResponse()
       await routes[0]!.handler(request('GET', '/virtual-companion/model/test.pmx'), ok)
       expect(ok.status).toBe(200)
       expect(ok.headers['Content-Type']).toBe('application/octet-stream')
       expect(ok.body.toString()).toBe('pmx-data')
+
+      // 中文文件名：pathname 的百分号编码必须被逐段解码
+      const chinese = audioResponse()
+      await routes[0]!.handler(request('GET', `/virtual-companion/model/${encodeURIComponent('甘雨.pmx')}`), chinese)
+      expect(chinese.status).toBe(200)
+      expect(chinese.body.toString()).toBe('chinese-name-data')
 
       const missing = response()
       await routes[0]!.handler(request('GET', '/virtual-companion/model/missing.pmx'), missing)
