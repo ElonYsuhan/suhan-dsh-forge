@@ -100,6 +100,7 @@ export class MMDCompanion {
   private lookTarget = { x: 0, y: 0 }
   private currentLook = { x: 0, y: 0 }
   private disposed = false
+  private renderLoopStarted = false
   private lastTime = performance.now()
   private nextBlinkAt = performance.now() + 2_000
   private blinkUntil = 0
@@ -211,6 +212,7 @@ export class MMDCompanion {
       camera.radius = this.fitDistance
     }
     this.resize()
+    this.start()
     this.options.onStatus?.('ready')
   }
 
@@ -250,8 +252,10 @@ export class MMDCompanion {
     this.gesture = { name, startAt: performance.now() }
   }
 
+  /** 启动渲染循环；引擎懒初始化（loadModel 内），可在加载完成后再次调用。 */
   start (): void {
-    if (this.engine === null || this.scene === null) return
+    if (this.engine === null || this.scene === null || this.renderLoopStarted) return
+    this.renderLoopStarted = true
     this.engine.runRenderLoop(() => {
       if (this.disposed) return
       const now = performance.now()
@@ -276,6 +280,7 @@ export class MMDCompanion {
   dispose (): void {
     if (this.disposed) return
     this.disposed = true
+    this.renderLoopStarted = false
     this.clearModel()
     this.engine?.dispose()
     this.engine = null

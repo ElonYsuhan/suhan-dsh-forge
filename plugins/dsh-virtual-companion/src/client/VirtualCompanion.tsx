@@ -247,8 +247,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     void mmd.loadModel(
       `/virtual-companion/model/${encodeURIComponent(settings.modelId)}/model.pmx`,
       `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
-    ).catch(() => {
-      // 模型缺失/损坏时静默退回立绘展示
+    ).catch((error) => {
+      // 模型缺失/损坏时退回立绘展示；控制台保留诊断
+      console.warn('[virtual-companion] 模型加载失败，保持立绘占位：', error)
     })
   }, [settings.modelId])
 
