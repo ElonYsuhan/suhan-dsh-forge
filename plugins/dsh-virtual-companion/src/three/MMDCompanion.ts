@@ -150,12 +150,18 @@ export class MMDCompanion {
       this.shadowGen?.addShadowCaster(mesh, true)
     }
 
-    // babylon-mmd 坐标系下模型面朝 -Z，相机在 +Z 看到的是背面。
-    // 蒙皮网格的渲染变换由骨骼决定（转 mesh 无效），因此旋转
-    // 骨骼根（bones[0]，通常为 全ての親）180° 使模型面向相机。
-    const topBone = root.skeleton?.bones[0] as unknown as TransformNode | undefined
-    if (topBone !== undefined) {
-      topBone.rotation.y = Math.PI
+    // babylon-mmd 使用 PMX 原始坐标（不翻 X），实测模型正面朝 -Z
+    // （面1 法线 (0,-0.25,-0.97)），相机在 +Z 看到的是背面。
+    // 蒙皮网格的渲染变换由骨骼决定（转 mesh 无效），且根骨骼可能
+    // 不止一根（如「操作中心」与「全ての親」并存），必须把全部
+    // 根骨骼都转 180° 才能让模型面向 +Z 相机。
+    const skeleton0 = root.skeleton
+    if (skeleton0 !== null) {
+      for (const bone of skeleton0.bones) {
+        if (bone.getParent() === null) {
+          (bone as unknown as TransformNode).rotation.y = Math.PI
+        }
+      }
     }
 
     // 高度归一化 + 脚底贴地
