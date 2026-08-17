@@ -41,15 +41,15 @@ const GESTURE_DURATIONS: Record<GestureName, number> = {
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
 /**
- * 手臂自然垂落偏移。three MMD 骨骼静止旋转为恒等（局部轴=世界轴）：
- * 左臂 -z 内收、右臂 +z 内收（镜像）；+x 为前摆（双侧同号）。
- * 实测 MMD 默认站姿双臂外张约 12°，内收 11.5° 后贴近身体。
+ * 手臂自然垂落偏移（经 PMX 骨骼模拟实测）：
+ * - 静止站姿双臂外张约 54°，需内收约 1.05 rad 才贴身
+ * - 左臂 -z 内收、右臂 +z 内收（镜像）；-x 为前摆（+x 向后）
  */
 const ARM_POSE_OFFSETS: Record<string, { x?: number; z?: number }> = {
-  左腕: { x: 0.06, z: -0.2 },
-  右腕: { x: 0.06, z: 0.2 },
-  左ひじ: { x: 0.1 },
-  右ひじ: { x: 0.1 }
+  左腕: { x: -0.08, z: -1.05 },
+  右腕: { x: -0.08, z: 1.05 },
+  左ひじ: { x: -0.12 },
+  右ひじ: { x: -0.12 }
 }
 
 interface BoneTarget {
@@ -397,9 +397,9 @@ export class MMDCompanion {
 
     switch (name) {
       case 'wave': {
-        // 右臂抬起挥手：上臂前举 + 手肘微屈 + 手腕快速摆动
-        addBone('右腕', 1.25 * envelope, 0, Math.sin(time * 18) * 0.18 * envelope)
-        addBone('右ひじ', 0.45 * envelope, 0, 0)
+        // 右臂抬起挥手：-x 前摆举臂 + 手肘微屈 + 手腕快速摆动
+        addBone('右腕', -1.25 * envelope, 0, Math.sin(time * 18) * 0.18 * envelope)
+        addBone('右ひじ', -0.45 * envelope, 0, 0)
         break
       }
       case 'nod':

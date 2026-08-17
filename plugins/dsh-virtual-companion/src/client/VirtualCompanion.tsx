@@ -343,26 +343,32 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const startPanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
     const rect = panelRef.current?.getBoundingClientRect()
+    // 面板定位是相对 .companion 的，拖拽原点需换算回相对坐标
     panelDragRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      originX: rect?.left ?? panelLeft,
-      originY: rect?.top ?? 0
+      originX: (rect?.left ?? 0) - position.x,
+      originY: (rect?.top ?? 0) - position.y
     }
     event.currentTarget.setPointerCapture(event.pointerId)
-  }, [panelLeft])
+  }, [position])
 
   const movePanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = panelDragRef.current
     if (state === null || state.pointerId !== event.pointerId) return
     const width = panelRef.current?.offsetWidth ?? PANEL_WIDTH
     const height = panelRef.current?.offsetHeight ?? 260
+    // 相对坐标下的视口钳制（companion 位置补偿）
+    const minX = 8 - position.x
+    const minY = 8 - position.y
+    const maxX = window.innerWidth - width - 8 - position.x
+    const maxY = window.innerHeight - height - 8 - position.y
     setPanelPosition({
-      x: Math.min(Math.max(state.originX + (event.clientX - state.startX), 8), window.innerWidth - width - 8),
-      y: Math.min(Math.max(state.originY + (event.clientY - state.startY), 8), window.innerHeight - height - 8)
+      x: Math.min(Math.max(state.originX + (event.clientX - state.startX), minX), maxX),
+      y: Math.min(Math.max(state.originY + (event.clientY - state.startY), minY), maxY)
     })
-  }, [])
+  }, [position])
 
   const endPanelDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = panelDragRef.current
