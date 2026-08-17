@@ -9,6 +9,8 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   BACKGROUND_TEXT_MAX_LENGTH,
+  BRIGHTNESS_MAX,
+  BRIGHTNESS_MIN,
   DEFAULT_SETTINGS,
   getChatBackground,
   getRolePreset,
@@ -213,6 +215,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   useEffect(() => {
     mmdRef.current?.setSpeaking(speaking)
   }, [speaking])
+
+  // 亮度设置同步给模型
+  useEffect(() => {
+    mmdRef.current?.setBrightness(settings.brightness)
+  }, [settings.brightness])
 
   // 滚轮缩放人物（原生监听，passive:false 才能 preventDefault）
   useEffect(() => {
@@ -900,6 +907,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
                 <option key={model.id} value={model.id}>{model.label}</option>
               ))}
             </select>
+          </label>
+          <label className={css.field}>
+            <span>亮度：{settings.brightness.toFixed(2)}</span>
+            <input
+              type='range'
+              min={BRIGHTNESS_MIN}
+              max={BRIGHTNESS_MAX}
+              step={0.05}
+              value={settings.brightness}
+              onChange={(event) => setSettings({ ...settings, brightness: Number(event.target.value) })}
+            />
           </label>
           <label className={css.field}>
             <span>音色</span>

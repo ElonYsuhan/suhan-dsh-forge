@@ -248,6 +248,8 @@ export interface CompanionSettings {
   skinId: SkinId
   /** 本地模型目录里的模型 id（对应 /virtual-companion/models 列表）。 */
   modelId: string
+  /** 模型亮度（色调映射曝光，0.4-1.6）。 */
+  brightness: number
   /** User-defined background/scene info sent to the LLM as context. */
   backgroundText: string
   /** Kept for backwards-compatible storage; the UI no longer offers color selection. */
@@ -257,12 +259,16 @@ export interface CompanionSettings {
 }
 
 export const DEFAULT_MODEL_ID = 'ganyu'
+export const DEFAULT_BRIGHTNESS = 0.85
+export const BRIGHTNESS_MIN = 0.4
+export const BRIGHTNESS_MAX = 1.6
 
 export const DEFAULT_SETTINGS: CompanionSettings = {
   roleId: DEFAULT_ROLE_ID,
   voiceId: DEFAULT_VOICE_STYLE_ID,
   skinId: DEFAULT_SKIN_ID,
   modelId: DEFAULT_MODEL_ID,
+  brightness: DEFAULT_BRIGHTNESS,
   backgroundText: '',
   backgroundId: DEFAULT_CHAT_BACKGROUND_ID,
   realtime: true
@@ -278,6 +284,9 @@ export function normalizeSettings (value: unknown): CompanionSettings {
     modelId: typeof source.modelId === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(source.modelId)
       ? source.modelId
       : DEFAULT_MODEL_ID,
+    brightness: typeof source.brightness === 'number' && Number.isFinite(source.brightness)
+      ? Math.min(BRIGHTNESS_MAX, Math.max(BRIGHTNESS_MIN, source.brightness))
+      : DEFAULT_BRIGHTNESS,
     backgroundText: normalizeBackgroundText(source.backgroundText),
     backgroundId: normalizeChatBackgroundId(source.backgroundId),
     realtime: typeof source.realtime === 'boolean' ? source.realtime : DEFAULT_SETTINGS.realtime

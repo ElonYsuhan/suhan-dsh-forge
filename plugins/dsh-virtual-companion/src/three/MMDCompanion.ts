@@ -63,17 +63,18 @@ export class MMDCompanion {
     this.renderer.setClearColor(0x000000, 0)
     this.renderer.outputEncoding = THREE.sRGBEncoding
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
-    this.renderer.toneMappingExposure = 1.1
+    this.renderer.toneMappingExposure = 1.0
 
     this.scene = new THREE.Scene()
     this.camera = new THREE.PerspectiveCamera(30, 1, 0.1, 200)
 
-    // 低强度三灯布光 + ACES 色调映射，避免 MMD 卡通材质过曝发白
-    const ambient = new THREE.AmbientLight(0xffffff, 0.32)
-    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.16)
-    const key = new THREE.DirectionalLight(0xffffff, 0.55)
+    // MMD 卡通材质按光源累加着色，总强度必须压低（约 0.9），
+    // 否则浅色模型整体泛白；ACES 同时柔和高光滚降
+    const ambient = new THREE.AmbientLight(0xffffff, 0.22)
+    const hemisphere = new THREE.HemisphereLight(0xfff2e0, 0x8a7a9a, 0.1)
+    const key = new THREE.DirectionalLight(0xffffff, 0.48)
     key.position.set(3, 6, 5)
-    const rim = new THREE.DirectionalLight(0xffe9c8, 0.22)
+    const rim = new THREE.DirectionalLight(0xffe9c8, 0.16)
     rim.position.set(-4, 3, -4)
     this.scene.add(ambient, hemisphere, key, rim)
   }
@@ -153,10 +154,10 @@ export class MMDCompanion {
     this.options.onStatus?.('ready')
   }
 
-  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；钳制在 0.55x-2.2x。 */
+  /** 滚轮缩放：deltaY > 0 缩小，< 0 放大；0.3x-8x，可拉近至脸部特写。 */
   zoomBy (deltaY: number): void {
     if (this.fitDistance <= 0) return
-    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.08 : 0.92), 0.55, 2.2)
+    this.zoomFactor = THREE.MathUtils.clamp(this.zoomFactor * (deltaY > 0 ? 1.1 : 0.9), 0.3, 8)
     this.camera.position.z = this.fitDistance * this.zoomFactor
   }
 
@@ -164,6 +165,11 @@ export class MMDCompanion {
   setSpeaking (speaking: boolean): void {
     this.speaking = speaking
     if (!speaking) this.applyMorphs(this.mouthMorphs, 0)
+  }
+
+  /** 亮度（色调映射曝光），由设置面板滑杆驱动。 */
+  setBrightness (brightness: number): void {
+    this.renderer.toneMappingExposure = brightness
   }
 
   /** 启动渲染循环。 */

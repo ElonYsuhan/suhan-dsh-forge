@@ -3,6 +3,7 @@ import {
   BACKGROUND_TEXT_MAX_LENGTH,
   CHAT_BACKGROUNDS,
   CHAT_BACKGROUND_IDS,
+  DEFAULT_BRIGHTNESS,
   DEFAULT_CHAT_BACKGROUND_ID,
   DEFAULT_MODEL_ID,
   DEFAULT_ROLE_ID,
@@ -93,6 +94,7 @@ describe('companion settings', () => {
       voiceId: 'sweet',
       skinId: 'fairyBlue',
       modelId: DEFAULT_MODEL_ID,
+      brightness: DEFAULT_BRIGHTNESS,
       backgroundText: '森林',
       backgroundId: 'night',
       realtime: false
