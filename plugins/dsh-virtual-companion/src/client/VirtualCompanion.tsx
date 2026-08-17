@@ -22,8 +22,26 @@ import {
   VOICE_STYLES,
   type VoiceStyleId
 } from '../shared/voice.ts'
-import { MMDCompanion } from '../three/MMDCompanion.ts'
+import { MMDCompanion, type GestureName } from '../three/MMDCompanion.ts'
 import css from './VirtualCompanion.module.css'
+
+/** 本地行为规则：关键词 → 手势，毫秒级触发，不等待 LLM。 */
+const BEHAVIOR_RULES: Array<{ pattern: RegExp; gesture: GestureName }> = [
+  { pattern: /你好|您好|嗨|哈喽|早上好|晚上好|hello|hi/i, gesture: 'wave' },
+  { pattern: /谢谢|感谢|辛苦/i, gesture: 'nod' },
+  { pattern: /不知道|不清楚/i, gesture: 'shake' },
+  { pattern: /为什么|怎么|什么|吗[？?]/i, gesture: 'tilt' },
+  { pattern: /开心|高兴|太好了|真棒|厉害/i, gesture: 'smile' },
+  { pattern: /再见|拜拜|晚安/i, gesture: 'wave' },
+  { pattern: /对不起|抱歉|致歉/i, gesture: 'bow' }
+]
+
+function gestureFor (text: string): GestureName | undefined {
+  for (const rule of BEHAVIOR_RULES) {
+    if (rule.pattern.test(text)) return rule.gesture
+  }
+  return undefined
+}
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
 
@@ -144,6 +162,10 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const lastSpokenTextsRef = useRef<string[]>([])
   const ttsCacheRef = useRef(new Map<string, Blob>())
   const prefetchInFlightRef = useRef(new Set<string>())
+  const lastGestureAtRef = useRef(0)
+  const audioCtxRef = useRef<AudioContext | null>(null)
+  const analyserRef = useRef<AnalyserNode | null>(null)
+  const analyserDataRef = useRef<Uint8Array<ArrayBuffer> | null>(null)
   const dragStateRef = useRef<{
     pointerId: number
     startX: number
@@ -287,10 +309,54 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         audio.src = SILENT_WAV
         await audio.play()
         audioUnlockedRef.current = true
+        // 建立 WebAudio 分析链（元素只能接一次），供音量 LipSync
+        if (audioCtxRef.current === null) {
+          const ctx = new AudioContext()
+          const source = ctx.createMediaElementSource(audio)
+          const analyser = ctx.createAnalyser()
+          analyser.fftSize = 256
+          source.connect(analyser)
+          analyser.connect(ctx.destination)
+          void ctx.resume()
+          audioCtxRef.current = ctx
+          analyserRef.current = analyser
+          analyserDataRef.current = new Uint8Array(analyser.fftSize)
+        }
       } catch {
         // 静音解锁失败不阻断交互；正式播放失败会走现有错误提示
       }
     })()
+  }, [])
+
+  // 音量包络循环：说话时把 RMS 同步给模型驱动口型张合
+  useEffect(() => {
+    let rafId = 0
+    const tick = (): void => {
+      rafId = requestAnimationFrame(tick)
+      const analyser = analyserRef.current
+      const data = analyserDataRef.current
+      if (analyser === null || data === null) return
+      analyser.getByteTimeDomainData(data)
+      let sum = 0
+      for (let index = 0; index < data.length; index++) {
+        const value = ((data[index] ?? 128) - 128) / 128
+        sum += value * value
+      }
+      const rms = Math.sqrt(sum / data.length)
+      mmdRef.current?.setSpeechLevel(Math.min(1, rms * 4))
+    }
+    rafId = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(rafId)
+  }, [])
+
+  /** 行为规则触发手势：900ms 节流，本地毫秒级生效。 */
+  const triggerGesture = useCallback((text: string): void => {
+    const gesture = gestureFor(text)
+    if (gesture === undefined) return
+    const now = Date.now()
+    if (now - lastGestureAtRef.current < 900) return
+    lastGestureAtRef.current = now
+    mmdRef.current?.playGesture(gesture)
   }, [])
 
   useEffect(() => {
@@ -452,6 +518,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     if (typeof window === 'undefined') return
     try {
       if (!interactingRef.current) return
+      // 回复语义触发手势（本地规则）
+      triggerGesture(text)
       stopCurrentAudio()
       const audio = audioRef.current
       if (audio === null) throw new Error('音频播放器未就绪')
@@ -563,6 +631,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const sendAnswer = useCallback(async (raw: string): Promise<void> => {
     const text = raw.trim()
     if (text === '' || !interactingRef.current) return
+    // 动作预测：你说话的语义先触发手势，不等待 LLM 回复
+    triggerGesture(text)
     setThinking(true)
     setListening(false)
     setSpeechError(null)

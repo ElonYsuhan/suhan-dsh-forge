@@ -21,7 +21,20 @@ export interface MMDCompanionOptions {
 
 const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
+const SMILE_CANDIDATES = ['笑い', 'にこり', '微笑', '笑顔']
 const VMD_FPS = 30
+
+export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
+
+/** 手势时长（毫秒）与正弦包络（淡入淡出即交叉混合）。 */
+const GESTURE_DURATIONS: Record<GestureName, number> = {
+  wave: 1_600,
+  nod: 900,
+  shake: 1_000,
+  tilt: 1_400,
+  bow: 1_200,
+  smile: 2_200
+}
 /** 待机肢体动作涉及的 MMD 标准骨骼名（按日文名匹配，缺失则跳过）。 */
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
 
@@ -53,10 +66,13 @@ export class MMDCompanion {
   private mesh: THREE.SkinnedMesh | null = null
   private mouthMorphs: string[] = []
   private blinkMorph: string | undefined
+  private smileMorph: string | undefined
   private vmdMorphs: VmdMorphTrack[] = []
   private bodyBones = new Map<string, BoneTarget>()
   private speaking = false
+  private speechLevel = 0
   private fitDistance = 20
+  private gesture: { name: GestureName; startAt: number } | null = null
   private disposed = false
   private rafId = 0
   private lastTime = performance.now()
@@ -115,6 +131,8 @@ export class MMDCompanion {
     const names = dictionary === undefined ? [] : Object.keys(dictionary)
     this.mouthMorphs = MOUTH_CANDIDATES.filter(name => names.includes(name))
     this.blinkMorph = BLINK_CANDIDATES.find(name => names.includes(name))
+    this.smileMorph = SMILE_CANDIDATES.find(name => names.includes(name))
+    this.gesture = null
 
     // 收集待机肢体动作所需的骨骼及其基础旋转；
     // 手背后姿势偏移直接烘焙进基础旋转并立即应用。
@@ -183,6 +201,16 @@ export class MMDCompanion {
     this.renderer.toneMappingExposure = brightness
   }
 
+  /** 播放一次瞬态手势（与待机层叠加混合，新手势替换旧手势）。 */
+  playGesture (name: GestureName): void {
+    this.gesture = { name, startAt: performance.now() }
+  }
+
+  /** 语音音量包络（0-1），驱动口型张合幅度。 */
+  setSpeechLevel (level: number): void {
+    this.speechLevel = Math.min(1, Math.max(0, level))
+  }
+
   /** 启动渲染循环。 */
   start (): void {
     this.rafId = requestAnimationFrame(this.tick)
@@ -243,14 +271,14 @@ export class MMDCompanion {
       this.setMorph(this.blinkMorph, now < this.blinkUntil ? 1 : 0)
     }
 
-    // 口型：说话时每 ~130ms 切换一个口型 morph
+    // 口型：说话时每 ~130ms 切换口型，张合幅度随音量包络
     if (this.speaking && this.mouthMorphs.length > 0) {
       if (now >= this.nextMouthAt) {
         const current = this.mouthMorphs[this.mouthIndex]
         if (current !== undefined) this.setMorph(current, 0)
         this.mouthIndex = (this.mouthIndex + 1) % this.mouthMorphs.length
         const next = this.mouthMorphs[this.mouthIndex]
-        if (next !== undefined) this.setMorph(next, 0.85)
+        if (next !== undefined) this.setMorph(next, 0.3 + this.speechLevel * 0.7)
         this.nextMouthAt = now + 130
       }
     }
@@ -284,6 +312,57 @@ export class MMDCompanion {
           this.setMorph(track.name, weight)
         }
       }
+    }
+    this.applyGesture(now)
+  }
+
+  /** 瞬态手势：正弦包络淡入淡出，与待机姿态叠加混合。 */
+  private applyGesture (now: number): void {
+    if (this.gesture === null) return
+    const { name, startAt } = this.gesture
+    const duration = GESTURE_DURATIONS[name]
+    const elapsed = now - startAt
+    if (elapsed >= duration) {
+      this.gesture = null
+      return
+    }
+    const progress = elapsed / duration
+    const envelope = Math.sin(Math.PI * progress)
+    const time = now / 1_000
+
+    const addBone = (boneName: string, dx: number, dy: number, dz: number): void => {
+      const target = this.bodyBones.get(boneName)
+      if (target === undefined) return
+      target.bone.rotation.x += dx
+      target.bone.rotation.y += dy
+      target.bone.rotation.z += dz
+    }
+
+    switch (name) {
+      case 'wave': {
+        // 右臂抬起挥手：上臂前举 + 手肘微屈 + 手腕快速摆动
+        addBone('右腕', 1.25 * envelope, 0, Math.sin(time * 18) * 0.18 * envelope)
+        addBone('右ひじ', 0.45 * envelope, 0, 0)
+        break
+      }
+      case 'nod':
+        addBone('頭', Math.sin(progress * Math.PI * 2) * 0.2, 0, 0)
+        break
+      case 'shake':
+        addBone('頭', 0, Math.sin(progress * Math.PI * 2) * 0.25, 0)
+        break
+      case 'tilt':
+        addBone('頭', 0, 0, 0.26 * envelope)
+        break
+      case 'bow':
+        addBone('上半身', 0.35 * envelope, 0, 0)
+        addBone('首', 0.2 * envelope, 0, 0)
+        break
+      case 'smile':
+        if (this.smileMorph !== undefined) {
+          this.setMorph(this.smileMorph, envelope * 0.9)
+        }
+        break
     }
   }
 
