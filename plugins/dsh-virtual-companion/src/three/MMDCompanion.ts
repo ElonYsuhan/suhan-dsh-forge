@@ -183,7 +183,7 @@ export class MMDCompanion {
         self.elegantIdle.leftHand.set(lx, ly, lz)
         self.elegantIdle.rightHand.set(rx, ry, rz)
       },
-      /** 调参：肘极点偏移（世界空间，相对肩部：x=外侧幅度，y=向下，z=向前）。 */
+      /** 调参：肘极点偏移（模型空间，相对肩部：x=外侧幅度，y=向下，z=向前）。 */
       setIkPoles (x: number, y: number, z: number): void {
         self.elegantIdle.poleOffset.set(x, y, z)
       }

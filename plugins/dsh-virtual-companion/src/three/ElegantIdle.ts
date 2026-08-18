@@ -48,10 +48,11 @@ export class ElegantIdle {
   leftHand = new Vector3(-0.4, 11.1, -1.2)
   rightHand = new Vector3(0.5, 11.4, -1.45)
   /**
-   * 肘部极点偏移（世界空间，相对肩部）：x 为「外侧」幅度（符号由肩的
-   * 世界 x 自动决定，兼容任意模型的左右约定），y 向下，z 向前
-   * （模型正面 +z，正值 = 身体前侧）。
+   * 肘部极点偏移（模型空间，相对肩部）：x 为「外侧」幅度（符号由肩的
+   * 模型空间 x 自动决定），y 向下，z 向前（模型正面 −z，正值 = 向前）。
    * 作用：肘落在身体两侧、略向前，大臂自然下垂不后伸。
+   * 必须是模型空间：世界空间的「外侧」随模型偏航变化，模型转到
+   * ±90° 附近时符号翻转，极点每帧跳到身体另一侧（胳膊来回甩）。
    */
   poleOffset = new Vector3(2.5, -2.5, 0.5)
   /** 瞬态手势对右手的偏移（wave 等），无手势时为零向量。 */
@@ -182,10 +183,15 @@ export class ElegantIdle {
     if (this.rootMat === null) return
     Vector3.TransformCoordinatesToRef(targetLocal, this.poseMat, this.pT)
     const T = this.pT
-    // 极点：相对肩部（世界空间）——外侧（符号取肩的世界 x）、略向下、略向前。
-    // 与模型的左右轴约定无关，保证肘落在身体两侧而非身后。
-    const side = S.x >= 0 ? 1 : -1
-    this.pP.set(S.x + side * this.poleOffset.x, S.y + this.poleOffset.y, S.z + this.poleOffset.z)
+    // 极点：肩部在模型空间加偏移，再经姿态空间矩阵变换回世界——
+    // 「外侧」按模型自身左右轴判断，任意偏航下肘都稳定在身体两侧，
+    // 不会因世界 x 符号翻转而每帧跳到另一侧（±90° 附近胳膊来回甩）。
+    this.worldToPoseRef(S, this.sH)
+    const side = this.sH.x >= 0 ? 1 : -1
+    this.sH.x += side * this.poleOffset.x
+    this.sH.y += this.poleOffset.y
+    this.sH.z -= this.poleOffset.z // 模型正面 −z：减 = 向前
+    Vector3.TransformCoordinatesToRef(this.sH, this.poseMat, this.pP)
     const P = this.pP
 
     const l1 = Vector3.Distance(S, E)
@@ -260,6 +266,13 @@ export class ElegantIdle {
   private worldPosToRef (bone: Bone, out: Vector3): void {
     bone.computeWorldMatrix(true)
     out.copyFrom(bone.getWorldMatrix().getTranslation())
+  }
+
+  /** 世界坐标 → 姿态空间（模型空间）：poseMat 无缩放，逆 = 共轭旋转 + 平移回退。 */
+  private worldToPoseRef (world: Vector3, out: Vector3): void {
+    this.sG.copyFrom(world).subtractInPlace(this.vTrans)
+    this.qB.set(-this.poseQuat.x, -this.poseQuat.y, -this.poseQuat.z, this.poseQuat.w)
+    this.sG.rotateByQuaternionToRef(this.qB, out)
   }
 
   private worldPos (bone: Bone): number[] {
