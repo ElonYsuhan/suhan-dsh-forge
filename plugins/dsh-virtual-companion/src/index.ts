@@ -53,7 +53,11 @@ const MODEL_LABELS: Record<string, string> = {
   'zankou-fashion': 'Zankou·时尚装',
   'zankou-fashion2': 'Zankou·时尚装2',
   'zankou-nighty': 'Zankou·睡衣',
-  'zankou-swimsuit': 'Zankou·泳装'
+  'zankou-swimsuit': 'Zankou·泳装',
+  'zankou-original': 'Zankou·原皮',
+  'zankou-skin2-black': 'Zankou·皮肤2黑',
+  vivianne: '薇薇安',
+  jinwu: '金乌·毛绒派对'
 }
 
 /** 模型静态资产内容类型（按扩展名）。 */
