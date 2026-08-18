@@ -43,6 +43,8 @@ describe.skipIf(!existsSync(MODEL_PATH))('ElegantIdle 站姿无振荡回归', ()
         `maxStep=${r.maxStep.toFixed(5)} maxAlt=${r.maxAlt.toFixed(5)}`)
       expect(r.maxStep).toBeLessThan(0.05)
       expect(r.maxAlt).toBeLessThan(0.005)
+      // 骨架初始化后的 5 帧内必须落位，不能长期跨帧追赶目标。
+      expect(r.initialPoseError).toBeLessThan(0.1)
       // 手必须落在目标上（肚脐下方小腹前），误差 < 0.1 单位
       expect(Math.abs(r.leftHand[1] - 11.1)).toBeLessThan(0.1)
       expect(Math.abs(r.rightHand[1] - 11.4)).toBeLessThan(0.1)
@@ -58,6 +60,7 @@ describe.skipIf(!existsSync(MODEL_PATH))('ElegantIdle 站姿无振荡回归', ()
 async function runYaw (yaw: number): Promise<{
   maxStep: number
   maxAlt: number
+  initialPoseError: number
   leftHand: number[]
   rightHand: number[]
   leftElbow: number[]
@@ -132,6 +135,7 @@ async function runYaw (yaw: number): Promise<{
     if (bone !== undefined) bodyBases.set(name, bone.getRotation().clone())
   }
   const track: Array<number[]> = []
+  let initialHands: number[] | null = null
   for (let frame = 0; frame < 300; frame++) {
     const time = frame / 60
     const breathe = Math.sin(time * 1.6) * 0.012
@@ -153,13 +157,18 @@ async function runYaw (yaw: number): Promise<{
     scene.render()
     const state = idle.getState()!
     track.push([...state.leftHand, ...state.rightHand, ...state.leftElbow, ...state.rightElbow])
+    // 第 0 帧用于初始化骨骼世界矩阵；随后给 MMD 的附加/捩骨链数帧传播。
+    if (frame === 5) {
+      initialHands = [...state.leftHand, ...state.rightHand]
+    }
   }
   // 只看稳态（跳过前 60 帧收敛期）：相邻帧位移与交替性
   const steady = track.slice(60)
   let maxStep = 0
   let maxAlt = 0
   for (let i = 2; i < steady.length; i++) {
-    for (let k = 0; k < 6; k++) {
+    // 双手和双肘共 12 个坐标都必须稳定；旧测试只覆盖了双手。
+    for (let k = 0; k < 12; k++) {
       const step = Math.abs(steady[i][k] - steady[i - 1][k])
       if (step > maxStep) maxStep = step
       const d1 = steady[i][k] - steady[i - 1][k]
@@ -169,9 +178,12 @@ async function runYaw (yaw: number): Promise<{
     }
   }
   const last = steady[steady.length - 1]
+  const firstSettledHands = initialHands ?? []
+  const initialPoseError = Math.max(...firstSettledHands.map((value, index) => Math.abs(value - last[index])))
   return {
     maxStep,
     maxAlt,
+    initialPoseError,
     leftHand: last.slice(0, 3),
     rightHand: last.slice(3, 6),
     leftElbow: last.slice(6, 9),

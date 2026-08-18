@@ -20,7 +20,7 @@
  * - 左右臂「外侧」符号在肩数据有效的首帧冻结，运行期绝不动态判断
  * - 每帧算出圆上两个候选肘解，永远选离上一帧肘位置最近的那个
  * - 连续性约束：与上一帧肘方向绕肩夹角 > 30° 时拒绝并保持上一帧
- * - 写回时与当前局部旋转做 slerp（0.3/帧）再叠加
+ * - 解析解单帧直接写回，不保留会在相邻帧间反复追赶的旋转残差
  */
 import { Bone, Matrix, Mesh, Quaternion, Space, Vector3 } from '@babylonjs/core'
 
@@ -61,10 +61,11 @@ export class ElegantIdle {
   /** 瞬态手势对右手的偏移（wave 等），无手势时为零向量。 */
   rightArmOffset = Vector3.Zero()
   /**
-   * 写回平滑系数（0~1）：1 = 直接写解；<1 时当前局部旋转与解做 slerp。
-   * 0.3/帧：防御残余帧间振荡，收敛慢 ~4 帧，视觉不可察。
+   * 写回平滑系数（0~1）：默认直接写解析解，保证站姿单帧收敛。
+   * 仅保留为诊断调参入口；默认姿态不得依赖跨帧追赶，否则骨架矩阵与
+   * 渲染帧不同步时会表现为手臂在目标两侧来回抖动。
    */
-  smoothing = 0.3
+  smoothing = 1
 
   private mesh: Mesh | null = null
   private left: ArmChain | null = null
@@ -311,6 +312,11 @@ export class ElegantIdle {
     this.applyArmRotation(upper, this.sD, this.sC)
 
     // 5) 肘：最短弧(当前前臂方向 → T′_world − elbowWorld)，T′ = S + u·d（钳制后目标点）
+    // 上臂刚刚旋转，肘和腕的世界位置已经改变；必须刷新后再取当前前臂
+    // 方向。沿用步骤 1 的旧位置会让前臂追逐上一帧几何，浏览器中可见
+    // 为手臂在目标两侧反复修正。
+    this.worldPosToRef(lower, this.pE)
+    this.worldPosToRef(wrist, this.pW)
     this.sG.copyFrom(u).scaleInPlace(d).addInPlace(S) // sG = T′（模型）
     Vector3.TransformCoordinatesToRef(this.sG, this.poseMat, this.sH) // sH = T′（世界）
     this.sH.subtractToRef(this.pT, this.sG) // sG = T′_world − elbowWorld
