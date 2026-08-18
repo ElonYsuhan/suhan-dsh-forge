@@ -220,6 +220,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [speaking, setSpeaking] = useState(false)
   const [modelReady, setModelReady] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
+  const [ikDiag, setIkDiag] = useState<string>('')
   const [bubbleText, setBubbleText] = useState<string | null>(null)
   // 人物朝向（度，0 = 正面），面板滑块与右键拖拽共用
   const [yawDeg, setYawDeg] = useState(0)
@@ -262,6 +263,20 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   useEffect(() => {
     mmdRef.current?.setSpeaking(speaking)
   }, [speaking])
+
+  // 姿态诊断读数：手/肘世界位置 + 近 90 帧最大帧位移（排查抖动用）
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      const d = mmdRef.current?.getIkDiagnostics()
+      if (d === null || d === undefined) {
+        setIkDiag('')
+        return
+      }
+      const fmt = (v: number[]) => v.map(x => x.toFixed(2)).join(', ')
+      setIkDiag(`手 L(${fmt(d.leftHand)}) R(${fmt(d.rightHand)}) 肘 L(${fmt(d.leftElbow)}) R(${fmt(d.rightElbow)}) 肘角 ${d.leftAngleDeg}°/${d.rightAngleDeg}° 帧位移 手${d.maxHandStep} 肘${d.maxElbowStep}（${d.samples} 帧窗口）`)
+    }, 500)
+    return () => window.clearInterval(id)
+  }, [])
 
   // 亮度设置同步给模型
   useEffect(() => {
@@ -1218,6 +1233,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               }}
             />
           </label>
+          {ikDiag !== '' && (
+            <div style={{ fontSize: '0.72em', opacity: 0.85, lineHeight: 1.5, wordBreak: 'break-all', padding: '0 0.2em' }}>
+              {ikDiag}
+            </div>
+          )}
           <label className={css.field}>
             <span>音色</span>
             <select

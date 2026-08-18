@@ -18,7 +18,7 @@
  * 目标以归一化模型单位（身高 20、脚底 y=0）表达，跨模型可移植；
  * 模型原地旋转时手臂跟随，不穿模。
  */
-import { Bone, Matrix, Mesh, Quaternion, Vector3 } from '@babylonjs/core'
+import { Bone, Matrix, Mesh, Quaternion, Space, Vector3 } from '@babylonjs/core'
 
 export interface ElegantIdleState {
   leftHand: number[]
@@ -57,6 +57,12 @@ export class ElegantIdle {
   poleOffset = new Vector3(2.5, -2.5, 0.5)
   /** 瞬态手势对右手的偏移（wave 等），无手势时为零向量。 */
   rightArmOffset = Vector3.Zero()
+  /**
+   * 写回平滑系数（0~1）：1 = 直接写解；<1 时当前局部旋转与解做 slerp。
+   * 防御任何残余帧间振荡（如外部扰动、浮点噪声被逐帧放大），
+   * 收敛只慢 1~2 帧，对呼吸/挥手不可察。
+   */
+  smoothing = 0.6
 
   private mesh: Mesh | null = null
   private left: ArmChain | null = null
@@ -249,7 +255,7 @@ export class ElegantIdle {
     this.applyArmRotation(lower, this.sC, this.sH)
   }
 
-  /** 把骨骼世界朝向沿 arc(from→to) 旋转后写回局部四元数。 */
+  /** 把骨骼世界朝向沿 arc(from→to) 旋转后写回局部四元数（带平滑）。 */
   private applyArmRotation (bone: Bone, from: Vector3, to: Vector3): void {
     const parent = bone.getParent()
     this.worldQuatToRef(parent ?? bone, this.qB) // 父世界四元数（无父则用自身）
@@ -260,6 +266,11 @@ export class ElegantIdle {
     // 局部 = qB⁻¹ * qWorldNew
     this.qF.copyFrom(this.qB).invertInPlace()
     this.qF.multiplyInPlace(this.qE)
+    if (this.smoothing < 1) {
+      // 当前局部旋转 → 解：slerp（qD 已用完，可作暂存）
+      bone.getRotationQuaternionToRef(Space.LOCAL, undefined, this.qD)
+      Quaternion.SlerpToRef(this.qD, this.qF, this.smoothing, this.qF)
+    }
     bone.setRotationQuaternion(this.qF)
   }
 

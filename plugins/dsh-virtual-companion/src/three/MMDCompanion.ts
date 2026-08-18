@@ -132,6 +132,8 @@ export class MMDCompanion {
   /** 优雅站姿状态（TwoBoneIK 驱动双手，角色聊天默认动作）。 */
   private readonly elegantIdle = new ElegantIdle()
   private ikActive = false
+  /** IK 每帧快照（近 90 帧：左右手/肘世界位置），用于诊断面板显示实际帧位移。 */
+  private readonly ikHistory: number[][] = []
 
   constructor (canvas: HTMLCanvasElement, options: MMDCompanionOptions = {}) {
     this.canvas = canvas
@@ -427,6 +429,55 @@ export class MMDCompanion {
     this.gesture = { name, startAt: performance.now() }
   }
 
+  /** 诊断：手/肘当前世界位置 + 近 90 帧最大帧位移（判断是否骨层级抖动）。 */
+  getIkDiagnostics (): {
+    leftHand: number[]
+    rightHand: number[]
+    leftElbow: number[]
+    rightElbow: number[]
+    leftAngleDeg: number
+    rightAngleDeg: number
+    maxHandStep: number
+    maxElbowStep: number
+    samples: number
+  } | null {
+    const state = this.elegantIdle.getState()
+    if (state === null) return null
+    const hist = this.ikHistory
+    let maxHandStep = 0
+    let maxElbowStep = 0
+    for (let i = 1; i < hist.length; i++) {
+      const a = hist[i - 1]
+      const b = hist[i]
+      if (a === undefined || b === undefined) continue
+      for (let k = 0; k < 6; k++) {
+        const av = a[k]
+        const bv = b[k]
+        if (av === undefined || bv === undefined) continue
+        const d = Math.abs(bv - av)
+        if (d > maxHandStep) maxHandStep = d
+      }
+      for (let k = 6; k < 12; k++) {
+        const av = a[k]
+        const bv = b[k]
+        if (av === undefined || bv === undefined) continue
+        const d = Math.abs(bv - av)
+        if (d > maxElbowStep) maxElbowStep = d
+      }
+    }
+    return {
+      leftHand: state.leftHand,
+      rightHand: state.rightHand,
+      leftElbow: state.leftElbow,
+      rightElbow: state.rightElbow,
+      leftAngleDeg: state.leftAngleDeg,
+      rightAngleDeg: state.rightAngleDeg,
+      maxHandStep: Number(maxHandStep.toFixed(4)),
+      maxElbowStep: Number(maxElbowStep.toFixed(4)),
+      samples: hist.length
+    }
+  }
+
   /** 启动渲染循环；引擎懒初始化（loadModel 内），可在加载完成后再次调用。 */
   start (): void {
     if (this.engine === null || this.scene === null || this.renderLoopStarted) return
@@ -589,6 +640,16 @@ export class MMDCompanion {
     // IK 姿态修正必须最后执行（scene.render() 前）：手势设置的目标
     // 偏移在此刻生效，且 IK 对 腕/ひじ 的覆盖不会被呼吸回写覆盖。
     this.elegantIdle.update(time)
+
+    // 诊断快照：近 90 帧的手/肘世界位置
+    const ikState = this.elegantIdle.getState()
+    if (ikState !== null) {
+      this.ikHistory.push([
+        ...ikState.leftHand, ...ikState.rightHand, ...ikState.leftElbow, ...ikState.rightElbow,
+        ikState.leftAngleDeg, ikState.rightAngleDeg
+      ])
+      if (this.ikHistory.length > 90) this.ikHistory.shift()
+    }
   }
 
   private updateBodyPose (time: number, now: number): void {
