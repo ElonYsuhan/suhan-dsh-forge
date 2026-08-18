@@ -48,7 +48,12 @@ const MODEL_LABELS: Record<string, string> = {
   changye: '王昭君·长夜焕生',
   alice: '爱丽丝',
   qianxiao: '千咲',
-  jialuo: '伽罗·最初的交响'
+  jialuo: '伽罗·最初的交响',
+  mintswimsuit: '异环·薄荷泳装',
+  'zankou-fashion': 'Zankou·时尚装',
+  'zankou-fashion2': 'Zankou·时尚装2',
+  'zankou-nighty': 'Zankou·睡衣',
+  'zankou-swimsuit': 'Zankou·泳装'
 }
 
 /** 模型静态资产内容类型（按扩展名）。 */
