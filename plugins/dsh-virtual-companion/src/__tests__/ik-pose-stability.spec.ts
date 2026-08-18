@@ -46,6 +46,11 @@ describe.skipIf(!existsSync(MODEL_PATH))('ElegantIdle 站姿无振荡回归', ()
       // 手必须落在目标上（肚脐下方小腹前），误差 < 0.1 单位
       expect(Math.abs(r.leftHand[1] - 11.1)).toBeLessThan(0.1)
       expect(Math.abs(r.rightHand[1] - 11.4)).toBeLessThan(0.1)
+      // 肘必须在各自身体外侧（ganyu PMX 左臂在模型 +x，世界 +x 镜像为 −x）
+      if (label === '正面 0°') {
+        expect(r.leftElbow[0]).toBeLessThan(0)
+        expect(r.rightElbow[0]).toBeGreaterThan(0)
+      }
     }, 60_000)
   }
 })
