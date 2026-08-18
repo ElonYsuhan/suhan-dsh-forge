@@ -10,6 +10,8 @@
 
 ## 目录职责
 
+- `models/`：软链接，指向本机 `~/.dsh/storages/dsh-virtual-companion/models/`（MMD 模型，许可证禁止二次配布）。git 只存链接指针，模型内容不得进入 Git 或发布包；`pnpm pack` 已验证不跟随链接。
+
 - `plugins/*`：一个目录对应一个可独立安装的 DSH npm 包。
 - `apps/*`：市场、审核台等产品应用；不得成为插件运行依赖。
 - `packages/*`：插件 SDK、测试工具和注册表客户端。
