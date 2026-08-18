@@ -42,4 +42,14 @@ pnpm pack:check
 pnpm check
 ```
 
+## 提交门禁（pre-commit hook）
+
+仓库内置 `.githooks/pre-commit`，每次提交自动运行 `pnpm check`（validate + lint + typecheck + test + build + pack:check）。首次克隆后启用：
+
+```bash
+git config core.hooksPath .githooks
+```
+
+临时跳过（不推荐）必须 `--no-verify` 并在变更说明中注明理由。
+
 公开上架还必须完成：许可证、仓库地址、维护者、包名所有权、安全扫描和最终 `.tgz` 安装测试。

@@ -1,0 +1,25 @@
+#!/bin/sh
+# 提交门禁：每次提交自动运行聚合检查 pnpm check
+# （validate + lint + typecheck + test + build + pack:check）。
+# 启用：git config core.hooksPath .githooks
+# 临时跳过（不推荐，须在变更说明注明理由）：git commit --no-verify
+set -eu
+
+cd "$(git rev-parse --show-toplevel)" || exit 1
+
+# git 会把 GIT_DIR/GIT_INDEX_FILE 等导出给 hook；若不清理，门禁里 spawn 的
+# git 命令（如 taskboard 的 worktree 测试在临时仓库里 git worktree add）
+# 会继承这些变量指向本仓库而错乱（.git/index: Not a directory）。
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
+      GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_NAMESPACE \
+      GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_AUTHOR_DATE \
+      GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_COMMITTER_DATE
+
+if ! command -v pnpm >/dev/null 2>&1; then
+  echo '[pre-commit] 错误：未找到 pnpm。请先安装 pnpm 并确保其位于 PATH（GUI 提交工具可能缺少 PATH，请改用终端提交）。' >&2
+  exit 1
+fi
+
+echo '[pre-commit] 运行仓库门禁：pnpm check …'
+pnpm check
+echo '[pre-commit] 门禁通过。'

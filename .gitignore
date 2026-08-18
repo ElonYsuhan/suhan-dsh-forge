@@ -18,3 +18,8 @@ artifacts/
 plugins/*/datas/*.json
 plugins/*/datas/worktrees/
 !plugins/*/datas/*.example.json
+
+# 本地模型诊断脚本（含个人模型路径/ID），不得提交。
+plugins/dsh-virtual-companion/scripts/face-direction.mjs
+plugins/dsh-virtual-companion/scripts/inspect-arm-axes.mjs
+plugins/dsh-virtual-companion/scripts/inspect-bone-rotation.mjs

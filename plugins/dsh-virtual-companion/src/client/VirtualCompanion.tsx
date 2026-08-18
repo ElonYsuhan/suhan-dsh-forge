@@ -194,6 +194,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     startY: number
     originX: number
     originY: number
+    mode: 'move' | 'rotate'
+    lastX: number
+    lastY: number
   } | null>(null)
   const dragMovedRef = useRef(false)
   const interactingRef = useRef(false)
@@ -218,6 +221,8 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [modelReady, setModelReady] = useState(false)
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [bubbleText, setBubbleText] = useState<string | null>(null)
+  // 人物朝向（度，0 = 正面），面板滑块与右键拖拽共用
+  const [yawDeg, setYawDeg] = useState(0)
 
   // MMD 人物模型场景：挂载时创建，模型切换时重新加载；
   // 加载期间立绘占位，失败时保持立绘不受影响。
@@ -1020,14 +1025,35 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   }, [closeSettings, openSettings, panelOpen, toggleVoiceSession])
 
   const startDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.pointerType === 'mouse' && event.button !== 0) return
+    if (event.pointerType !== 'mouse') return
+    // 右键拖拽 = 旋转模型（左键保持移动面板）
+    if (event.button === 2) {
+      dragStateRef.current = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        originX: position.x,
+        originY: position.y,
+        mode: 'rotate',
+        lastX: event.clientX,
+        lastY: event.clientY
+      }
+      dragMovedRef.current = true
+      event.currentTarget.setPointerCapture(event.pointerId)
+      event.preventDefault()
+      return
+    }
+    if (event.button !== 0) return
     unlockAudio()
     dragStateRef.current = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
       originX: position.x,
-      originY: position.y
+      originY: position.y,
+      mode: 'move',
+      lastX: event.clientX,
+      lastY: event.clientY
     }
     dragMovedRef.current = false
     event.currentTarget.setPointerCapture(event.pointerId)
@@ -1036,6 +1062,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const moveDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
     const state = dragStateRef.current
     if (state === null || state.pointerId !== event.pointerId) return
+    if (state.mode === 'rotate') {
+      const dx = event.clientX - state.lastX
+      const dy = event.clientY - state.lastY
+      state.lastX = event.clientX
+      state.lastY = event.clientY
+      // 拖拽即「抓住模型转」：向右拖脸向右转，向下拖视角抬高
+      mmdRef.current?.rotateBy(-dx * 0.012, dy * 0.012)
+      // 同步面板朝向滑块（就近取整，避免拖动过程频繁重渲染）
+      setYawDeg(Math.round(mmdRef.current?.getYawDegrees() ?? 0))
+      return
+    }
     const deltaX = event.clientX - state.startX
     const deltaY = event.clientY - state.startY
     if (Math.abs(deltaX) > DRAG_THRESHOLD || Math.abs(deltaY) > DRAG_THRESHOLD) {
@@ -1083,6 +1120,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
         onPointerMove={moveDrag}
         onPointerUp={endDrag}
         onPointerCancel={endDrag}
+        onContextMenu={(event) => event.preventDefault()}
         onPointerEnter={() => setHovered(true)}
         onPointerLeave={() => setHovered(false)}
       >
@@ -1166,6 +1204,21 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
             />
           </label>
           <label className={css.field}>
+            <span>人物朝向：{yawDeg}°（0° 正面，180° 背面）</span>
+            <input
+              type='range'
+              min={0}
+              max={360}
+              step={1}
+              value={yawDeg}
+              onChange={(event) => {
+                const degrees = Number(event.target.value)
+                setYawDeg(degrees)
+                mmdRef.current?.setYawDegrees(degrees)
+              }}
+            />
+          </label>
+          <label className={css.field}>
             <span>音色</span>
             <select
               value={settings.voiceId}
@@ -1194,7 +1247,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               onChange={(event) => setSettings({ ...settings, realtime: event.target.checked })}
             />
           </label>
-          <div className={css.panelHint}>双击人物打开此面板，单击开始/停止语音聊天</div>
+          <div className={css.panelHint}>双击人物打开此面板，单击开始/停止语音聊天；右键拖拽人物可旋转</div>
         </div>
       )}
     </div>

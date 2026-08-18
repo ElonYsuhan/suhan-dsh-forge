@@ -106,6 +106,10 @@ export class MMDCompanion {
   private blinkUntil = 0
   private mouthIndex = 0
   private nextMouthAt = 0
+  private loadSeq = 0
+  // 用户拖拽旋转：附加偏航（叠加在根骨骼 π 基准上）+ 相机俯仰轨道
+  private userYaw = 0
+  private cameraPitch = 0
 
   constructor (canvas: HTMLCanvasElement, options: MMDCompanionOptions = {}) {
     this.canvas = canvas
@@ -128,6 +132,7 @@ export class MMDCompanion {
         }
         return rotated
       },
+      rotateBy (yaw: number, pitch: number): void { self.rotateBy(yaw, pitch) },
       boneMatrix (name: string): number[] {
         const mesh = self.mesh
         const skeleton = mesh?.skeleton
@@ -142,6 +147,9 @@ export class MMDCompanion {
 
   /** 加载 PMX 模型与可选表情 VMD；重复调用即切换模型。 */
   async loadModel (modelUrl: string, expressionUrl?: string): Promise<void> {
+    // 加载序号守卫：快速连续加载时，先发起的请求后返回会导致旧网格
+    // 叠在新模型之上（表现为「两个模型」），过期加载直接作废
+    const seq = ++this.loadSeq
     this.options.onStatus?.('loading')
     await this.ensureEngine()
     const scene = this.scene
@@ -167,6 +175,10 @@ export class MMDCompanion {
         }
       }
     })
+    if (seq !== this.loadSeq) {
+      for (const mesh of result.meshes) mesh.dispose(false, true)
+      return
+    }
     const meshes = result.meshes.filter(m => m instanceof Mesh)
     const root = meshes.find(m => m.getTotalVertices() > 0)
     if (root === undefined || meshes.length === 0) {
@@ -184,13 +196,15 @@ export class MMDCompanion {
     // TransformNode，直接赋 rotation 是惰性的、不会触发矩阵更新，
     // 必须用 setRotation。
 
-    // 高度归一化 + 脚底贴地：必须在骨骼层完成——babylon-mmd 的
-    // CPU 蒙皮渲染只读骨骼世界矩阵，mesh 的位置/缩放对渲染无效
-    // （实测移动网格 8 单位画面不变）。缩放/旋转/平移全部只作用
-    // 于根骨骼（局部变换沿骨骼链逐级相乘，若对每根骨骼 setScale
+    // 高度归一化 + 脚底贴地：网格顶点缓冲在加载时已被蒙皮成
+    // 「绑定空间」（骨骼静止姿态，脚底≈0、自然尺寸），渲染时着色器
+    // 再把骨骼世界矩阵乘上去——根骨骼的缩放/旋转/平移恰好作用
+    // 一次于渲染结果（不再走 CPU 蒙皮，否则双重应用会缩到一半）。
+    // 因此以顶点缓冲实测高度为基准；缩放/旋转/平移全部只作用于
+    // 根骨骼（局部变换沿骨骼链逐级相乘，若对每根骨骼 setScale
     // 会按深度累积导致深层骨骼塌缩成点）；根骨骼可能不止一根
     // （「操作中心」与「全ての親」并存），必须全部处理。
-    const info = this.measureModel()
+    const info = this.measureBuffer()
     const skeletonScale = info.height > 0 ? TARGET_MODEL_HEIGHT / info.height : 1
     this.baseY = -info.minY * skeletonScale
     this.centerY = info.centerY * skeletonScale + this.baseY
@@ -199,10 +213,9 @@ export class MMDCompanion {
       const s = new Vector3(skeletonScale, skeletonScale, skeletonScale)
       for (const bone of skeleton1.bones) {
         if (bone.getParent() !== null) continue
-        const m = bone.getWorldMatrix()
         bone.setScale(s)
-        bone.setRotation(new Vector3(0, Math.PI, 0))
-        bone.setPosition(new Vector3(m.m[12] ?? 0, (m.m[13] ?? 0) + this.baseY, m.m[14] ?? 0))
+        bone.setRotation(new Vector3(0, Math.PI + this.userYaw, 0))
+        bone.setPosition(new Vector3(0, this.baseY, 0))
       }
     }
 
@@ -250,19 +263,55 @@ export class MMDCompanion {
     // 表情 VMD（仅 morph 轨道；自解析，兼容未知 morph 名）
     if (expressionUrl !== undefined) {
       this.vmdMorphs = await this.loadVmdMorphs(expressionUrl, morphNames)
+      if (seq !== this.loadSeq) return
     }
 
-    // 相机满框取景（高度填满画布）
+    // 相机满框取景（高度填满画布）+ 用户旋转状态
     const halfFov = 30 * Math.PI / 360
     this.fitDistance = (TARGET_MODEL_HEIGHT / 2 / Math.tan(halfFov)) * 1.02
-    const camera = scene.activeCamera
-    if (camera instanceof UniversalCamera) {
-      camera.position.set(0, this.centerY, this.fitDistance)
-      camera.setTarget(new Vector3(0, this.centerY, 0))
-    }
+    this.applyUserTransform()
     this.resize()
     this.start()
     this.options.onStatus?.('ready')
+  }
+
+  /**
+   * 拖拽旋转模型：水平拖动 = 偏航（模型绕 Y 轴自转，叠加在正面
+   * 基准之上），垂直拖动 = 相机俯仰轨道（±60° 内）。
+   */
+  rotateBy (yawDelta: number, pitchDelta: number): void {
+    this.userYaw += yawDelta
+    this.cameraPitch = Math.max(-Math.PI / 3, Math.min(Math.PI / 3, this.cameraPitch + pitchDelta))
+    this.applyUserTransform()
+  }
+
+  /** 设置模型绝对偏航（度）：0 = 正面朝向相机。 */
+  setYawDegrees (degrees: number): void {
+    this.userYaw = (degrees * Math.PI) / 180
+    this.applyUserTransform()
+  }
+
+  /** 当前偏航角（度，0-360），0 = 正面朝向相机。 */
+  getYawDegrees (): number {
+    return (((this.userYaw * 180) / Math.PI) % 360 + 360) % 360
+  }
+
+  /** 把用户偏航应用到根骨骼、俯仰应用到相机。 */
+  private applyUserTransform (): void {
+    const skeleton = this.mesh?.skeleton
+    if (skeleton !== null && skeleton !== undefined) {
+      for (const bone of skeleton.bones) {
+        if (bone.getParent() === null) {
+          bone.setRotation(new Vector3(0, Math.PI + this.userYaw, 0))
+        }
+      }
+    }
+    const camera = this.scene?.activeCamera
+    if (camera instanceof UniversalCamera) {
+      const pitch = this.cameraPitch
+      camera.position.set(0, this.centerY + Math.sin(pitch) * this.fitDistance, Math.cos(pitch) * this.fitDistance)
+      camera.setTarget(new Vector3(0, this.centerY, 0))
+    }
   }
 
   setSpeaking (speaking: boolean): void {
@@ -424,20 +473,23 @@ export class MMDCompanion {
     this.mesh = null
   }
 
-  private measureModel (): { height: number; minY: number; centerY: number } {
-    if (this.meshes.length === 0) return { height: 0, minY: 0, centerY: 0 }
-    let min = new Vector3(Infinity, Infinity, Infinity)
-    let max = new Vector3(-Infinity, -Infinity, -Infinity)
+  /** 读取顶点缓冲（加载后即绑定空间）的 Y 范围，作为归一化基准。 */
+  private measureBuffer (): { height: number; minY: number; centerY: number } {
+    let min = Infinity
+    let max = -Infinity
     for (const mesh of this.meshes) {
-      const info = mesh.getBoundingInfo()
-      min = Vector3.Minimize(min, info.boundingBox.minimumWorld)
-      max = Vector3.Maximize(max, info.boundingBox.maximumWorld)
+      const data = mesh.getVerticesData('position')
+      if (data === null || data === undefined) continue
+      for (let index = 1; index < data.length; index += 3) {
+        const y = data[index] ?? 0
+        if (y < min) min = y
+        if (y > max) max = y
+      }
     }
-    return {
-      height: max.y - min.y,
-      minY: min.y,
-      centerY: (min.y + max.y) / 2
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max < min) {
+      return { height: 0, minY: 0, centerY: 0 }
     }
+    return { height: max - min, minY: min, centerY: (min + max) / 2 }
   }
 
   private setMorph (name: string, weight: number): void {
