@@ -2,8 +2,9 @@
  * Babylon.js 渲染层：WebGPU（回退 WebGL2）+ babylon-mmd 加载 PMX，
  * PBR 材质 + HDR 环境光/IBL + 阴影 + 后处理（FXAA/Bloom/色调映射）。
  *
- * 动画与行为沿用原实现：待机呼吸、眨眼、说话口型（音量包络）、
- * 表情 VMD、瞬态手势、视线跟随、思考表情、手臂垂落姿态。
+ * 动画与行为：待机呼吸、眨眼、说话口型（音量包络）、表情 VMD、
+ * 瞬态手势、视线跟随、思考表情；默认站姿为 ElegantIdle
+ * （TwoBoneIK 优雅手姿，聊天默认动作，见 ElegantIdle.ts）。
  * 模型资产由宿主 /virtual-companion/model/* 提供。
  */
 import {
@@ -28,6 +29,7 @@ import {
 } from '@babylonjs/core'
 import { ShadowOnlyMaterial } from '@babylonjs/materials'
 import { PBRMaterialBuilder, RegisterMmdModelLoaders } from 'babylon-mmd'
+import { ElegantIdle } from './ElegantIdle'
 
 export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
 
@@ -35,15 +37,32 @@ const TARGET_MODEL_HEIGHT = 20
 const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
 const SMILE_CANDIDATES = ['笑い', 'にこり', '微笑', '笑顔']
-const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ']
+const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ', '左手首', '右手首']
 
-/** 手臂自然垂落偏移（经 PMX 骨骼模拟实测）：静止外张 ~54°，内收 1.05 rad；左 -z / 右 +z；-x 前摆。 */
-const ARM_POSE_OFFSETS: Record<string, { x?: number; z?: number }> = {
-  左腕: { x: -0.08, z: -1.05 },
-  右腕: { x: -0.08, z: 1.05 },
-  左ひじ: { x: -0.12 },
-  右ひじ: { x: -0.12 }
+/** 重心偏侧（S 形微侧，避免完全对称的僵硬站姿）：腰/上身/头反向微倾。 */
+const GRAVITY_SHIFT: Record<string, { z?: number }> = {
+  腰: { z: 0.02 },
+  上半身: { z: -0.03 },
+  頭: { z: 0.025 }
 }
+
+/** 手腕自然姿态（IK 生效时也应用；腕/肘由 ElegantIdle 接管）。 */
+const WRIST_POSE: Record<string, { z?: number }> = {
+  左手首: { z: -0.1 },
+  右手首: { z: 0.1 }
+}
+
+/** 手臂兜底姿态（仅当模型缺少 IK 骨骼链时使用；IK 生效时无效）。 */
+const ARM_FALLBACK_OFFSETS: Record<string, { x?: number; z?: number }> = {
+  左腕: { x: -0.15, z: -1.05 },
+  右腕: { x: -0.15, z: 1.05 },
+  左ひじ: { x: -0.4 },
+  右ひじ: { x: -0.4 }
+}
+
+/** NaturalHandPose：手指轻微弯曲（段号 1→0 索引；指尖方向经实测为 -x，与肘同向）。 */
+const FINGER_CURVATURE = [-0.05, -0.09, -0.12]
+const FINGER_NAME_RE = /^(左|右)(親指|人差し指|中指|薬指|小指)(\d+)$/
 
 const GESTURE_DURATIONS: Record<GestureName, number> = {
   wave: 1_600,
@@ -110,6 +129,9 @@ export class MMDCompanion {
   // 用户拖拽旋转：附加偏航（叠加在根骨骼 π 基准上）+ 相机俯仰轨道
   private userYaw = 0
   private cameraPitch = 0
+  /** 优雅站姿状态（TwoBoneIK 驱动双手，角色聊天默认动作）。 */
+  private readonly elegantIdle = new ElegantIdle()
+  private ikActive = false
 
   constructor (canvas: HTMLCanvasElement, options: MMDCompanionOptions = {}) {
     this.canvas = canvas
@@ -133,6 +155,18 @@ export class MMDCompanion {
         return rotated
       },
       rotateBy (yaw: number, pitch: number): void { self.rotateBy(yaw, pitch) },
+      /** 姿态基准（base 向量；updateBodyPose 每帧叠加呼吸后写回骨骼，可原地调参）。 */
+      get bonePose () {
+        const out: Record<string, number[]> = {}
+        for (const [name, target] of self.bodyBones) out[name] = [target.base.x, target.base.y, target.base.z]
+        return out
+      },
+      setBoneBase (name: string, x: number, y: number, z: number): boolean {
+        const target = self.bodyBones.get(name)
+        if (target === undefined) return false
+        target.base.set(x, y, z)
+        return true
+      },
       boneMatrix (name: string): number[] {
         const mesh = self.mesh
         const skeleton = mesh?.skeleton
@@ -141,6 +175,17 @@ export class MMDCompanion {
         const idx = skeleton.bones.findIndex(b => b.name === name)
         if (idx < 0) return []
         return Array.from(mats.slice(idx * 16, idx * 16 + 16)).map(v => Math.round(v * 100) / 100)
+      },
+      /** ElegantIdle 诊断：手/肘世界位置 + 肘关节角（反关节检查）。 */
+      getIkState () { return self.elegantIdle.getState() },
+      /** 调参：左右手 IK 目标（归一化模型空间：身高 20、脚底 y=0、正面 -z）。 */
+      setIkTargets (lx: number, ly: number, lz: number, rx: number, ry: number, rz: number): void {
+        self.elegantIdle.leftHand.set(lx, ly, lz)
+        self.elegantIdle.rightHand.set(rx, ry, rz)
+      },
+      /** 调参：肘极点偏移（世界空间，相对肩部：x=外侧幅度，y=向下，z=向前）。 */
+      setIkPoles (x: number, y: number, z: number): void {
+        self.elegantIdle.poleOffset.set(x, y, z)
       }
     }
   }
@@ -237,17 +282,49 @@ export class MMDCompanion {
     this.bodyBones.clear()
     const skeleton = root.skeleton
     if (skeleton !== null) {
+      // TwoBoneIK 骨骼链（腕→ひじ→手首）；链完整则手/臂交给 ElegantIdle 接管
+      const find = (name: string): Bone | undefined => skeleton.bones.find(b => b.name === name)
+      const upperL = find('左腕')
+      const lowerL = find('左ひじ')
+      const wristL = find('左手首')
+      const upperR = find('右腕')
+      const lowerR = find('右ひじ')
+      const wristR = find('右手首')
+      this.ikActive = upperL !== undefined && lowerL !== undefined && wristL !== undefined &&
+        upperR !== undefined && lowerR !== undefined && wristR !== undefined
+      this.elegantIdle.detach()
+      if (this.ikActive) {
+        this.elegantIdle.attach(root, upperL!, lowerL!, wristL!, upperR!, lowerR!, wristR!)
+      }
+
       for (const name of BODY_BONE_CANDIDATES) {
         const bone = skeleton.bones.find(b => b.name === name)
         if (bone === undefined) continue
         const base = bone.getRotation()
-        const offset = ARM_POSE_OFFSETS[name]
+        // 偏移优先级：手腕自然姿态 / 重心偏侧（始终生效）；
+        // 手臂兜底仅在 IK 不可用时生效（IK 生效时 腕/肘 由 IK 每帧覆盖）。
+        const offset = WRIST_POSE[name] ?? GRAVITY_SHIFT[name]
+        const fallback = this.ikActive ? undefined : ARM_FALLBACK_OFFSETS[name]
+        if (fallback !== undefined) {
+          base.x += fallback.x ?? 0
+          base.z += fallback.z ?? 0
+        }
         if (offset !== undefined) {
-          base.x += offset.x ?? 0
           base.z += offset.z ?? 0
         }
         bone.setRotation(base)
         this.bodyBones.set(name, { bone, base })
+      }
+
+      // NaturalHandPose：手指轻微弯曲（近端 → 远端递增，形成自然弧线）
+      for (const bone of skeleton.bones) {
+        const match = FINGER_NAME_RE.exec(bone.name)
+        if (match === null) continue
+        const segment = Math.max(0, Number(match[3]) - 1)
+        const curve = FINGER_CURVATURE[Math.min(FINGER_CURVATURE.length - 1, segment)] ?? 0
+        const rot = bone.getRotation()
+        rot.x += curve
+        bone.setRotation(rot)
       }
     }
 
@@ -462,6 +539,8 @@ export class MMDCompanion {
 
   private clearModel (): void {
     this.vmdMorphs = []
+    this.elegantIdle.detach()
+    this.ikActive = false
     this.bodyBones.clear()
     this.mouthMorphs = []
     this.blinkMorph = undefined
@@ -507,6 +586,9 @@ export class MMDCompanion {
     // 呼吸/摆动在骨骼层（updateBodyPose）完成。
     this.updateBodyPose(time, now)
     this.applyGesture(now)
+    // IK 姿态修正必须最后执行（scene.render() 前）：手势设置的目标
+    // 偏移在此刻生效，且 IK 对 腕/ひじ 的覆盖不会被呼吸回写覆盖。
+    this.elegantIdle.update(time)
   }
 
   private updateBodyPose (time: number, now: number): void {
@@ -515,15 +597,13 @@ export class MMDCompanion {
     const breathe = Math.sin(time * 1.6) * 0.012 * intensity
     const sway = Math.sin(time * 0.7) * 0.008 * intensity
     const headYaw = Math.sin(time * 0.4) * 0.03 * intensity
+    // 注意：腕/ひじ 不在此处 —— IK 生效时由 ElegantIdle 每帧接管，
+    // 直接写会与 IK 求解打架（表现为手乱颤）。
     const deltas: Record<string, { x?: number; y?: number; z?: number }> = {
       上半身: { x: breathe },
       首: { x: breathe * 0.5 },
       頭: { x: -breathe * 0.5, y: headYaw, z: sway * 0.4 },
-      腰: { z: sway },
-      左腕: { z: sway },
-      右腕: { z: -sway },
-      左ひじ: { z: -breathe * 0.4 },
-      右ひじ: { z: -breathe * 0.4 }
+      腰: { z: sway }
     }
     for (const [name, delta] of Object.entries(deltas)) {
       const target = this.bodyBones.get(name)
@@ -609,6 +689,7 @@ export class MMDCompanion {
     const elapsed = now - startAt
     if (elapsed >= duration) {
       this.gesture = null
+      this.elegantIdle.rightArmOffset.set(0, 0, 0)
       return
     }
     const progress = elapsed / duration
@@ -627,8 +708,10 @@ export class MMDCompanion {
 
     switch (name) {
       case 'wave': {
-        addBone('右腕', -1.25 * envelope, 0, Math.sin(time * 18) * 0.18 * envelope)
-        addBone('右ひじ', -0.45 * envelope, 0, 0)
+        // 右手经 IK 目标偏移抬起挥手（横向摆动叠在 IK 求解前）
+        // 目标从「小腹前」抬到面部前：y +5.3 ≈ 头部高度，z 收回到脸前
+        const offset = this.elegantIdle.rightArmOffset
+        offset.set(Math.sin(time * 18) * 0.7 * envelope, 5.3 * envelope, 0.45 * envelope)
         break
       }
       case 'nod':
