@@ -111,13 +111,13 @@ export class ElegantIdle {
   private readonly wScale = Vector3.Zero()
   private readonly wTrans = Vector3.Zero()
 
-  get active(): boolean {
+  get active (): boolean {
     return this.mesh !== null && this.left !== null && this.right !== null
   }
 
   /** 绑定 IK 链：upper = 腕（肩关节），lower = ひじ，末端 = 手首。
    *  左右臂「外侧」符号在首个有效帧（肩数据非零）冻结，运行期不变。 */
-  attach(mesh: Mesh, upperLeft: Bone, lowerLeft: Bone, wristLeft: Bone, upperRight: Bone, lowerRight: Bone, wristRight: Bone): void {
+  attach (mesh: Mesh, upperLeft: Bone, lowerLeft: Bone, wristLeft: Bone, upperRight: Bone, lowerRight: Bone, wristRight: Bone): void {
     this.mesh = mesh
     this.left = { upper: upperLeft, lower: lowerLeft, wrist: wristLeft }
     this.right = { upper: upperRight, lower: lowerRight, wrist: wristRight }
@@ -127,7 +127,7 @@ export class ElegantIdle {
     this.prevElbowR = null
   }
 
-  detach(): void {
+  detach (): void {
     this.left = null
     this.right = null
     this.rootMat = null
@@ -140,19 +140,17 @@ export class ElegantIdle {
   }
 
   /** 每帧求解：模型空间解出肘位，世界空间写回 腕/ひじ。
-   *  _time 驱动呼吸/摆动手部微动（与躯干呼吸同相）。 */
-  update(_time: number): void {
+   *  _time 保留给呼吸/摆动微动作（第一阶段关闭，静态稳定后恢复）。 */
+  update (_time: number): void {
     if (!this.active) return
     const left = this.left as ArmChain
     const right = this.right as ArmChain
     this.armRoot().computeWorldMatrix(true) // 强制刷新，杜绝陈旧根矩阵
     this.rootMat = this.armRoot().getWorldMatrix()
     this.buildPoseMat()
-    // 呼吸带动的手部微起伏：与躯干呼吸同相（1.6 rad/s），双手在敛手
-    // 目标附近轻柔起伏；幅度 0.012/0.01 高度单位（模型身高 20），
-    // 单帧解算保证每帧落位，不会累积成摆动。
-    const breathe = Math.sin(_time * 1.6) * 0.012
-    const sway = Math.sin(_time * 0.7) * 0.01
+    // 第一阶段：微动作全关（先验证静态姿态稳定，之后再恢复呼吸/摆动）
+    const breathe = 0 // Math.sin(time * 1.6) * 0.012
+    const sway = 0 // Math.sin(time * 0.7) * 0.01
 
     // 左臂
     this.sA.copyFrom(this.leftHand)
@@ -179,7 +177,7 @@ export class ElegantIdle {
   }
 
   /** 验证/诊断：手、肘世界位置 + 肘关节角（度，反关节检查用）。 */
-  getState(): ElegantIdleState | null {
+  getState (): ElegantIdleState | null {
     if (!this.active) return null
     const left = this.left as ArmChain
     const right = this.right as ArmChain
@@ -195,7 +193,7 @@ export class ElegantIdle {
   }
 
   /** 手臂链最顶端的祖先（全ての親 等，带归一化/旋转的根）。 */
-  private armRoot(): Bone {
+  private armRoot (): Bone {
     let bone = (this.left as ArmChain).upper
     let parent = bone.getParent()
     while (parent !== null) {
@@ -206,7 +204,7 @@ export class ElegantIdle {
   }
 
   /** 姿态空间矩阵：根世界矩阵去掉归一化缩放，只保留旋转与平移。 */
-  private buildPoseMat(): void {
+  private buildPoseMat (): void {
     if (this.rootMat === null) return
     this.rootMat.decompose(this.vScale, this.poseQuat, this.vTrans)
     Matrix.ComposeToRef(this.oneScale, this.poseQuat, this.vTrans, this.poseMat)
@@ -220,7 +218,7 @@ export class ElegantIdle {
    *    与上一帧绕肩夹角 > 30° 则拒绝并保持上一帧（防两个解之间翻转）
    * 4) 以「最短弧 × 当前世界朝向」写回 腕/ひじ 局部四元数（保留扭转）
    */
-  private solveArm(arm: ArmChain, targetLocal: Vector3, side: number | null, prevElbow: Vector3 | null): { elbow: Vector3 | null; side: number | null } {
+  private solveArm (arm: ArmChain, targetLocal: Vector3, side: number | null, prevElbow: Vector3 | null): { elbow: Vector3 | null; side: number | null } {
     const { upper, lower, wrist } = arm
     this.worldPosToRef(upper, this.pS)
     this.worldPosToRef(lower, this.pE)
@@ -332,7 +330,7 @@ export class ElegantIdle {
   }
 
   /** 把骨骼世界朝向沿 arc(from→to) 旋转后写回局部四元数（带平滑）。 */
-  private applyArmRotation(bone: Bone, from: Vector3, to: Vector3): void {
+  private applyArmRotation (bone: Bone, from: Vector3, to: Vector3): void {
     const parent = bone.getParent()
     this.worldQuatToRef(parent ?? bone, this.qB) // 父世界四元数（无父则用自身）
     this.worldQuatToRef(bone, this.qC) // 当前世界朝向
@@ -350,29 +348,29 @@ export class ElegantIdle {
     bone.setRotationQuaternion(this.qF)
   }
 
-  private worldPosToRef(bone: Bone, out: Vector3): void {
+  private worldPosToRef (bone: Bone, out: Vector3): void {
     bone.computeWorldMatrix(true)
     out.copyFrom(bone.getWorldMatrix().getTranslation())
   }
 
   /** 世界坐标 → 姿态空间（模型空间）：poseMat 无缩放，逆 = 共轭旋转 + 平移回退。 */
-  private worldToPoseRef(world: Vector3, out: Vector3): void {
+  private worldToPoseRef (world: Vector3, out: Vector3): void {
     this.sG.copyFrom(world).subtractInPlace(this.vTrans)
     this.qB.set(-this.poseQuat.x, -this.poseQuat.y, -this.poseQuat.z, this.poseQuat.w)
     this.sG.rotateByQuaternionToRef(this.qB, out)
   }
 
-  private worldPos(bone: Bone): number[] {
+  private worldPos (bone: Bone): number[] {
     this.worldPosToRef(bone, this.sA)
     return [Number(this.sA.x.toFixed(2)), Number(this.sA.y.toFixed(2)), Number(this.sA.z.toFixed(2))]
   }
 
-  private worldQuatToRef(bone: Bone, out: Quaternion): void {
+  private worldQuatToRef (bone: Bone, out: Quaternion): void {
     bone.computeWorldMatrix(true)
     bone.getWorldMatrix().decompose(this.wScale, out, this.wTrans)
   }
 
-  private elbowAngleDeg(arm: ArmChain): number {
+  private elbowAngleDeg (arm: ArmChain): number {
     this.worldPosToRef(arm.lower, this.sA)
     this.worldPosToRef(arm.upper, this.sB)
     this.worldPosToRef(arm.wrist, this.sC)
@@ -386,7 +384,7 @@ export class ElegantIdle {
   }
 
   /** 最短弧四元数：把 from 方向旋到 to 方向（半角公式，无分配）。 */
-  private shortestArcToRef(from: Vector3, to: Vector3, out: Quaternion): void {
+  private shortestArcToRef (from: Vector3, to: Vector3, out: Quaternion): void {
     Vector3.CrossToRef(from, to, this.sF)
     const lenSq = this.sF.lengthSquared()
     const w = Math.max(-1, Math.min(1, Vector3.Dot(from, to)))

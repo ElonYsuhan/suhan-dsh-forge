@@ -22,7 +22,6 @@ import {
   RawTexture,
   Scene,
   ShadowGenerator,
-  Skeleton,
   Texture,
   UniversalCamera,
   Vector3,
@@ -31,7 +30,6 @@ import {
 import { ShadowOnlyMaterial } from '@babylonjs/materials'
 import { PBRMaterialBuilder, RegisterMmdModelLoaders } from 'babylon-mmd'
 import { ElegantIdle } from './ElegantIdle'
-import { parseVpdPose, quatToEulerXYZ } from './vpdPose'
 
 export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
 
@@ -134,8 +132,6 @@ export class MMDCompanion {
   /** 优雅站姿状态（TwoBoneIK 驱动双手，角色聊天默认动作）。 */
   private readonly elegantIdle = new ElegantIdle()
   private ikActive = false
-  /** 放松站姿 VPD 已应用（手臂姿态由 VPD 接管；IK/兜底降级）。 */
-  private poseFromVpd = false
   /** IK 每帧快照（近 90 帧：左右手/肘世界位置），用于诊断面板显示实际帧位移。 */
   private readonly ikHistory: number[][] = []
 
@@ -196,8 +192,8 @@ export class MMDCompanion {
     }
   }
 
-  /** 加载 PMX 模型与可选表情 VMD、放松站姿 VPD；重复调用即切换模型。 */
-  async loadModel (modelUrl: string, expressionUrl?: string, relaxPoseUrl?: string): Promise<void> {
+  /** 加载 PMX 模型与可选表情 VMD；重复调用即切换模型。 */
+  async loadModel (modelUrl: string, expressionUrl?: string): Promise<void> {
     // 加载序号守卫：快速连续加载时，先发起的请求后返回会导致旧网格
     // 叠在新模型之上（表现为「两个模型」），过期加载直接作废
     const seq = ++this.loadSeq
@@ -298,15 +294,8 @@ export class MMDCompanion {
       const wristR = find('右手首')
       this.ikActive = upperL !== undefined && lowerL !== undefined && wristL !== undefined &&
         upperR !== undefined && lowerR !== undefined && wristR !== undefined
-      // 放松站姿 VPD（models/motions/放松站姿-<id>.vpd）：先应用再采集
-      // bodyBones base——成功后手臂由 VPD 姿态接管（IK/兜底降级为后备），
-      // 呼吸在 VPD 姿态上叠加；VPD 缺失/失败时静默回退 IK 站姿。
-      if (relaxPoseUrl !== undefined) {
-        await this.applyRelaxPose(relaxPoseUrl, skeleton)
-        if (seq !== this.loadSeq) return
-      }
       this.elegantIdle.detach()
-      if (this.ikActive && !this.poseFromVpd) {
+      if (this.ikActive) {
         this.elegantIdle.attach(root, upperL!, lowerL!, wristL!, upperR!, lowerR!, wristR!)
       }
 
@@ -315,10 +304,9 @@ export class MMDCompanion {
         if (bone === undefined) continue
         const base = bone.getRotation()
         // 偏移优先级：手腕自然姿态 / 重心偏侧（始终生效）；
-        // 手臂兜底仅在 IK 与放松 VPD 均不可用时生效（IK 生效时 腕/肘
-        // 由 IK 每帧覆盖；放松 VPD 生效时手腕姿态已含在 VPD 四元数中）。
-        const offset = (this.poseFromVpd && WRIST_POSE[name] !== undefined) ? undefined : (WRIST_POSE[name] ?? GRAVITY_SHIFT[name])
-        const fallback = (this.ikActive || this.poseFromVpd) ? undefined : ARM_FALLBACK_OFFSETS[name]
+        // 手臂兜底仅在 IK 不可用时生效（IK 生效时 腕/肘 由 IK 每帧覆盖）。
+        const offset = WRIST_POSE[name] ?? GRAVITY_SHIFT[name]
+        const fallback = this.ikActive ? undefined : ARM_FALLBACK_OFFSETS[name]
         if (fallback !== undefined) {
           base.x += fallback.x ?? 0
           base.z += fallback.z ?? 0
@@ -364,33 +352,6 @@ export class MMDCompanion {
     this.resize()
     this.start()
     this.options.onStatus?.('ready')
-  }
-
-  /**
-   * 应用放松站姿 VPD（models/motions/放松站姿-<id>.vpd）：把每根骨骼的
-   * 局部旋转四元数转欧拉写回骨骼。VPD 缺失/损坏/无匹配骨骼时静默跳过，
-   * 调用方回退到 IK 站姿。成功应用后由 poseFromVpd 接管手臂姿态。
-   */
-  private async applyRelaxPose (relaxPoseUrl: string, skeleton: Skeleton): Promise<void> {
-    try {
-      const response = await fetch(relaxPoseUrl)
-      if (!response.ok) return
-      const quats = parseVpdPose(await response.arrayBuffer())
-      let applied = 0
-      for (const [name, quat] of quats) {
-        const bone = skeleton.bones.find(b => b.name === name)
-        if (bone === undefined) continue
-        // 四元数 → XYZ 欧拉（与 setRotation 同序；不能用 toEulerAngles，那是 ZXY）
-        bone.setRotation(quatToEulerXYZ(quat))
-        applied++
-      }
-      if (applied > 0) {
-        this.poseFromVpd = true
-        console.log(`[virtual-companion] 放松站姿已应用：${applied} 根骨骼`)
-      }
-    } catch (error) {
-      console.warn('[virtual-companion] 放松站姿加载失败，回退 IK 站姿：', error)
-    }
   }
 
   /**
@@ -704,15 +665,6 @@ export class MMDCompanion {
       首: { x: breathe * 0.5 },
       頭: { x: -breathe * 0.5, y: headYaw, z: sway * 0.4 },
       腰: { z: sway }
-    }
-    // 放松 VPD 模式：手臂由 VPD 接管，这里在 VPD 姿态上叠加轻微起伏
-    // （手腕内收微摆 + 肩部呼吸带动），避免手臂完全静止
-    if (this.poseFromVpd) {
-      const wristSway = Math.sin(time * 1.6 + 0.4) * 0.02
-      deltas['左腕'] = { x: breathe * 0.4 }
-      deltas['右腕'] = { x: breathe * 0.4 }
-      deltas['左手首'] = { z: wristSway }
-      deltas['右手首'] = { z: -wristSway }
     }
     for (const [name, delta] of Object.entries(deltas)) {
       const target = this.bodyBones.get(name)
