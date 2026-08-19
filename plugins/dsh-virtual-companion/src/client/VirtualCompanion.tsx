@@ -252,7 +252,10 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     setModelReady(false)
     void mmd.loadModel(
       `/virtual-companion/model/${encodeURIComponent(settings.modelId)}/model.pmx`,
-      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
+      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`,
+      // 放松站姿 VPD：Blender 程序导出的手臂自然下垂收拢姿态；
+      // 缺失时加载器静默回退 IK 敛手站姿
+      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent(`放松站姿-${settings.modelId}.vpd`)}`
     ).catch((error) => {
       // 模型缺失/损坏时退回立绘展示；控制台保留诊断
       console.warn('[virtual-companion] 模型加载失败，保持立绘占位：', error)
