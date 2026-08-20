@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- 新增 DSH 主设置中的「任务看板」设置页（`settings.section`）：可切换已注册项目，并通过现有 `/taskboard/boards/:key/settings` 接口编辑看板环节与工作项类型。
+- 抽取 `SettingsForm` 复用看板内设置弹窗与 DSH 设置页的表单逻辑。
+
 ## [0.1.3] - 2026-08-19
 
 ### Added

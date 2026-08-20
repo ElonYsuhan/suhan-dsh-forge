@@ -8,11 +8,13 @@ import type { ClientContext, SessionRuntime } from '@deepseek-ai/dsh-client-runt
 // Type-only: pulls ui-layout's SlotMap merge (declares 'shell.overlay')
 // and ui-conversation's composer merge (declares 'conversation.input.left').
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import { TodoCreateButton, type TodoCreateInjected } from './TodoCreateButton.tsx'
 import { TaskboardLauncher, type TaskboardInjected } from './TaskboardLauncher.tsx'
+import { TaskboardSettingsSection } from './TaskboardSettingsSection.tsx'
 
 export type { TaskboardLauncherProps } from './TaskboardLauncher.tsx'
 
@@ -47,6 +49,14 @@ export function apply (ctx: ClientContext): void {
       }
     },
   }, TaskboardLauncher))
+
+  // DSH 主设置页：管理各项目看板的环节/类型。
+  ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section',
+    id: 'taskboard',
+    order: 100,
+    label: '任务看板'
+  }, TaskboardSettingsSection))
 
   // 聊天页 composer 工具行：创建待办任务到看板。
   ctx.slots.inject('conversation.input.left', () => ctx.slots.register({

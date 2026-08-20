@@ -1,0 +1,86 @@
+/* DSH 主设置里的任务看板设置页。 */
+.section {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 24px;
+  overflow: auto;
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+.title {
+  margin: 0;
+  color: var(--dsw-alias-label-primary);
+  font-size: 18px;
+}
+.subtitle {
+  margin: 4px 0 0;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+}
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 720px;
+}
+.projectBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.projectLabel {
+  flex: none;
+  font-size: 13px;
+  color: var(--dsw-alias-label-secondary);
+}
+.projectSelect {
+  min-width: 200px;
+  max-width: 320px;
+  box-sizing: border-box;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+.projectSelect:focus {
+  border-color: var(--dsw-alias-brand-primary);
+}
+.section :is(button, input, select):focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}
+.error {
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-state-error-primary);
+  border-radius: 8px;
+  color: var(--dsw-alias-state-error-primary);
+  font-size: 12px;
+}
+.notice {
+  margin-bottom: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--dsw-alias-state-success-primary);
+  border-radius: 8px;
+  color: var(--dsw-alias-state-success-primary);
+  font-size: 12px;
+}
+.saving {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.empty {
+  padding: 48px 0;
+  text-align: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+}
