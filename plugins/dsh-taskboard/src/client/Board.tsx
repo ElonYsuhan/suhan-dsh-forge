@@ -44,7 +44,7 @@ export function Board ({ board, onMove, onSelect, onAdd }: BoardProps) {
 
   return (
     <div className={css.board}>
-      {board.columns.map(column => {
+      {board.columns.map((column, index) => {
         const items = board.items.filter(i => i.status === column.id && !i.archived)
         return (
           <section
@@ -75,14 +75,16 @@ export function Board ({ board, onMove, onSelect, onAdd }: BoardProps) {
               ))}
               {items.length === 0 && <div className={css.columnEmpty}>拖拽工作项到此环节</div>}
             </div>
-            <button
-              type='button'
-              className={css.addBtn}
-              onClick={() => onAdd(column.id)}
-              data-testid={`taskboard-add-${column.id}`}
-            >
-              + 新建
-            </button>
+            {index === 0 && (
+              <button
+                type='button'
+                className={css.addBtn}
+                onClick={() => onAdd(column.id)}
+                data-testid={`taskboard-add-${column.id}`}
+              >
+                + 新建
+              </button>
+            )}
           </section>
         )
       })}

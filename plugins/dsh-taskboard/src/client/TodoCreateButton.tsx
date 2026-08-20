@@ -1,6 +1,6 @@
 /**
  * 聊天页「＋待办」：composer 工具行左端的小控件，点击弹出创建表单，
- * 把任务直接建到所选项目的看板待办环节。
+ * 把想法以草稿形式建到所选项目看板第一列（需 AI 分析确认后才能执行）。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
@@ -25,8 +25,9 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
   const [boards, setBoards] = useState<BoardsResponse | null>(null)
   const [projectKey, setProjectKey] = useState('')
   const [title, setTitle] = useState('')
-  const [desc, setDesc] = useState('')
+  const [requirement, setRequirement] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const closeDialog = useCallback(() => setOpen(false), [])
   const panelRef = useDialogFocus<HTMLFormElement>(closeDialog, open)
 
@@ -45,24 +46,26 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
 
   const handleSubmit = (ev: FormEvent): void => {
     ev.preventDefault()
-    const trimmed = title.trim()
-    if (projectKey === '' || trimmed === '' || boards === null) return
+    const trimmedTitle = title.trim()
+    const trimmedRequirement = requirement.trim()
+    if (projectKey === '' || boards === null || (trimmedTitle === '' && trimmedRequirement === '')) return
     const board = boards.boards[projectKey]
     if (board === undefined) return
     createItem(projectKey, {
       type: 'task',
-      title: trimmed,
-      desc: desc.trim(),
+      title: trimmedTitle,
+      desc: trimmedRequirement,
+      originalRequirement: trimmedRequirement,
       priority: 'medium',
       labels: [],
       status: board.columns[0]?.id ?? 'todo',
       executionMode: 'auto'
     })
-      .then(() => {
-        setOpen(false)
+      .then(created => {
         setTitle('')
-        setDesc('')
+        setRequirement('')
         setError(null)
+        setNotice(`已创建草稿「${created.title}」，请到需求看板完成 AI 分析确认后执行`)
       })
       .catch(err => setError(err instanceof Error ? err.message : String(err)))
   }
@@ -73,8 +76,8 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
         type='button'
         className={css.trigger}
         onClick={() => setOpen(true)}
-        title='创建待办任务到看板'
-        aria-label='创建待办任务'
+        title='创建想法草稿到看板'
+        aria-label='创建想法草稿'
         data-testid='taskboard-todo-create'
       >
         ＋待办
@@ -87,13 +90,13 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
             ref={panelRef}
             role='dialog'
             aria-modal='true'
-            aria-label='创建待办任务'
+            aria-label='创建想法草稿'
             onClick={ev => ev.stopPropagation()}
             onSubmit={handleSubmit}
             tabIndex={-1}
           >
             <header className={css.head}>
-              <h3 className={css.title}>创建待办任务</h3>
+              <h3 className={css.title}>创建想法草稿</h3>
               <button type='button' className={css.closeBtn} onClick={closeDialog} aria-label='关闭'>✕</button>
             </header>
 
@@ -112,28 +115,35 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
             </label>
 
             <label className={css.field}>
-              <span className={css.fieldLabel}>标题</span>
+              <span className={css.fieldLabel}>标题（可选）</span>
               <input
                 className={css.input}
                 value={title}
                 onChange={ev => setTitle(ev.target.value)}
-                placeholder='待办任务标题'
+                placeholder='如：给系统加个登录功能'
                 data-dialog-initial-focus
-                required
                 data-testid='taskboard-todo-title'
               />
             </label>
 
             <label className={css.field}>
-              <span className={css.fieldLabel}>描述</span>
-              <textarea className={css.textarea} value={desc} onChange={ev => setDesc(ev.target.value)} placeholder='可选' rows={2} />
+              <span className={css.fieldLabel}>想法计划描述</span>
+              <textarea
+                className={css.textarea}
+                value={requirement}
+                onChange={ev => setRequirement(ev.target.value)}
+                placeholder='用自然语言描述你的想法，AI 会结合项目分析后生成可执行方案'
+                rows={4}
+                data-testid='taskboard-todo-requirement'
+              />
             </label>
 
             {error !== null && <div className={css.error} role='alert'>{error}</div>}
+            {notice !== null && <div className={css.notice} role='status'>{notice}</div>}
 
             <footer className={css.foot}>
               <button type='button' className={css.cancelBtn} onClick={closeDialog}>取消</button>
-              <button type='submit' className={css.saveBtn} disabled={title.trim() === '' || projectKey === ''}>创建</button>
+              <button type='submit' className={css.saveBtn} disabled={projectKey === '' || (title.trim() === '' && requirement.trim() === '')}>创建草稿</button>
             </footer>
           </form>
         </div>

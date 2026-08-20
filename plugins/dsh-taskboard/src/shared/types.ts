@@ -22,6 +22,27 @@ export type ExecutionState =
 /** 任务提交进入目标分支的状态。 */
 export type IntegrationState = 'pending' | 'integrating' | 'merged' | 'conflicted'
 
+/** AI 创建流程：创建生命周期状态（仅 originalRequirement 工作项使用）。 */
+export type CreationState = 'draft' | 'analyzing' | 'pending_confirm' | 'confirmed' | 'executing' | 'completed'
+
+/** AI 分析产出的结构化方案（工具写入、确认页编辑、冻结渲染的源头）。 */
+export interface AiAnalysis {
+  /** 建议的卡片标题（AI 生成，人工可在确认页覆盖）。 */
+  suggestedTitle?: string | undefined
+  /** 需求理解：AI 重新描述用户真正想实现什么。 */
+  requirementUnderstanding: string
+  /** 项目现状分析：已有相关功能、可复用内容与技术栈现状。 */
+  projectAnalysis: string
+  /** 实施方案：修改模块 / 新增能力 / 复用 / 实现方式 / 执行顺序。 */
+  implementationPlan: string[]
+  /** 影响范围：可能受影响的页面、组件、接口、状态、路由等。 */
+  affectedModules: string[]
+  /** 待确认项：无法从代码或需求确定的重要问题。 */
+  pendingQuestions: string[]
+  /** 验收标准：明确、可检查的验收条件。 */
+  acceptanceCriteria: string[]
+}
+
 /** 每个任务独占的 Git worktree/branch。 */
 export interface TaskWorkspace {
   /** 原始项目 Git 根目录。 */
@@ -95,6 +116,14 @@ export interface WorkItem {
   type: string
   title: string
   desc: string
+  /** AI 创建流程：原始需求（草稿期唯一输入；desc 在确认前与其同步）。 */
+  originalRequirement?: string | undefined
+  /** AI 创建流程生命周期状态；缺省视为 legacy 工作项。 */
+  creationState?: CreationState | undefined
+  /** 结构化方案（分析产出，确认时合并人工编辑）。 */
+  aiAnalysis?: AiAnalysis | undefined
+  /** 冻结方案：确认时按固定模板渲染的 markdown，执行唯一依据。 */
+  frozenPlan?: string | undefined
   priority: Priority
   labels: string[]
   /** 当前环节（ColumnDef.id） */
@@ -146,7 +175,7 @@ export interface Board {
   projectPath: string
   /** 项目展示名（workspace.title） */
   projectTitle: string
-  /** 自定义环节（列），默认八阶段流水线 */
+  /** 自定义环节（列），默认三列流水线 */
   columns: ColumnDef[]
   /** 工作项类型 */
   itemTypes: ItemTypeDef[]
@@ -168,16 +197,11 @@ export const DEFAULT_ITEM_TYPES: ItemTypeDef[] = [
   { key: 'bug', label: '缺陷', color: '#d95926' }
 ]
 
-/** 默认八阶段流水线（可自定义） */
+/** 默认三列流水线（可自定义）：想法 → 开发 → 验收提交合并 */
 export const DEFAULT_COLUMNS: ColumnDef[] = [
-  { id: 'todo', label: '待办' },
-  { id: 'analysis', label: '分析' },
-  { id: 'scheduled', label: '排期' },
-  { id: 'in-dev', label: '开发' },
-  { id: 'testing', label: '测试' },
-  { id: 'review', label: '验收' },
-  { id: 'released', label: '上线' },
-  { id: 'done', label: '完成' }
+  { id: 'todo', label: '创意想法' },
+  { id: 'in-dev', label: '开发落地' },
+  { id: 'accept', label: '验收提交合并' }
 ]
 
 /** 优先级展示名与顺序 */
@@ -196,6 +220,26 @@ export function executionModeOf (item: Pick<WorkItem, 'type' | 'executionMode'>)
 /** 旧数据兼容：未记录状态的工作项视为尚未执行。 */
 export function executionStateOf (item: Pick<WorkItem, 'executionState'>): ExecutionState {
   return item.executionState ?? 'idle'
+}
+
+/** 是否 AI 创建流程工作项（有原始需求）。 */
+export function isAiFlowItem (item: Pick<WorkItem, 'originalRequirement'>): boolean {
+  return item.originalRequirement !== undefined
+}
+
+/** AI 创建流程状态：缺省视为 draft；legacy 工作项返回 undefined。 */
+export function creationStateOf (item: Pick<WorkItem, 'originalRequirement' | 'creationState'>): CreationState | undefined {
+  return isAiFlowItem(item) ? (item.creationState ?? 'draft') : undefined
+}
+
+/** AI 创建流程状态展示名。 */
+export const CREATION_STATE_LABEL: Record<CreationState, string> = {
+  draft: '草稿',
+  analyzing: '分析中',
+  pending_confirm: '方案待确认',
+  confirmed: '已确认',
+  executing: '执行中',
+  completed: '已完成'
 }
 
 /** 新建空看板（首次接触项目时自动创建） */

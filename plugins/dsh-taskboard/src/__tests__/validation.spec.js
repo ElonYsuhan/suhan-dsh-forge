@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createBoard } from '../shared/types.ts'
-import { createItemFromBody, validateItemPatch, validateSettings } from '../validation.ts'
+import { createItemFromBody, validateAiAnalysisBody, validateItemPatch, validateSettings } from '../validation.ts'
 
 function itemBody (title = '任务') {
   return { title, type: 'task', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto' }
@@ -31,5 +31,45 @@ describe('taskboard request validation', () => {
       columns: board.columns.filter(column => column.id !== 'todo'),
       itemTypes: board.itemTypes
     })).toThrow('仍被工作项使用的环节')
+  })
+
+  it('creates AI 流程草稿：标题可空、强制第一列、desc 派生', () => {
+    const board = createBoard('project', '/tmp/project', '项目')
+    const requirement = '给系统加个登录功能，账号密码登录。'
+    const draft = createItemFromBody(board, {
+      type: 'task', title: '', desc: '', priority: 'medium', labels: [], status: 'in-dev',
+      executionMode: 'auto', originalRequirement: requirement
+    })
+    expect(draft.title).toBe(requirement)
+    expect(draft.desc).toBe(requirement)
+    expect(draft.originalRequirement).toBe(requirement)
+    expect(draft.creationState).toBe('draft')
+    expect(draft.status).toBe('todo') // 强制第一列
+    expect(() => createItemFromBody(board, { ...itemBody(), title: '' })).toThrow('标题或想法描述')
+  })
+
+  it('patches originalRequirement and rejects unrelated fields', () => {
+    const board = createBoard('project', '/tmp/project', '项目')
+    const draft = createItemFromBody(board, { ...itemBody('草稿'), originalRequirement: '原始需求' })
+    board.items.push(draft)
+    expect(validateItemPatch(board, draft, { originalRequirement: '改过的需求' }).originalRequirement).toBe('改过的需求')
+    expect(() => validateItemPatch(board, draft, { aiAnalysis: {} })).toThrow('不支持的字段')
+  })
+
+  it('validates AI 分析方案体严格性', () => {
+    const valid = {
+      suggestedTitle: '登录',
+      requirementUnderstanding: '理解',
+      projectAnalysis: '现状',
+      implementationPlan: ['步骤一'],
+      affectedModules: ['auth.ts'],
+      pendingQuestions: ['有效期？'],
+      acceptanceCriteria: ['能登录']
+    }
+    expect(validateAiAnalysisBody(valid).implementationPlan).toEqual(['步骤一'])
+    expect(() => validateAiAnalysisBody({ ...valid, requirementUnderstanding: '' })).toThrow('不能为空')
+    expect(() => validateAiAnalysisBody({ ...valid, implementationPlan: 'not-array' })).toThrow('字符串数组')
+    expect(() => validateAiAnalysisBody({ ...valid, acceptanceCriteria: [{ bad: true }] })).toThrow('必须是字符串')
+    expect(() => validateAiAnalysisBody(undefined)).toThrow('analysis 必须是对象')
   })
 })

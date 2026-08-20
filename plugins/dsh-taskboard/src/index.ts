@@ -31,10 +31,10 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { restoreGitCheckpoint } from './gitCheckpoint.ts'
 import { HttpError, readJsonBody } from './http.ts'
-import { createBoard, executionModeOf, executionStateOf, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type TimelineEntry, type WorkItem } from './shared/types.ts'
+import { createBoard, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type TimelineEntry, type WorkItem } from './shared/types.ts'
 import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
-import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
-import { createItemFromBody, validateItemPatch, validateSettings } from './validation.ts'
+import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resetTaskWorkspaceWorkingTree, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
+import { createItemFromBody, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
  * Host services this plugin requires. Cordis only resolves `ctx` property
@@ -323,12 +323,30 @@ function executionActive (state: ExecutionState): boolean {
 function executionPrompt (board: Board, item: WorkItem): string {
   const mode = executionModeOf(item)
   const phase = columnLabel(board, item.status)
+  const workColumn = board.columns.at(-2) ?? board.columns.at(-1)
+  const finalColumn = board.columns.at(-1)
+  const frozen = item.frozenPlan
+  const frozenLines = frozen === undefined
+    ? [
+        `【标题】${item.title}`,
+        item.desc === '' ? '' : `【描述】${item.desc}`,
+        item.iteration === undefined ? '' : `【迭代】${item.iteration}`
+      ]
+    : [
+        `【标题】${item.title}`,
+        '',
+        '【执行依据】以下是已确认并冻结的实施方案，是本次执行的唯一依据：',
+        frozen,
+        '',
+        '必须严格遵守冻结方案：',
+        '- 按【实施方案】逐步执行；不得按原始需求自行发挥，不得扩大或缩小范围，不得修改已冻结的方案。',
+        '- 【待确认项】中影响执行的问题必须先解决：若未获得明确结论，调用 taskboard_progress(outcome="blocked", summary="待确认项：…") 等待人工确认，不得擅自假设。',
+        '- 需求理解与验收标准以冻结方案为准；发现方案与仓库实际不一致时先调用 taskboard_progress(outcome="blocked", summary="方案与仓库现状不一致：…") 说明，等待人工指示。'
+      ]
   return [
     `请执行以下工作项。项目：${board.projectTitle}；实际工作目录：${item.taskWorkspace?.path ?? board.projectPath}。`,
-    `【标题】${item.title}`,
-    item.desc === '' ? '' : `【描述】${item.desc}`,
-    item.iteration === undefined ? '' : `【迭代】${item.iteration}`,
-    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：单轮端到端完成，按环节逐列推进卡片'}`,
+    ...frozenLines,
+    `【执行策略】${mode === 'review' ? '重大任务：每个环节必须人工审核' : '小任务：单轮端到端完成，交付就绪后卡片进入验收列'}`,
     `【当前环节】${phase}`,
     '【Git 隔离】当前会话位于本任务独占 worktree；其他任务会在各自目录并行执行。',
     '',
@@ -337,7 +355,7 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '- 所有命令和文件修改必须留在上述实际工作目录；严禁 cd 到原项目主工作区或其他任务目录。',
     mode === 'review'
       ? '- 每个环节都要在会话中给出可审核的结果，再调用 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")。'
-      : '- 单轮端到端执行：每完成一个环节（分析、排期、开发、测试、验收、上线准备）调用一次 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")，看板会立即把卡片推进到下一列；每个环节只汇报一次，不要重复调用，也不要跳过环节直接交付。',
+      : `- 单轮端到端执行：在「${workColumn?.label ?? ''}」列内依次完成分析、排期、开发、测试等全部环节，每完成一个环节调用一次 taskboard_progress(outcome="stage_complete", summary="本环节结果摘要")，环节记录会写入卡片时间线；每个环节只汇报一次，不要重复调用，也不要跳过环节。全部环节与质量检查完成后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，看板会把卡片推进到「${finalColumn?.label ?? ''}」列等待人工确认交付。`,
     mode === 'review'
       ? '- 工具返回“结束本轮执行”后必须立即结束当前 turn；会话完全停稳后看板才会开放人工审核，不能自行进入下一环节。'
       : '- 只执行一个端到端 turn。避免重复扫描仓库、重复跑全量门禁或启动常驻服务；验证强度与变更范围匹配：文档/注释改动不跑测试与门禁，代码改动只跑受影响项目的 typecheck 与测试，仅跨模块行为变更才在交付前跑一次完整 pnpm check。',
@@ -347,6 +365,88 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
     '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
     '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。'
+  ].filter(line => line !== '').join('\n')
+}
+
+/** 把结构化方案渲染成固定模板 markdown（冻结方案，执行唯一依据）。 */
+function renderPlanMarkdown (title: string, analysis: AiAnalysis): string {
+  const bulletList = (items: string[]): string =>
+    items.length === 0 ? '- 无' : items.map(item => `- ${item}`).join('\n')
+  return [
+    `# ${title}`,
+    '',
+    '> 本方案由 AI 分析生成并经人工确认，执行时以本方案为唯一依据。',
+    '',
+    '## 需求理解',
+    analysis.requirementUnderstanding,
+    '',
+    '## 项目现状分析',
+    analysis.projectAnalysis,
+    '',
+    '## 实施方案',
+    analysis.implementationPlan.length === 0
+      ? '1. 无'
+      : analysis.implementationPlan.map((step, index) => `${index + 1}. ${step}`).join('\n'),
+    '',
+    '## 影响范围',
+    bulletList(analysis.affectedModules),
+    '',
+    '## 待确认项',
+    bulletList(analysis.pendingQuestions),
+    '',
+    '## 验收标准',
+    bulletList(analysis.acceptanceCriteria)
+  ].join('\n')
+}
+
+/** 构造只读 AI 分析指令（结合当前真实项目产出结构化方案）。 */
+function analysisPrompt (board: Board, item: WorkItem, supplement?: string): string {
+  const current = item.aiAnalysis
+  const currentText = current === undefined
+    ? '无'
+    : [
+        `建议标题：${current.suggestedTitle ?? ''}`,
+        `需求理解：${current.requirementUnderstanding}`,
+        `项目现状分析：${current.projectAnalysis}`,
+        `实施方案：\n${current.implementationPlan.map((step, index) => `${index + 1}. ${step}`).join('\n')}`,
+        `影响范围：\n${current.affectedModules.map(module => `- ${module}`).join('\n')}`,
+        `待确认项：\n${current.pendingQuestions.map(question => `- ${question}`).join('\n')}`,
+        `验收标准：\n${current.acceptanceCriteria.map(criterion => `- ${criterion}`).join('\n')}`
+      ].join('\n')
+  return [
+    '请对以下「想法」做只读的工程分析，产出结构化实施方案。',
+    '',
+    `项目：${board.projectTitle}`,
+    `实际工作目录：${item.taskWorkspace?.path ?? board.projectPath}（任务独占快照 worktree，只读分析；非 Git 项目为项目主目录）`,
+    '',
+    '原始需求：',
+    item.originalRequirement ?? item.desc,
+    supplement === undefined || supplement.trim() === '' ? '' : `\n补充需求（重新分析）：\n${supplement}`,
+    '',
+    '现有方案（重新分析时给出，供修订）：',
+    currentText,
+    '',
+    '分析任务（严格只读：禁止创建/修改/删除任何文件，禁止 git commit/checkout/branch，',
+    '禁止运行有副作用的命令，只允许只读查看命令）：',
+    '1. 阅读工作区工程指令（CLAUDE.md / AGENTS.md / README 等）与当前技术栈（package.json / lockfile），理解约束。',
+    '2. 查看目录结构与相关代码，确认需求落点、可复用能力（已有模块/工具/脚本）、影响面。',
+    '3. 评估风险与待确认项（需求歧义、外部决策依赖、阻塞前提）。',
+    '',
+    '产出：调用 taskboard_analysis 工具一次性提交结构化方案：',
+    '- suggestedTitle：建议的卡片标题',
+    '- requirementUnderstanding：需求理解（含隐含诉求与边界）',
+    '- projectAnalysis：项目现状分析（工程指令要点 / 技术栈 / 相关代码 / 可复用能力 / 落点）',
+    '- implementationPlan：实施方案步骤（每步具体到文件或模块，可直接执行）',
+    '- affectedModules：影响范围（改动 / 新增 / 风险模块）',
+    '- pendingQuestions：待确认项（影响执行决策的开放问题）',
+    '- acceptanceCriteria：验收标准（可验证）',
+    '',
+    '严格约束：',
+    '- 必须调用 taskboard_analysis 提交方案；调用成功后立即结束当前 turn。',
+    '- 一次分析只调用一次 taskboard_analysis；不要调用 taskboard_progress，不要执行任何实现工作。',
+    '- 禁止虚构不存在的文件、组件、接口、目录；所有结论必须来自真实检索到的代码。',
+    '- 优先复用已有能力；不得为"架构完整"随意扩大需求范围。',
+    '- 无法从代码或需求确定的重要内容必须列入待确认项，禁止擅自假设核心业务逻辑。'
   ].filter(line => line !== '').join('\n')
 }
 
@@ -560,6 +660,7 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   item.commitRef = result.commit
   item.integrationState = 'merged'
   item.executionState = 'idle'
+  if (isAiFlowItem(item)) item.creationState = 'completed'
   const finalColumn = board.columns.at(-1)
   if (finalColumn !== undefined && item.status !== finalColumn.id) {
     pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '任务提交已自动集成' })
@@ -571,6 +672,102 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
   touch(board, item)
   await saveBoards(file)
+}
+
+interface StartExecutionOptions {
+  /** 执行开始后推进到下一列；run 首次执行与 confirm-plan 为 true。 */
+  advanceStatus: boolean
+  /** 推进流转的时间线条目备注。 */
+  statusMoveNote?: string
+  /** run 时间线条目备注。 */
+  timelineNote?: string
+}
+
+/**
+ * 启动任务执行：创建/复用隔离 worktree 与 Agent 会话，followup 执行指令。
+ * 调用方必须持有 item lock，并在外部完成归档/执行中/AI 流程闸门等守卫检查。
+ */
+async function startExecution (
+  ctx: Context,
+  file: BoardsFile,
+  board: Board,
+  item: WorkItem,
+  options: StartExecutionOptions
+): Promise<void> {
+  const previous = structuredClone(item)
+  let firstRun = item.sessionId === undefined
+  let sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
+  let handle: AgentHandle | undefined
+  let workspaceCreatedNow: WorkItem['taskWorkspace']
+  let registeredWorkspace: Workspace | undefined
+  try {
+    // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
+    item.executionState = 'running'
+    item.reviewSummary = undefined
+    touch(board, item)
+    await saveBoards(file)
+    if ((firstRun || isAiFlowItem(item)) && item.taskWorkspace === undefined) {
+      const root = await resolveGitRoot(board.projectPath)
+      workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id))
+      item.taskWorkspace = workspaceCreatedNow
+      item.integrationState = 'pending'
+      item.gitCheckpoint = undefined
+      touch(board, item)
+      await saveBoards(file)
+    }
+    const agentCwd = item.taskWorkspace?.path ?? board.projectPath
+    // 旧分析会话（非 Git 回退创建）的 cwd 是不可变 session header；补齐 worktree 后
+    // 必须换新执行会话绑定 worktree，否则执行会落在项目主工作区。
+    const needsFreshSession = workspaceCreatedNow !== undefined && !firstRun
+    if (needsFreshSession) sessionId = `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
+    let agent: Agent
+    if (firstRun || needsFreshSession) {
+      handle = await createTaskAgent(ctx, sessionId, agentCwd)
+      agent = handle.agent
+    } else {
+      agent = await resolveTaskAgent(ctx, sessionId, item.agentPreset)
+    }
+    if (handle !== undefined) {
+      agentHandles.set(sessionId, handle)
+      if (item.taskWorkspace === undefined) throw new Error('task workspace missing after Agent creation')
+      registeredWorkspace = await attachTaskSession(
+        ctx,
+        item.taskWorkspace,
+        sessionId,
+        `${board.projectTitle} · ${item.title}`
+      )
+    } else if (item.taskWorkspace !== undefined && item.taskWorkspace.workspaceId === undefined) {
+      // 工作区注册在插件重启后可能丢失，恢复执行时重新挂载。
+      await attachTaskSession(ctx, item.taskWorkspace, sessionId, `${board.projectTitle} · ${item.title}`)
+    }
+    item.sessionId = sessionId
+    item.agentPreset = agent.session.header.agentPreset
+    if (isAiFlowItem(item) && item.creationState === 'confirmed') item.creationState = 'executing'
+    if (options.advanceStatus) {
+      const next = nextColumn(board, item)
+      if (next !== undefined) {
+        pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: options.statusMoveNote ?? '创建独立 Git worktree 并开始执行' })
+        item.status = next.id
+      }
+    }
+    pushTimeline(item, { action: 'run', sessionId, note: options.timelineNote ?? (firstRun ? `在独立分支 ${item.taskWorkspace?.branch ?? ''} 创建任务会话` : '在原会话继续执行') })
+    touch(board, item)
+    await saveBoards(file)
+    followup(agent, executionPrompt(board, item))
+  } catch (error) {
+    const index = board.items.findIndex(candidate => candidate.id === item.id)
+    if (index >= 0) board.items[index] = previous
+    await saveBoards(file).catch(() => {})
+    if (registeredWorkspace !== undefined) {
+      await removeTaskWorkspaceRegistration(ctx, item.taskWorkspace, sessionId).catch(() => {})
+    }
+    if (handle !== undefined) {
+      await handle.dispose().catch(() => {})
+      agentHandles.delete(sessionId)
+    }
+    if (workspaceCreatedNow !== undefined) await discardTaskWorkspace(workspaceCreatedNow).catch(() => {})
+    throw error
+  }
 }
 
 /**
@@ -597,10 +794,77 @@ export function apply (ctx: Context): void {
     cache = null
   }, 'taskboard: agent handles')
 
+  // AI 分析结果由分析会话通过该工具提交；这是创建流程在确认前的唯一产出口。
+  ctx.effect(() => ctx.tools.register(defineTool({
+    name: 'taskboard_analysis',
+    description: '向需求看板提交 AI 分析产出的结构化需求方案。分析过程严格只读；调用成功后必须立即结束当前 turn，等待人工确认方案。',
+    parameters: {
+      suggestedTitle: { type: 'string', description: '建议的卡片标题' },
+      requirementUnderstanding: { type: 'string', required: true, description: '需求理解：重新描述用户真正想实现什么（含隐含诉求与边界）' },
+      projectAnalysis: { type: 'string', required: true, description: '项目现状分析：工程指令要点/技术栈/相关代码/可复用能力/需求落点' },
+      implementationPlan: { type: 'array', items: { type: 'string' }, required: true, description: '实施方案：具体到文件或模块、可直接执行的步骤列表' },
+      affectedModules: { type: 'array', items: { type: 'string' }, required: true, description: '影响范围：受影响的页面/组件/接口/状态/路由等' },
+      pendingQuestions: { type: 'array', items: { type: 'string' }, required: true, description: '待确认项：无法从代码或需求确定、影响执行决策的开放问题' },
+      acceptanceCriteria: { type: 'array', items: { type: 'string' }, required: true, description: '验收标准：明确、可检查的验收条件' }
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }]
+    },
+    async execute (args, exec) {
+      const sessionId = exec.agent?.id
+      if (sessionId === undefined) return '未关联到会话，无法定位工作项'
+      const file = await loadBoards()
+      let located: { board: Board; item: WorkItem } | null = null
+      for (const board of Object.values(file.boards)) {
+        const item = board.items.find(candidate => candidate.sessionId === sessionId && !candidate.archived)
+        if (item !== undefined) {
+          located = { board, item }
+          break
+        }
+      }
+      if (located === null) return '未找到与该会话关联的工作项'
+      const { board: foundBoard, item } = located
+      const lockKey = `item:${foundBoard.projectKey}:${item.id}`
+      return withLock(lockKey, async () => {
+        if (item.archived) return '工作项已经归档，拒绝更新分析结果'
+        if (!isAiFlowItem(item)) return '该工作项不是 AI 创建流程的工作项'
+        if (creationStateOf(item) !== 'analyzing') {
+          return '当前不处于分析中（方案已生成或分析未开始）。若方案已提交，请立即结束当前 turn。'
+        }
+        // 清洗模型产出（不抛错）：字段截断、丢弃空项，避免坏数据写盘。
+        const cleanText = (value: unknown, max: number): string =>
+          typeof value === 'string' ? value.trim().slice(0, max) : ''
+        const cleanList = (value: unknown, maxItems: number, maxLen: number): string[] =>
+          Array.isArray(value)
+            ? value.map(entry => typeof entry === 'string' ? entry.trim().slice(0, maxLen) : '').filter(entry => entry !== '').slice(0, maxItems)
+            : []
+        const analysis: AiAnalysis = {
+          suggestedTitle: cleanText(args.suggestedTitle, 200) || undefined,
+          requirementUnderstanding: cleanText(args.requirementUnderstanding, 20_000),
+          projectAnalysis: cleanText(args.projectAnalysis, 20_000),
+          implementationPlan: cleanList(args.implementationPlan, 100, 2_000),
+          affectedModules: cleanList(args.affectedModules, 100, 2_000),
+          pendingQuestions: cleanList(args.pendingQuestions, 100, 2_000),
+          acceptanceCriteria: cleanList(args.acceptanceCriteria, 100, 2_000)
+        }
+        if (analysis.requirementUnderstanding === '' || analysis.projectAnalysis === '') {
+          return '方案缺少 requirementUnderstanding 或 projectAnalysis，请补充后重新调用。'
+        }
+        item.aiAnalysis = analysis
+        item.creationState = 'pending_confirm'
+        pushTimeline(item, { action: 'note', note: 'AI 分析完成，已生成结构化方案，等待人工确认' })
+        touch(foundBoard, item)
+        await saveBoards(file)
+        return '方案已提交，看板已进入待确认状态。请立即结束本轮执行，等待人工确认或重新分析。'
+      })
+    }
+  })), 'taskboard: analysis tool')
+
   // Agent 只能通过这个工具改变工作项执行状态。
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'taskboard_progress',
-    description: '向需求看板汇报环节完成、阻塞、待交付或已提交。重大任务会停在每个环节等待人工审核；小任务每次 stage_complete 自动推进到下一列；任何任务最终都必须等待人工确认交付。',
+    description: '向需求看板汇报环节完成、阻塞、待交付或已提交。重大任务会停在每个环节等待人工审核；小任务 stage_complete 只记录环节进度，delivery_ready 时卡片进入验收列等待人工确认交付；任何任务最终都必须等待人工确认交付。',
     parameters: {
       outcome: {
         type: 'string',
@@ -673,12 +937,17 @@ export function apply (ctx: Context): void {
         return '已记录阻塞；请等待人工处理后再继续。'
       }
       if (args.outcome === 'delivery_ready') {
+        const finalColumn = foundBoard.columns.at(-1)
+        if (finalColumn !== undefined && item.status !== finalColumn.id) {
+          pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: `交付物就绪，进入「${finalColumn.label}」` })
+          item.status = finalColumn.id
+        }
         item.executionState = 'awaiting-delivery'
         item.deliverySummary = summary
         pushTimeline(item, { action: 'note', note: summary === undefined ? '交付物已就绪，等待人工确认' : `交付物已就绪，等待人工确认：${summary}` })
         touch(foundBoard, item)
         await saveBoards(file)
-        return '交付物已登记。请停止执行，等待人工确认交付；确认前严禁提交代码。'
+        return '交付物已登记，卡片已进入验收列。请停止执行，等待人工确认交付；确认前严禁提交代码。'
       }
       if (args.outcome === 'delivered') {
         if (item.taskWorkspace !== undefined) return '当前任务由看板自动提交和集成，拒绝 Agent 自报 delivered。请等待人工确认交付。'
@@ -688,6 +957,7 @@ export function apply (ctx: Context): void {
         item.commitRef = commitRef
         item.deliverySummary = summary ?? item.deliverySummary
         item.executionState = 'idle'
+        if (isAiFlowItem(item)) item.creationState = 'completed'
         const finalColumn = foundBoard.columns.at(-1)
         if (finalColumn !== undefined && item.status !== finalColumn.id) {
           pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '代码已提交，进入完成环节' })
@@ -718,14 +988,21 @@ export function apply (ctx: Context): void {
         publishReviewAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
         return '已记录当前环节产出。请结束本轮执行；会话完全停稳后看板才会进入待审核状态。'
       }
-      // 小任务单轮端到端：stage_complete 立即推进到下一列，卡片在整条流水线可见；
-      // 已到最后一列时按交付处理，等 turn 停稳后再开放人工确认，避免执行中误提交。
+      // 小任务单轮端到端：仅当后面还有中间列时 stage_complete 才推进卡片；
+      // 在最终列前的开发列内，环节完成只记录时间线，交付必须通过 delivery_ready 触发。
+      // 已在最终列时（手动拖入或旧流程）保留旧协议：按交付处理，等 turn 停稳后开放人工确认。
       if (executionStateOf(item) !== 'running') return '当前工作项不在执行中，忽略本次环节汇报。'
       const next = nextColumn(foundBoard, item)
-      if (next === undefined || next.id === foundBoard.columns.at(-1)?.id) {
+      if (next === undefined) {
         if (exec.agent === undefined) return '未关联到 Agent，无法确认当前环节是否已经执行完毕。'
         publishAutoDeliveryAfterAgentIdle(exec.agent, sessionId, item.status, note, lifecycle)
         return '已记录最终环节结果。请立即结束本轮执行；会话停稳后看板将开放交付确认。'
+      }
+      if (next.id === foundBoard.columns.at(-1)?.id) {
+        pushTimeline(item, { action: 'note', note: `环节完成：${note}` })
+        touch(foundBoard, item)
+        await saveBoards(file)
+        return `已记录「${columnLabel(foundBoard, item.status)}」环节完成，卡片保持在本列。请继续执行后续环节；全部环节与质量检查完成后调用 taskboard_progress(outcome="delivery_ready")。`
       }
       pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: `自动推进：${note}` })
       item.status = next.id
@@ -735,6 +1012,7 @@ export function apply (ctx: Context): void {
       })
     }
   })), 'taskboard: tool')
+
 
   ctx.effect(() => ctx.webServer.register({
     kind: 'prefix',
@@ -842,14 +1120,26 @@ export function apply (ctx: Context): void {
             const item = findItem(board, parts[4] ?? '')
             const patch = validateItemPatch(board, item, body)
             const changesExecutionData = patch.title !== undefined || patch.desc !== undefined || patch.type !== undefined ||
-              patch.priority !== undefined || patch.labels !== undefined || patch.parentId !== undefined ||
-              patch.iteration !== undefined || patch.executionMode !== undefined || patch.status !== undefined
+              patch.originalRequirement !== undefined || patch.priority !== undefined || patch.labels !== undefined ||
+              patch.parentId !== undefined || patch.iteration !== undefined || patch.executionMode !== undefined ||
+              patch.status !== undefined
             if (changesExecutionData && executionActive(executionStateOf(item))) {
               send(res, 409, { error: '执行中的工作项不能编辑或手动改变环节' })
               return
             }
+            if (patch.status !== undefined && patch.status !== item.status &&
+                isAiFlowItem(item) && ['draft', 'analyzing', 'pending_confirm'].includes(creationStateOf(item) ?? 'draft')) {
+              send(res, 409, { error: 'AI 创建的工作项在方案确认前不能移出第一列' })
+              return
+            }
             if (patch.title !== undefined) item.title = patch.title
             if (patch.desc !== undefined) item.desc = patch.desc
+            if (patch.originalRequirement !== undefined) {
+              item.originalRequirement = patch.originalRequirement
+              if (item.creationState === undefined) item.creationState = 'draft'
+              // 方案产出前 desc 与原始需求保持同步（卡片/详情展示）。
+              if (item.aiAnalysis === undefined) item.desc = patch.originalRequirement
+            }
             if (patch.type !== undefined) item.type = patch.type
             if (patch.priority !== undefined) item.priority = patch.priority
             if (patch.labels !== undefined) item.labels = patch.labels
@@ -947,54 +1237,99 @@ export function apply (ctx: Context): void {
                 send(res, 409, { error: '工作项已有进行中的执行，请打开关联会话查看状态' })
                 return
               }
-              const previous = structuredClone(item)
+              // AI 创建流程：必须先分析并确认方案，才能执行。
+              if (isAiFlowItem(item) && !['confirmed', 'executing'].includes(creationStateOf(item) ?? 'draft')) {
+                send(res, 409, { error: '请先完成 AI 分析并确认方案' })
+                return
+              }
               const firstRun = item.sessionId === undefined
+              // AI 流程项首次执行一定从第一列出发（确认前被锁定），重试时不推进。
+              await startExecution(ctx, file, board, item, {
+                advanceStatus: firstRun || (isAiFlowItem(item) && item.status === board.columns[0]?.id)
+              })
+              send(res, 200, { item })
+            })
+            return
+          }
+
+          // POST analyze：创建/复用只读分析会话，Agent 完成后经 taskboard_analysis 工具提交结构化方案。
+          if (parts.length === 6 && parts[5] === 'analyze' && method === 'POST') {
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+              const item = findItem(board, itemId)
+              if (item.archived) {
+                send(res, 409, { error: '工作项已归档' })
+                return
+              }
+              if (!isAiFlowItem(item)) {
+                send(res, 409, { error: '该工作项不是 AI 创建流程的工作项' })
+                return
+              }
+              const state = creationStateOf(item) ?? 'draft'
+              if (state === 'executing' || state === 'completed') {
+                send(res, 409, { error: '已确认执行的工作项不能重新分析' })
+                return
+              }
+              if (executionActive(executionStateOf(item))) {
+                send(res, 409, { error: '执行中的工作项不能重新分析' })
+                return
+              }
+              // analyzing 状态允许重入（崩溃/未产出方案时的重试语义）。
+              const supplementValue = (body as { supplement?: unknown }).supplement
+              const supplement = typeof supplementValue === 'string' && supplementValue.trim() !== '' ? supplementValue.trim() : undefined
+              const previous = structuredClone(item)
+              if (supplement !== undefined) {
+                item.originalRequirement = `${item.originalRequirement ?? ''}\n\n【补充需求】${supplement}`
+                item.desc = item.originalRequirement
+              }
+              item.creationState = 'analyzing'
+              item.reviewSummary = undefined
+              const firstAnalyze = item.sessionId === undefined
               const sessionId = item.sessionId ?? `taskboard-${board.projectKey}-${item.id}-${randomUUID()}`
               let handle: AgentHandle | undefined
               let workspaceCreatedNow: WorkItem['taskWorkspace']
               let registeredWorkspace: Workspace | undefined
               try {
-                // 抢占状态发生在首个 await 前，并由 item lock 包围，杜绝双击创建两个 Agent。
-                item.executionState = 'running'
-                item.reviewSummary = undefined
-                touch(board, item)
-                await saveBoards(file)
-                if (firstRun && item.taskWorkspace === undefined) {
-                  const root = await resolveGitRoot(board.projectPath)
-                  workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id))
-                  item.taskWorkspace = workspaceCreatedNow
-                  item.integrationState = 'pending'
-                  item.gitCheckpoint = undefined
-                  touch(board, item)
-                  await saveBoards(file)
+                if (firstAnalyze && item.taskWorkspace === undefined) {
+                  try {
+                    const root = await resolveGitRoot(board.projectPath)
+                    workspaceCreatedNow = await withLock(`repository:${root}`, async () => prepareTaskWorkspace(board.projectPath, item.id))
+                    item.taskWorkspace = workspaceCreatedNow
+                    item.integrationState = 'pending'
+                    item.gitCheckpoint = undefined
+                  } catch (error) {
+                    if (!(error instanceof TaskWorkspacePreconditionError)) throw error
+                    // 非 Git 项目：只读分析回退到项目主目录（无 worktree）；执行阶段仍受 Git 前置条件约束。
+                  }
                 }
                 const agentCwd = item.taskWorkspace?.path ?? board.projectPath
-                const agent = firstRun
+                const agent = firstAnalyze
                   ? (handle = await createTaskAgent(ctx, sessionId, agentCwd)).agent
                   : await resolveTaskAgent(ctx, sessionId, item.agentPreset)
                 if (handle !== undefined) {
                   agentHandles.set(sessionId, handle)
-                  if (item.taskWorkspace === undefined) throw new Error('task workspace missing after Agent creation')
-                  registeredWorkspace = await attachTaskSession(
-                    ctx,
-                    item.taskWorkspace,
-                    sessionId,
-                    `${board.projectTitle} · ${item.title}`
-                  )
+                  if (item.taskWorkspace !== undefined) {
+                    registeredWorkspace = await attachTaskSession(
+                      ctx,
+                      item.taskWorkspace,
+                      sessionId,
+                      `${board.projectTitle} · ${item.title}`
+                    )
+                  }
                 }
                 item.sessionId = sessionId
                 item.agentPreset = agent.session.header.agentPreset
-                if (firstRun) {
-                  const next = nextColumn(board, item)
-                  if (next !== undefined) {
-                    pushTimeline(item, { action: 'moved', from: item.status, to: next.id, note: '创建独立 Git worktree 并开始执行' })
-                    item.status = next.id
-                  }
-                }
-                pushTimeline(item, { action: 'run', sessionId, note: firstRun ? `在独立分支 ${item.taskWorkspace?.branch ?? ''} 创建任务会话` : '在原会话继续执行' })
+                pushTimeline(item, {
+                  action: 'note',
+                  note: supplement !== undefined
+                    ? `补充需求，重新分析：${supplement}`
+                    : firstAnalyze
+                      ? '开始 AI 分析（只读）'
+                      : '重新 AI 分析'
+                })
                 touch(board, item)
                 await saveBoards(file)
-                followup(agent, executionPrompt(board, item))
+                followup(agent, analysisPrompt(board, item, supplement))
                 send(res, 200, { item })
               } catch (error) {
                 const index = board.items.findIndex(candidate => candidate.id === item.id)
@@ -1010,6 +1345,57 @@ export function apply (ctx: Context): void {
                 if (workspaceCreatedNow !== undefined) await discardTaskWorkspace(workspaceCreatedNow).catch(() => {})
                 throw error
               }
+            })
+            return
+          }
+
+          // POST confirm-plan：人工确认并冻结方案，立即自动开始执行。
+          if (parts.length === 6 && parts[5] === 'confirm-plan' && method === 'POST') {
+            const itemId = parts[4] ?? ''
+            await withLock(`item:${board.projectKey}:${itemId}`, async () => {
+              const item = findItem(board, itemId)
+              if (item.archived) {
+                send(res, 409, { error: '工作项已归档' })
+                return
+              }
+              if (creationStateOf(item) !== 'pending_confirm') {
+                send(res, 409, { error: '当前没有待确认的方案' })
+                return
+              }
+              if (executionActive(executionStateOf(item))) {
+                send(res, 409, { error: '工作项已有进行中的执行' })
+                return
+              }
+              const analysis = validateAiAnalysisBody((body as { analysis?: unknown }).analysis)
+              const requirementFirstLine = (item.originalRequirement ?? '').split(/\r?\n/)
+                .map(line => line.trim())
+                .find(line => line !== '') ?? '未命名想法'
+              const titleValue = (body as { title?: unknown }).title
+              const title = typeof titleValue === 'string' && titleValue.trim() !== ''
+                ? titleValue.trim().slice(0, 200)
+                : analysis.suggestedTitle !== undefined && analysis.suggestedTitle.trim() !== ''
+                  ? analysis.suggestedTitle.trim().slice(0, 200)
+                  : item.title.trim() !== ''
+                    ? item.title
+                    : requirementFirstLine.slice(0, 200)
+              item.title = title
+              item.aiAnalysis = analysis
+              item.frozenPlan = renderPlanMarkdown(title, analysis)
+              item.creationState = 'confirmed'
+              pushTimeline(item, { action: 'note', note: '人工确认方案并冻结，作为执行唯一依据' })
+              touch(board, item)
+              await saveBoards(file)
+              // 防御加固：清除分析期 Agent 在 worktree 中的误写（快照含用户未提交改动，无损）。
+              if (item.taskWorkspace !== undefined) {
+                await resetTaskWorkspaceWorkingTree(item.taskWorkspace).catch(() => {})
+              }
+              // 先落盘 confirmed 再启动执行：启动失败（如非 Git）保持 confirmed 可经 run 重试。
+              await startExecution(ctx, file, board, item, {
+                advanceStatus: true,
+                statusMoveNote: '方案确认后开始执行',
+                timelineNote: '方案已确认，自动开始执行'
+              })
+              send(res, 200, { item })
             })
             return
           }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { HttpError } from './http.ts'
-import type { Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from './shared/types.ts'
+import type { AiAnalysis, Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from './shared/types.ts'
 
 const PRIORITIES = new Set<Priority>(['low', 'medium', 'high', 'urgent'])
 const IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
@@ -63,18 +63,36 @@ function parent (board: Board, itemId: string | undefined, value: unknown): stri
   return candidate
 }
 
+/** 首个非空行。 */
+function firstLineOf (value: string): string {
+  return value.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? ''
+}
+
 export function createItemFromBody (board: Board, body: unknown): WorkItem {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
   const now = new Date().toISOString()
   const mode: ExecutionMode = body.executionMode === 'review' ? 'review' : 'auto'
+  // AI 创建流程：标题可空（AI 分析后建议），原始需求即描述；
+  // 新工作项一律落在第一列（创意想法），其他列不支持新建。
+  const requirement = body.originalRequirement === undefined
+    ? undefined
+    : text(body.originalRequirement, 'originalRequirement', 20_000, false)
+  const desc = requirement ?? (body.desc === undefined ? '' : text(body.desc, 'desc', 20_000))
+  const fallbackTitle = firstLineOf(desc).slice(0, 200)
+  const title = body.title === undefined || body.title === null || String(body.title).trim() === ''
+    ? fallbackTitle
+    : text(body.title, 'title', 200, false)
+  if (title === '') throw new HttpError(400, '请填写标题或想法描述')
   return {
     id: randomUUID(),
     type: itemType(board, body.type),
-    title: text(body.title, 'title', 200, false),
-    desc: body.desc === undefined ? '' : text(body.desc, 'desc', 20_000),
+    title,
+    desc,
+    originalRequirement: requirement,
+    creationState: requirement === undefined ? undefined : 'draft',
     priority: priority(body.priority),
     labels: labels(body.labels),
-    status: status(board, body.status),
+    status: board.columns[0]?.id ?? 'todo',
     parentId: parent(board, undefined, body.parentId),
     iteration: body.iteration === undefined || body.iteration === null || body.iteration === '' ? undefined : text(body.iteration, 'iteration', 120, false),
     executionMode: mode,
@@ -89,6 +107,7 @@ export function createItemFromBody (board: Board, body: unknown): WorkItem {
 export interface ValidItemPatch {
   title?: string
   desc?: string
+  originalRequirement?: string
   type?: string
   priority?: Priority
   labels?: string[]
@@ -101,11 +120,12 @@ export interface ValidItemPatch {
 
 export function validateItemPatch (board: Board, item: WorkItem, body: unknown): ValidItemPatch {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
-  const allowed = new Set(['title', 'desc', 'type', 'priority', 'labels', 'parentId', 'iteration', 'executionMode', 'status', 'meta'])
+  const allowed = new Set(['title', 'desc', 'originalRequirement', 'type', 'priority', 'labels', 'parentId', 'iteration', 'executionMode', 'status', 'meta'])
   if (Object.keys(body).some(key => !allowed.has(key))) throw new HttpError(400, '请求体包含不支持的字段')
   const patch: ValidItemPatch = {}
   if ('title' in body) patch.title = text(body.title, 'title', 200, false)
   if ('desc' in body) patch.desc = text(body.desc, 'desc', 20_000)
+  if ('originalRequirement' in body) patch.originalRequirement = text(body.originalRequirement, 'originalRequirement', 20_000, false)
   if ('type' in body) patch.type = itemType(board, body.type, false)
   if ('priority' in body) patch.priority = priority(body.priority, false)
   if ('labels' in body) patch.labels = labels(body.labels)
@@ -121,6 +141,26 @@ export function validateItemPatch (board: Board, item: WorkItem, body: unknown):
     if (body.meta.note !== undefined) patch.note = text(body.meta.note, 'meta.note', 2_000)
   }
   return patch
+}
+
+/** 校验确认方案页提交的结构化方案体（严格：确认时人工已看过全部字段）。 */
+export function validateAiAnalysisBody (value: unknown): AiAnalysis {
+  if (!isObject(value)) throw new HttpError(400, 'analysis 必须是对象')
+  const list = (field: string): string[] => {
+    const raw = value[field]
+    if (!Array.isArray(raw) || raw.length > 100) throw new HttpError(400, `${field} 必须是最多 100 项的字符串数组`)
+    return raw.map((entry, index) => text(entry, `${field}[${index}]`, 2_000, false))
+  }
+  const analysis: AiAnalysis = {
+    requirementUnderstanding: text(value.requirementUnderstanding, 'requirementUnderstanding', 20_000, false),
+    projectAnalysis: text(value.projectAnalysis, 'projectAnalysis', 20_000, false),
+    implementationPlan: list('implementationPlan'),
+    affectedModules: list('affectedModules'),
+    pendingQuestions: list('pendingQuestions'),
+    acceptanceCriteria: list('acceptanceCriteria')
+  }
+  if (value.suggestedTitle !== undefined) analysis.suggestedTitle = text(value.suggestedTitle, 'suggestedTitle', 200, false)
+  return analysis
 }
 
 function uniqueIds (values: string[], field: string): void {

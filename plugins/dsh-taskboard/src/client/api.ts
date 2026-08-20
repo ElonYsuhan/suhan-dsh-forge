@@ -1,7 +1,7 @@
 /**
  * 需求看板 REST 客户端（同源，无 CORS）。
  */
-import type { Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from '../shared/types.ts'
+import type { AiAnalysis, Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from '../shared/types.ts'
 
 /** workspace 元信息（来自 ctx.workspaceRegistry） */
 export interface WorkspaceMeta {
@@ -28,6 +28,7 @@ export interface ItemInput {
   type: string
   title: string
   desc: string
+  originalRequirement?: string | undefined
   priority: Priority
   labels: string[]
   parentId?: string | null | undefined
@@ -111,6 +112,30 @@ export async function runItem (key: string, id: string): Promise<WorkItem> {
   })
   const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: run failed')
   if (body.item === undefined) throw new Error('taskboard: run response missing item')
+  return body.item
+}
+
+/** 启动/重新启动 AI 分析（创建或复用只读分析会话）。 */
+export async function analyzeItem (key: string, id: string, supplement?: string): Promise<WorkItem> {
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/analyze`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(supplement === undefined || supplement.trim() === '' ? {} : { supplement })
+  })
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: analyze failed')
+  if (body.item === undefined) throw new Error('taskboard: analyze response missing item')
+  return body.item
+}
+
+/** 确认并冻结方案，自动开始执行。 */
+export async function confirmPlanItem (key: string, id: string, input: { title?: string; analysis: AiAnalysis }): Promise<WorkItem> {
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/confirm-plan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input)
+  })
+  const body = await jsonResponse<{ item?: WorkItem }>(res, 'taskboard: confirm-plan failed')
+  if (body.item === undefined) throw new Error('taskboard: confirm-plan response missing item')
   return body.item
 }
 

@@ -3,7 +3,7 @@
  * 可拖拽（dataTransfer 携带 item id），点击打开详情。
  */
 import type { DragEvent } from 'react'
-import { executionModeOf, executionStateOf, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
+import { CREATION_STATE_LABEL, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemCard.module.css'
 
 /** ItemCard surface props. */
@@ -39,7 +39,10 @@ const STATE_LABEL: Record<string, string> = {
  */
 export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, onDragEnd, onSelect }: ItemCardProps) {
   const executionState = executionStateOf(item)
-  const locked = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing'
+  const creationState = creationStateOf(item)
+  // AI 创建流程确认前卡片锁定在第一列（服务端同样拒绝流转）。
+  const preConfirm = creationState === 'draft' || creationState === 'analyzing' || creationState === 'pending_confirm'
+  const locked = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing' || preConfirm
   const handleDragStart = (ev: DragEvent<HTMLButtonElement>): void => {
     if (locked) {
       ev.preventDefault()
@@ -71,6 +74,8 @@ export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, o
       <div className={css.cardTitle}>{item.title}</div>
       {item.desc !== '' && <div className={css.cardDesc}>{item.desc}</div>}
       <div className={css.cardMeta}>
+        {isAiFlowItem(item) && creationState !== undefined && creationState !== 'executing' && creationState !== 'completed' &&
+          <span className={css.executionState}>{CREATION_STATE_LABEL[creationState]}</span>}
         <span className={css.mode}>{executionModeOf(item) === 'review' ? '重大任务' : 'AI 自主'}</span>
         {STATE_LABEL[executionState] !== undefined && <span className={css.executionState}>{STATE_LABEL[executionState]}</span>}
         {parentTitle !== undefined && <span className={css.parent} title={`追溯：${parentTitle}`}>⬆ {parentTitle}</span>}

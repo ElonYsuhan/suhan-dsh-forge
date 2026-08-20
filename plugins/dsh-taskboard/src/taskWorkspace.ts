@@ -211,6 +211,12 @@ export async function discardTaskWorkspace (workspace: TaskWorkspace, keepBranch
   if (!keepBranch) await git(workspace.root, ['branch', '-D', workspace.branch]).catch(() => {})
 }
 
+/** 防御性复位：丢弃只读分析期 Agent 在任务 worktree 中的任何误写（快照基线含用户未提交改动，无损）。 */
+export async function resetTaskWorkspaceWorkingTree (workspace: TaskWorkspace): Promise<void> {
+  await git(workspace.path, ['checkout', '--', '.'])
+  await git(workspace.path, ['clean', '-fd'])
+}
+
 /** 冲突处理任务成功后清理原任务保留的源分支。 */
 export async function deleteTaskBranch (root: string, branch: string): Promise<void> {
   await git(root, ['branch', '-D', branch]).catch(() => {})

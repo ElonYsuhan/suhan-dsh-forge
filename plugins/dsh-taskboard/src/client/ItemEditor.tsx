@@ -1,5 +1,8 @@
 /**
- * 工作项编辑弹窗：类型 / 标题 / 描述 / 优先级 / 标签 / 迭代 / 追溯父级 / 环节。
+ * 工作项弹窗：
+ * - 新建（item === null）：AI 创建流程极简表单 —— 可选标题 + 想法计划描述 + 「AI分析」；
+ *   保存后由宿主先创建草稿再触发 AI 分析（先分析、后执行）。
+ * - 编辑（item !== null）：类型 / 标题 / 描述 / 优先级 / 标签 / 迭代 / 追溯父级 / 环节。
  */
 import { useState, type FormEvent } from 'react'
 import { PRIORITIES, executionModeOf, type Board, type ExecutionMode, type Priority, type WorkItem } from '../shared/types.ts'
@@ -25,6 +28,7 @@ export interface ItemEditorProps {
 export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: ItemEditorProps) {
   const panelRef = useDialogFocus<HTMLFormElement>(onCancel)
   const [title, setTitle] = useState(item?.title ?? '')
+  const [requirement, setRequirement] = useState(item?.originalRequirement ?? '')
   const [type, setType] = useState(item?.type ?? board.itemTypes[0]?.key ?? 'task')
   const [desc, setDesc] = useState(item?.desc ?? '')
   const [priority, setPriority] = useState<Priority>(item?.priority ?? 'medium')
@@ -38,6 +42,23 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
 
   const handleSubmit = (ev: FormEvent): void => {
     ev.preventDefault()
+    if (item === null) {
+      const trimmed = requirement.trim()
+      if (trimmed === '' && title.trim() === '') return
+      onSave({
+        type,
+        title: title.trim(),
+        desc: '',
+        originalRequirement: trimmed,
+        priority: 'medium',
+        labels: [],
+        parentId: null,
+        iteration: null,
+        status: board.columns[0]?.id ?? 'todo',
+        executionMode: 'auto'
+      })
+      return
+    }
     const trimmed = title.trim()
     if (trimmed === '') return
     onSave({
@@ -53,6 +74,60 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
     })
   }
 
+  // ── 新建：AI 创建流程极简表单 ─────────────────────────────
+  if (item === null) {
+    const submitDisabled = requirement.trim() === '' && title.trim() === ''
+    return (
+      <div className={css.mask} onClick={onCancel}>
+        <form
+          className={css.panel}
+          ref={panelRef}
+          role='dialog'
+          aria-modal='true'
+          aria-label='新建想法'
+          onClick={ev => ev.stopPropagation()}
+          onSubmit={handleSubmit}
+          tabIndex={-1}
+        >
+          <header className={css.head}>
+            <h3 className={css.title}>新建想法</h3>
+            <button type='button' className={css.closeBtn} onClick={onCancel} aria-label='关闭'>✕</button>
+          </header>
+
+          <label className={css.field}>
+            <span className={css.fieldLabel}>标题（可选，AI 分析后给出建议）</span>
+            <input
+              className={css.input}
+              value={title}
+              onChange={ev => setTitle(ev.target.value)}
+              placeholder='如：给系统加个登录功能'
+              data-dialog-initial-focus
+              data-testid='taskboard-editor-title'
+            />
+          </label>
+
+          <label className={css.field}>
+            <span className={css.fieldLabel}>想法计划描述</span>
+            <textarea
+              className={css.textarea}
+              value={requirement}
+              onChange={ev => setRequirement(ev.target.value)}
+              placeholder='用自然语言描述你的想法或需求，AI 会结合当前项目分析并生成可执行方案。例如：给系统加个登录功能，账号密码登录，登录后保持登录状态。'
+              rows={8}
+              data-testid='taskboard-editor-requirement'
+            />
+          </label>
+
+          <footer className={css.foot}>
+            <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
+            <button type='submit' className={css.saveBtn} disabled={submitDisabled}>AI分析</button>
+          </footer>
+        </form>
+      </div>
+    )
+  }
+
+  // ── 编辑：全字段表单 ─────────────────────────────────────
   return (
     <div className={css.mask} onClick={onCancel}>
       <form
@@ -60,13 +135,13 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
         ref={panelRef}
         role='dialog'
         aria-modal='true'
-        aria-label={item === null ? '新建工作项' : '编辑工作项'}
+        aria-label='编辑工作项'
         onClick={ev => ev.stopPropagation()}
         onSubmit={handleSubmit}
         tabIndex={-1}
       >
         <header className={css.head}>
-          <h3 className={css.title}>{item === null ? '新建工作项' : '编辑工作项'}</h3>
+          <h3 className={css.title}>编辑工作项</h3>
           <button type='button' className={css.closeBtn} onClick={onCancel} aria-label='关闭'>✕</button>
         </header>
 

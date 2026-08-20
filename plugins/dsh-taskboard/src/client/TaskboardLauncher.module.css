@@ -170,11 +170,28 @@
 .error {
   margin: 10px 18px 0;
   padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   border: 1px solid var(--dsw-alias-state-error-primary);
   border-radius: 8px;
+  background: color-mix(in srgb, var(--dsw-alias-state-error-primary) 8%, transparent);
   color: var(--dsw-alias-state-error-primary);
   font-size: 13px;
+  word-break: break-word;
 }
+.errorDismiss {
+  flex: none;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.errorDismiss:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .notice {
   margin: 10px 18px 0;
   padding: 8px 12px;

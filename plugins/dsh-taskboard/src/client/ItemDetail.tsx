@@ -1,7 +1,11 @@
 /**
  * 工作项详情面板：完整字段 + 需求追溯时间线 + 会话联动（执行 / 打开会话）。
+ * AI 创建流程（有 originalRequirement）额外展示「AI 方案」面板：
+ * 草稿 → AI分析按钮；分析中 → 进行中提示 + 重试；方案待确认 → 分字段编辑 +
+ * 补充需求重新分析 / 确认并执行；已确认及之后 → 只读冻结方案。
  */
-import { executionModeOf, executionStateOf, type Board, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
+import { useState } from 'react'
+import { creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemDetail.module.css'
 import { useDialogFocus } from './useDialogFocus.ts'
 
@@ -22,6 +26,10 @@ export interface ItemDetailProps {
   onConfirmDelivery: () => void
   onForceClose: () => void
   onOpenSession: (sessionId: string) => void
+  /** AI 创建流程：启动/重新启动分析（supplement 为补充需求） */
+  onAnalyze: (supplement?: string) => void
+  /** AI 创建流程：确认并冻结方案（自动开始执行） */
+  onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
 }
 
 /** 动作文案 */
@@ -49,16 +57,25 @@ function formatTime (iso: string): string {
   return `${d.toLocaleDateString()} ${d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
 }
 
+/** 行 → 非空数组（每行一项的文本域回填） */
+function splitLines (value: string): string[] {
+  return value.split('\n').map(line => line.trim()).filter(line => line !== '')
+}
+
 /**
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
+  const [planOpen, setPlanOpen] = useState(false)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
   const executionMode = executionModeOf(item)
   const executionState = executionStateOf(item)
+  const creationState = creationStateOf(item)
+  // AI 创建流程：方案确认前不能执行、不能改业务字段（PlanPanel 接管编辑）。
+  const preConfirm = creationState === 'draft' || creationState === 'analyzing' || creationState === 'pending_confirm'
   const active = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing'
 
   return (
@@ -102,6 +119,17 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
 
           {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
 
+          {isAiFlowItem(item) && (
+            <PlanPanel
+              item={item}
+              creationState={creationState ?? 'draft'}
+              busy={busy}
+              onAnalyze={onAnalyze}
+              onConfirmPlan={onConfirmPlan}
+              onViewPlan={() => setPlanOpen(true)}
+            />
+          )}
+
           {executionState === 'awaiting-review' && (
             <div className={css.reviewBox}>
               <strong>当前环节等待审核</strong>
@@ -116,7 +144,7 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
           )}
 
           <div className={css.actions}>
-            {!active && (
+            {!active && !preConfirm && (
               <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
                 {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
               </button>
@@ -135,7 +163,9 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
                 打开会话
               </button>
             )}
-            <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
+            {!preConfirm && (
+              <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
+            )}
             <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
             {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
               <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
@@ -171,6 +201,170 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
           </ol>
         </section>
       </aside>
+
+      {planOpen && item.frozenPlan !== undefined && (
+        <div className={css.mask} onClick={() => setPlanOpen(false)}>
+          <div
+            className={css.planModal}
+            role='dialog'
+            aria-modal='true'
+            aria-label='冻结方案'
+            onClick={event => event.stopPropagation()}
+          >
+            <header className={css.planModalHead}>
+              <h3 className={css.planModalTitle}>冻结方案 · {item.title}</h3>
+              <button type='button' className={css.closeBtn} onClick={() => setPlanOpen(false)} aria-label='关闭方案'>✕</button>
+            </header>
+            <pre className={css.planFrozen}>{item.frozenPlan}</pre>
+          </div>
+        </div>
+      )}
     </div>
+  )
+}
+
+/** AI 创建流程方案面板：按创建状态切换内容。 */
+function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onViewPlan }: {
+  item: WorkItem
+  creationState: CreationState
+  busy: boolean
+  onAnalyze: (supplement?: string) => void
+  onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
+  onViewPlan: () => void
+}) {
+  if (creationState === 'draft') {
+    return (
+      <section className={css.planPanel}>
+        <h4 className={css.planTitle}>AI 方案</h4>
+        <p className={css.planHint}>AI 将结合当前项目代码分析这个想法，生成需求理解 / 现状分析 / 实施方案 / 验收标准。</p>
+        <div className={css.planActions}>
+          <button type='button' className={css.planConfirmBtn} onClick={() => onAnalyze()} disabled={busy} data-testid='taskboard-plan-analyze'>
+            AI分析
+          </button>
+        </div>
+      </section>
+    )
+  }
+  if (creationState === 'analyzing') {
+    return (
+      <section className={css.planPanel}>
+        <h4 className={css.planTitle}>AI 方案</h4>
+        <p className={css.planHint}>AI 正在读取项目代码并生成方案…（通常需要几分钟，请稍候）</p>
+        <div className={css.planActions}>
+          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试分析</button>
+        </div>
+      </section>
+    )
+  }
+  if (creationState === 'pending_confirm') {
+    return <PlanConfirmEditor item={item} busy={busy} onAnalyze={onAnalyze} onConfirmPlan={onConfirmPlan} />
+  }
+  // confirmed / executing / completed：冻结方案入口（点击查看完整方案）。
+  return (
+    <section className={css.planPanel}>
+      <h4 className={css.planTitle}>冻结方案（执行唯一依据）</h4>
+      <p className={css.planHint}>方案确认后已冻结，开发执行严格按此方案进行。</p>
+      <div className={css.planActions}>
+        <button type='button' className={css.planConfirmBtn} onClick={onViewPlan} data-testid='taskboard-plan-view'>
+          📋 查看方案
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/**
+ * 方案待确认的分字段编辑器：每次进入本状态时全新挂载，
+ * 轮询刷新不会覆盖用户正在编辑的缓冲；重新分析后回到本状态即重建。
+ */
+function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
+  item: WorkItem
+  busy: boolean
+  onAnalyze: (supplement?: string) => void
+  onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
+}) {
+  const analysis = item.aiAnalysis
+  const [title, setTitle] = useState(analysis?.suggestedTitle ?? item.title)
+  const [requirementUnderstanding, setRequirementUnderstanding] = useState(analysis?.requirementUnderstanding ?? '')
+  const [projectAnalysis, setProjectAnalysis] = useState(analysis?.projectAnalysis ?? '')
+  const [implementationPlan, setImplementationPlan] = useState(analysis?.implementationPlan.join('\n') ?? '')
+  const [affectedModules, setAffectedModules] = useState(analysis?.affectedModules.join('\n') ?? '')
+  const [pendingQuestions, setPendingQuestions] = useState(analysis?.pendingQuestions.join('\n') ?? '')
+  const [acceptanceCriteria, setAcceptanceCriteria] = useState(analysis?.acceptanceCriteria.join('\n') ?? '')
+  const [supplement, setSupplement] = useState('')
+
+  const handleConfirm = (): void => {
+    if (analysis === undefined) return
+    onConfirmPlan({
+      title: title.trim(),
+      analysis: {
+        ...analysis,
+        suggestedTitle: title.trim(),
+        requirementUnderstanding: requirementUnderstanding.trim(),
+        projectAnalysis: projectAnalysis.trim(),
+        implementationPlan: splitLines(implementationPlan),
+        affectedModules: splitLines(affectedModules),
+        pendingQuestions: splitLines(pendingQuestions),
+        acceptanceCriteria: splitLines(acceptanceCriteria)
+      }
+    })
+  }
+
+  if (analysis === undefined) {
+    return (
+      <section className={css.planPanel}>
+        <h4 className={css.planTitle}>AI 方案</h4>
+        <p className={css.planHint}>方案尚未生成，请稍候或重试分析。</p>
+        <div className={css.planActions}>
+          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试分析</button>
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className={css.planPanel} data-testid='taskboard-plan-editor'>
+      <h4 className={css.planTitle}>AI 方案（待确认）</h4>
+      <label className={css.planField}>
+        <span className={css.planLabel}>标题（AI 建议，可修改）</span>
+        <input className={css.planInput} value={title} onChange={ev => setTitle(ev.target.value)} data-testid='taskboard-plan-title' />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>需求理解</span>
+        <textarea className={css.planTextarea} rows={3} value={requirementUnderstanding} onChange={ev => setRequirementUnderstanding(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>项目现状分析</span>
+        <textarea className={css.planTextarea} rows={4} value={projectAnalysis} onChange={ev => setProjectAnalysis(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>实施方案（每行一步）</span>
+        <textarea className={css.planTextarea} rows={5} value={implementationPlan} onChange={ev => setImplementationPlan(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>影响范围（每行一项）</span>
+        <textarea className={css.planTextarea} rows={3} value={affectedModules} onChange={ev => setAffectedModules(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>待确认项（每行一项）</span>
+        <textarea className={css.planTextarea} rows={3} value={pendingQuestions} onChange={ev => setPendingQuestions(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>验收标准（每行一项）</span>
+        <textarea className={css.planTextarea} rows={4} value={acceptanceCriteria} onChange={ev => setAcceptanceCriteria(ev.target.value)} />
+      </label>
+      <label className={css.planField}>
+        <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新分析）</span>
+        <textarea className={css.planTextarea} rows={2} value={supplement} onChange={ev => setSupplement(ev.target.value)} placeholder='例如：还要支持手机号登录' data-testid='taskboard-plan-supplement' />
+      </label>
+      <div className={css.planActions}>
+        <button type='button' className={css.ghostBtn} onClick={() => onAnalyze(supplement.trim() === '' ? undefined : supplement.trim())} disabled={busy}>
+          ↻ 重新分析
+        </button>
+        <button type='button' className={css.planConfirmBtn} onClick={handleConfirm} disabled={busy} data-testid='taskboard-plan-confirm'>
+          ✓ 确认并执行
+        </button>
+      </div>
+    </section>
   )
 }

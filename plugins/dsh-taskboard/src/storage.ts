@@ -21,6 +21,7 @@ const PRIORITIES = new Set(['low', 'medium', 'high', 'urgent'])
 const EXECUTION_MODES = new Set(['auto', 'review'])
 const EXECUTION_STATES = new Set(['idle', 'running', 'awaiting-review', 'blocked', 'awaiting-delivery', 'committing', 'failed'])
 const INTEGRATION_STATES = new Set(['pending', 'integrating', 'merged', 'conflicted'])
+const CREATION_STATES = new Set(['draft', 'analyzing', 'pending_confirm', 'confirmed', 'executing', 'completed'])
 const TIMELINE_ACTIONS = new Set(['created', 'moved', 'edited', 'run', 'note'])
 
 function isObject (value: unknown): value is Record<string, unknown> {
@@ -61,10 +62,23 @@ function validGitCheckpoint (value: unknown): boolean {
     typeof value.capturedAt === 'string')
 }
 
+function validStringList (value: unknown): boolean {
+  return Array.isArray(value) && value.every(item => typeof item === 'string')
+}
+
+function validAiAnalysis (value: unknown): boolean {
+  return value === undefined || (isObject(value) && optionalString(value.suggestedTitle) &&
+    typeof value.requirementUnderstanding === 'string' && typeof value.projectAnalysis === 'string' &&
+    validStringList(value.implementationPlan) && validStringList(value.affectedModules) &&
+    validStringList(value.pendingQuestions) && validStringList(value.acceptanceCriteria))
+}
+
 function validItem (value: unknown): boolean {
   if (!isObject(value)) return false
   return typeof value.id === 'string' && typeof value.type === 'string' && typeof value.title === 'string' &&
-    typeof value.desc === 'string' && typeof value.priority === 'string' && PRIORITIES.has(value.priority) && Array.isArray(value.labels) &&
+    typeof value.desc === 'string' && optionalString(value.originalRequirement) && optionalEnum(value.creationState, CREATION_STATES) &&
+    validAiAnalysis(value.aiAnalysis) && optionalString(value.frozenPlan) &&
+    typeof value.priority === 'string' && PRIORITIES.has(value.priority) && Array.isArray(value.labels) &&
     value.labels.every(label => typeof label === 'string') && typeof value.status === 'string' &&
     Array.isArray(value.timeline) && value.timeline.every(validTimelineEntry) &&
     typeof value.createdAt === 'string' && typeof value.updatedAt === 'string' &&

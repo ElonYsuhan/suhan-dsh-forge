@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { approveItem, cleanupHistoryWorkspace, confirmDelivery, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
@@ -12,6 +12,7 @@ import { ItemEditor } from './ItemEditor.tsx'
 import { SettingsEditor } from './SettingsEditor.tsx'
 import { HistoryPanel } from './HistoryPanel.tsx'
 import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
+import type { AiAnalysis } from '../shared/types.ts'
 import css from './TaskboardLauncher.module.css'
 
 /** 注入面：会话联动（浏览器半 sessions 服务的 open） */
@@ -139,7 +140,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const load = useCallback(async (): Promise<void> => {
     try {
       const res = await fetchBoards()
-      setError(null)
+      // 轮询成功不主动清除错误：操作失败的报错条保持可读，直到下次操作或手动关闭。
       setData(res)
       const keys = Object.keys(res.boards)
       const remembered = window.localStorage.getItem(CURRENT_KEY)
@@ -234,15 +235,60 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const handleSaveItem = async (input: ItemInput): Promise<void> => {
     if (board === null || currentKey === null) return
     try {
-      const updated = editor?.item === null || editor?.item === undefined
+      const editingItem = editor?.item ?? null
+      const creating = editingItem === null
+      const updated = creating
         ? await createItem(currentKey, input)
-        : await updateItem(currentKey, editor.item.id, input)
+        : await updateItem(currentKey, editingItem.id, input)
       patchBoardItem(currentKey, updated)
       setSelectedId(updated.id)
       setEditor(null)
       setError(null)
+      // AI 创建流程：草稿创建后立即启动 AI 分析；失败仅留草稿（可稍后重试）。
+      if (creating && (input.originalRequirement ?? '').trim() !== '') {
+        try {
+          const analyzed = await analyzeItem(currentKey, updated.id)
+          patchBoardItem(currentKey, analyzed)
+        } catch (analyzeErr) {
+          setError(`草稿已创建，但 AI 分析启动失败：${analyzeErr instanceof Error ? analyzeErr.message : String(analyzeErr)}（可打开详情重试分析）`)
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  /** AI 创建流程：启动/重新启动分析（supplement 追加为补充需求）。 */
+  const handleAnalyze = async (supplement?: string): Promise<void> => {
+    if (board === null || currentKey === null || selected === null) return
+    setRunning(true)
+    try {
+      const updated = await analyzeItem(currentKey, selected.id, supplement)
+      patchBoardItem(currentKey, updated)
+      setError(null)
+      setNotice(supplement === undefined || supplement.trim() === ''
+        ? 'AI 分析已启动，完成后将进入方案确认'
+        : '补充需求已追加，正在重新分析')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  /** AI 创建流程：确认并冻结方案（服务端自动开始执行）。 */
+  const handleConfirmPlan = async (input: { title?: string; analysis: AiAnalysis }): Promise<void> => {
+    if (board === null || currentKey === null || selected === null) return
+    setRunning(true)
+    try {
+      const updated = await confirmPlanItem(currentKey, selected.id, input)
+      patchBoardItem(currentKey, updated)
+      setError(null)
+      setNotice('方案已冻结为执行依据，AI 已开始开发')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -445,7 +491,12 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
             </div>
           </header>
 
-          {error !== null && <div className={css.error} role='alert'>{error}</div>}
+          {error !== null && (
+            <div className={css.error} role='alert'>
+              <span>{error}</span>
+              <button type='button' className={css.errorDismiss} onClick={() => setError(null)} aria-label='关闭错误提示'>✕</button>
+            </div>
+          )}
           {notice !== null && <div className={css.notice} role='status'>{notice}</div>}
 
           <div className={css.modalBody}>
@@ -498,6 +549,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                         closeAll()
                         openSession(sessionId)
                       }}
+                      onAnalyze={supplement => { void handleAnalyze(supplement) }}
+                      onConfirmPlan={input => { void handleConfirmPlan(input) }}
                     />
                   )}
                 </div>
