@@ -256,7 +256,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
           const analyzed = await analyzeItem(currentKey, updated.id)
           patchBoardItem(currentKey, analyzed)
         } catch (analyzeErr) {
-          setError(`草稿已创建，但 AI 分析启动失败：${analyzeErr instanceof Error ? analyzeErr.message : String(analyzeErr)}（可打开详情重试分析）`)
+          setError(`草稿已创建，但 方案生成启动失败：${analyzeErr instanceof Error ? analyzeErr.message : String(analyzeErr)}（可打开详情重试分析）`)
         }
       }
     } catch (err) {
@@ -273,7 +273,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       patchBoardItem(currentKey, updated)
       setError(null)
       setNotice(supplement === undefined || supplement.trim() === ''
-        ? 'AI 分析已启动，完成后将进入方案确认'
+        ? '方案生成已启动，完成后将进入方案确认'
         : '补充需求已追加，正在重新分析')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

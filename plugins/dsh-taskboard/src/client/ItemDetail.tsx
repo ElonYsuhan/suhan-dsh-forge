@@ -1,7 +1,7 @@
 /**
  * 工作项详情面板：完整字段 + 需求追溯时间线 + 会话联动（执行 / 打开会话）。
  * AI 创建流程（有 originalRequirement）额外展示「AI 方案」面板：
- * 草稿 → AI分析按钮；分析中 → 进行中提示 + 重试；方案待确认 → 分字段编辑 +
+ * 草稿 → 任务方案生成按钮；分析中 → 进行中提示 + 重试；方案待确认 → 分字段编辑 +
  * 补充需求重新分析 / 确认并执行；已确认及之后 → 只读冻结方案。
  */
 import { useState } from 'react'
@@ -29,7 +29,7 @@ export interface ItemDetailProps {
   onConfirmDelivery: () => void
   onForceClose: () => void
   onOpenSession: (sessionId: string) => void
-  /** AI 创建流程：启动/重新启动分析（supplement 为补充需求） */
+  /** AI 创建流程：启动/重新启动方案生成（supplement 为补充需求） */
   onAnalyze: (supplement?: string) => void
   /** AI 创建流程：确认并冻结方案（自动开始执行） */
   onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
@@ -253,10 +253,10 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onVie
     return (
       <section className={css.planPanel}>
         <h4 className={css.planTitle}>AI 方案</h4>
-        <p className={css.planHint}>AI 将结合当前项目代码分析这个想法，生成需求理解 / 现状分析 / 实施方案 / 验收标准。</p>
+        <p className={css.planHint}>将结合当前项目代码分析这个想法，生成需求理解 / 现状分析 / 实施方案 / 验收标准。</p>
         <div className={css.planActions}>
           <button type='button' className={css.planConfirmBtn} onClick={() => onAnalyze()} disabled={busy} data-testid='taskboard-plan-analyze'>
-            AI分析
+            任务方案生成
           </button>
         </div>
       </section>
@@ -268,7 +268,7 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onVie
         <h4 className={css.planTitle}>AI 方案</h4>
         <p className={css.planHint}>AI 正在读取项目代码并生成方案…（通常需要几分钟，请稍候）</p>
         <div className={css.planActions}>
-          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试分析</button>
+          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试方案生成</button>
         </div>
       </section>
     )
@@ -292,7 +292,7 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onVie
 
 /**
  * 方案待确认的分字段编辑器：每次进入本状态时全新挂载，
- * 轮询刷新不会覆盖用户正在编辑的缓冲；重新分析后回到本状态即重建。
+ * 轮询刷新不会覆盖用户正在编辑的缓冲；重新生成方案后回到本状态即重建。
  * 文本字段采用 Markdown 编辑 / 预览双模，列表字段预览自动转列表。
  */
 function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
@@ -332,9 +332,9 @@ function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
     return (
       <section className={css.planPanel}>
         <h4 className={css.planTitle}>AI 方案</h4>
-        <p className={css.planHint}>方案尚未生成，请稍候或重试分析。</p>
+        <p className={css.planHint}>方案尚未生成，请稍候或重试方案生成。</p>
         <div className={css.planActions}>
-          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试分析</button>
+          <button type='button' className={css.ghostBtn} onClick={() => onAnalyze()} disabled={busy}>↻ 重试方案生成</button>
         </div>
       </section>
     )
@@ -354,12 +354,12 @@ function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
       <MdField label='待确认项（每行一项）' value={pendingQuestions} onChange={setPendingQuestions} rows={3} list />
       <MdField label='验收标准（每行一项）' value={acceptanceCriteria} onChange={setAcceptanceCriteria} rows={4} list />
       <label className={css.planField}>
-        <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新分析）</span>
+        <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新生成方案）</span>
         <textarea className={css.planTextarea} rows={2} value={supplement} onChange={ev => setSupplement(ev.target.value)} placeholder='例如：还要支持手机号登录' data-testid='taskboard-plan-supplement' />
       </label>
       <div className={css.planActions}>
         <button type='button' className={css.ghostBtn} onClick={() => onAnalyze(supplement.trim() === '' ? undefined : supplement.trim())} disabled={busy}>
-          ↻ 重新分析
+          ↻ 重新生成方案
         </button>
         <button type='button' className={css.planConfirmBtn} onClick={handleConfirm} disabled={busy} data-testid='taskboard-plan-confirm'>
           ✓ 确认并执行

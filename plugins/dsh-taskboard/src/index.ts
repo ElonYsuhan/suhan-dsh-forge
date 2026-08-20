@@ -376,7 +376,7 @@ function renderPlanMarkdown (title: string, analysis: AiAnalysis): string {
   return [
     `# ${title}`,
     '',
-    '> 本方案由 AI 分析生成并经人工确认，执行时以本方案为唯一依据。',
+    '> 本方案经人工确认，执行时以本方案为唯一依据。',
     '',
     '## 需求理解',
     analysis.requirementUnderstanding,
@@ -400,7 +400,7 @@ function renderPlanMarkdown (title: string, analysis: AiAnalysis): string {
   ].join('\n')
 }
 
-/** 构造只读 AI 分析指令（结合当前真实项目产出结构化方案）。 */
+/** 构造只读方案生成指令（结合当前真实项目产出结构化方案）。 */
 function analysisPrompt (board: Board, item: WorkItem, supplement?: string): string {
   const current = item.aiAnalysis
   const currentText = current === undefined
@@ -795,10 +795,10 @@ export function apply (ctx: Context): void {
     cache = null
   }, 'taskboard: agent handles')
 
-  // AI 分析结果由分析会话通过该工具提交；这是创建流程在确认前的唯一产出口。
+  // 方案生成结果由生成会话通过该工具提交；这是创建流程在确认前的唯一产出口。
   ctx.effect(() => ctx.tools.register(defineTool({
     name: 'taskboard_analysis',
-    description: '向需求看板提交 AI 分析产出的结构化需求方案。分析过程严格只读；调用成功后必须立即结束当前 turn，等待人工确认方案。',
+    description: '向需求看板提交方案生成产出的结构化需求方案。分析过程严格只读；调用成功后必须立即结束当前 turn，等待人工确认方案。',
     parameters: {
       suggestedTitle: { type: 'string', description: '建议的卡片标题' },
       requirementUnderstanding: { type: 'string', required: true, description: '需求理解：重新描述用户真正想实现什么（含隐含诉求与边界）' },
@@ -854,7 +854,7 @@ export function apply (ctx: Context): void {
         }
         item.aiAnalysis = analysis
         item.creationState = 'pending_confirm'
-        pushTimeline(item, { action: 'note', note: 'AI 分析完成，已生成结构化方案，等待人工确认' })
+        pushTimeline(item, { action: 'note', note: '方案生成完成，已生成结构化方案，等待人工确认' })
         touch(foundBoard, item)
         await saveBoards(file)
         return '方案已提交，看板已进入待确认状态。请立即结束本轮执行，等待人工确认或重新分析。'
@@ -1263,7 +1263,7 @@ export function apply (ctx: Context): void {
                   return
                 }
                 if (!['confirmed', 'executing'].includes(creationState)) {
-                  send(res, 409, { error: '请先完成 AI 分析并确认方案' })
+                  send(res, 409, { error: '请先完成任务方案生成并确认方案' })
                   return
                 }
               }
@@ -1349,8 +1349,8 @@ export function apply (ctx: Context): void {
                   note: supplement !== undefined
                     ? `补充需求，重新分析：${supplement}`
                     : firstAnalyze
-                      ? '开始 AI 分析（只读）'
-                      : '重新 AI 分析'
+                      ? '开始任务方案生成（只读）'
+                      : '重新生成任务方案'
                 })
                 touch(board, item)
                 await saveBoards(file)

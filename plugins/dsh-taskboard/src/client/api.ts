@@ -115,7 +115,7 @@ export async function runItem (key: string, id: string): Promise<WorkItem> {
   return body.item
 }
 
-/** 启动/重新启动 AI 分析（创建或复用只读分析会话）。 */
+/** 启动/重新启动方案生成（创建或复用只读方案生成会话）。 */
 export async function analyzeItem (key: string, id: string, supplement?: string): Promise<WorkItem> {
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/analyze`, {
     method: 'POST',

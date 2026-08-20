@@ -1,7 +1,7 @@
 /**
  * 工作项弹窗：
- * - 新建（item === null）：AI 创建流程极简表单 —— 可选标题 + 想法计划描述 + 「AI分析」；
- *   保存后由宿主先创建草稿再触发 AI 分析（先分析、后执行）。
+ * - 新建（item === null）：AI 创建流程极简表单 —— 可选标题 + 想法计划描述 + 「任务方案生成」；
+ *   保存后由宿主先创建草稿再触发方案生成（先生成方案、后执行）。
  * - 编辑（item !== null）：类型 / 标题 / 描述 / 优先级 / 标签 / 迭代 / 追溯父级 / 环节。
  */
 import { useState, type FormEvent } from 'react'
@@ -95,7 +95,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
           </header>
 
           <label className={css.field}>
-            <span className={css.fieldLabel}>标题（可选，AI 分析后给出建议）</span>
+            <span className={css.fieldLabel}>标题（可选，方案生成后给出建议）</span>
             <input
               className={css.input}
               value={title}
@@ -112,7 +112,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
               className={css.textarea}
               value={requirement}
               onChange={ev => setRequirement(ev.target.value)}
-              placeholder='用自然语言描述你的想法或需求，AI 会结合当前项目分析并生成可执行方案。例如：给系统加个登录功能，账号密码登录，登录后保持登录状态。'
+              placeholder='用自然语言描述你的想法或需求，会结合当前项目生成可执行方案。例如：给系统加个登录功能，账号密码登录，登录后保持登录状态。'
               rows={8}
               data-testid='taskboard-editor-requirement'
             />
@@ -120,7 +120,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
 
           <footer className={css.foot}>
             <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
-            <button type='submit' className={css.saveBtn} disabled={submitDisabled}>AI分析</button>
+            <button type='submit' className={css.saveBtn} disabled={submitDisabled}>任务方案生成</button>
           </footer>
         </form>
       </div>

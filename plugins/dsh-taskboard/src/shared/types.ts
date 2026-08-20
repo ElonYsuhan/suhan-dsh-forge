@@ -25,7 +25,7 @@ export type IntegrationState = 'pending' | 'integrating' | 'merged' | 'conflicte
 /** AI 创建流程：创建生命周期状态（仅 originalRequirement 工作项使用）。 */
 export type CreationState = 'draft' | 'analyzing' | 'pending_confirm' | 'confirmed' | 'executing' | 'completed'
 
-/** AI 分析产出的结构化方案（工具写入、确认页编辑、冻结渲染的源头）。 */
+/** 方案生成产出的结构化方案（工具写入、确认页编辑、冻结渲染的源头）。 */
 export interface AiAnalysis {
   /** 建议的卡片标题（AI 生成，人工可在确认页覆盖）。 */
   suggestedTitle?: string | undefined

@@ -72,23 +72,26 @@ export function createItemFromBody (board: Board, body: unknown): WorkItem {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
   const now = new Date().toISOString()
   const mode: ExecutionMode = body.executionMode === 'review' ? 'review' : 'auto'
-  // AI 创建流程：标题可空（AI 分析后建议），原始需求即描述；
-  // 新工作项一律落在第一列（创意想法），其他列不支持新建。
+  // 方案生成流程：标题与原始需求互为空兜底（只填标题 → 以标题为需求；
+  // 只填需求 → 标题取需求首行；都空 → 400）。新工作项一律落在第一列（创意想法）。
   const requirement = body.originalRequirement === undefined
     ? undefined
-    : text(body.originalRequirement, 'originalRequirement', 20_000, false)
-  const desc = requirement ?? (body.desc === undefined ? '' : text(body.desc, 'desc', 20_000))
-  const fallbackTitle = firstLineOf(desc).slice(0, 200)
+    : text(body.originalRequirement, 'originalRequirement', 20_000, true)
+  const rawDesc = body.desc === undefined ? '' : text(body.desc, 'desc', 20_000)
+  const rawRequirement = requirement ?? rawDesc
+  const fallbackTitle = firstLineOf(rawRequirement).slice(0, 200)
   const title = body.title === undefined || body.title === null || String(body.title).trim() === ''
     ? fallbackTitle
     : text(body.title, 'title', 200, false)
-  if (title === '') throw new HttpError(400, '请填写标题或想法描述')
+  const requirementText = rawRequirement === '' ? title : rawRequirement
+  if (title === '' && requirementText === '') throw new HttpError(400, '请填写标题或想法描述')
   return {
     id: randomUUID(),
     type: itemType(board, body.type),
     title,
-    desc,
-    originalRequirement: requirement,
+    desc: requirementText,
+    // 只有显式提供 originalRequirement 才进入方案生成流程（旧数据走直接创建/执行路径）。
+    originalRequirement: requirement === undefined ? undefined : requirementText,
     creationState: requirement === undefined ? undefined : 'draft',
     priority: priority(body.priority),
     labels: labels(body.labels),

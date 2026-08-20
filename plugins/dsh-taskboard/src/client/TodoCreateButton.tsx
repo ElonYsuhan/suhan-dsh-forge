@@ -1,6 +1,6 @@
 /**
  * 聊天页「＋待办」：composer 工具行左端的小控件，点击弹出创建表单，
- * 把想法以草稿形式建到所选项目看板第一列（需 AI 分析确认后才能执行）。
+ * 把想法以草稿形式建到所选项目看板第一列（需生成任务方案并确认后才能执行）。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
@@ -65,7 +65,7 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
         setTitle('')
         setRequirement('')
         setError(null)
-        setNotice(`已创建草稿「${created.title}」，请到需求看板完成 AI 分析确认后执行`)
+        setNotice(`已创建草稿「${created.title}」，请到需求看板生成任务方案并确认后执行`)
       })
       .catch(err => setError(err instanceof Error ? err.message : String(err)))
   }
@@ -132,7 +132,7 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
                 className={css.textarea}
                 value={requirement}
                 onChange={ev => setRequirement(ev.target.value)}
-                placeholder='用自然语言描述你的想法，AI 会结合项目分析后生成可执行方案'
+                placeholder='用自然语言描述你的想法，会结合项目生成可执行方案'
                 rows={4}
                 data-testid='taskboard-todo-requirement'
               />

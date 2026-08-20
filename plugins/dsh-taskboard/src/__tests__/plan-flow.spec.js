@@ -127,8 +127,8 @@ const ANALYSIS = {
   acceptanceCriteria: ['输入正确账号密码可登录', '刷新后保持登录']
 }
 
-describe('AI 创建流程（先分析、后执行）', () => {
-  it('草稿创建 → AI 分析 → 方案确认 → 自动执行，并强制各阶段守卫', async () => {
+describe('方案生成流程（先生成方案、后执行）', () => {
+  it('草稿创建 → 方案生成 → 方案确认 → 自动执行，并强制各阶段守卫', async () => {
     let route
     const toolsByName = {}
     let liveAgent
@@ -252,6 +252,18 @@ describe('AI 创建流程（先分析、后执行）', () => {
     expect(emptyResponse.status).toBe(400)
     expect(emptyResponse.body.error).toContain('标题或想法描述')
 
+    // 只填标题、不填想法描述（描述为空串）：以标题作为需求文本，正常进入方案生成流程。
+    const titleOnlyResponse = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task', title: '只填标题的任务', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto',
+      originalRequirement: ''
+    }), titleOnlyResponse)
+    expect(titleOnlyResponse.status).toBe(200)
+    expect(titleOnlyResponse.body.item.title).toBe('只填标题的任务')
+    expect(titleOnlyResponse.body.item.desc).toBe('只填标题的任务')
+    expect(titleOnlyResponse.body.item.originalRequirement).toBe('只填标题的任务')
+    expect(titleOnlyResponse.body.item.creationState).toBe('draft')
+
     // 强制第一列：即便请求其他列也落在创意想法。
     const forcedColumnResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -273,7 +285,7 @@ describe('AI 创建流程（先分析、后执行）', () => {
     const gateResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/run`), gateResponse)
     expect(gateResponse.status).toBe(409)
-    expect(gateResponse.body.error).toContain('AI 分析')
+    expect(gateResponse.body.error).toContain('任务方案生成')
 
     // 旧工作项分析 → 409
     const legacyAnalyzeResponse = response()
@@ -281,7 +293,7 @@ describe('AI 创建流程（先分析、后执行）', () => {
     expect(legacyAnalyzeResponse.status).toBe(409)
     expect(legacyAnalyzeResponse.body.error).toContain('不是 AI 创建流程')
 
-    // ── AI 分析 ─────────────────────────────────────────────
+    // ── 方案生成 ─────────────────────────────────────────────
     const analyzeResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/analyze`), analyzeResponse)
     expect(analyzeResponse.status).toBe(200)
@@ -323,9 +335,9 @@ describe('AI 创建流程（先分析、后执行）', () => {
     const gatePendingResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/run`), gatePendingResponse)
     expect(gatePendingResponse.status).toBe(409)
-    expect(gatePendingResponse.body.error).toContain('AI 分析')
+    expect(gatePendingResponse.body.error).toContain('任务方案生成')
 
-    // ── 补充需求，重新分析 ────────────────────────────────────
+    // ── 补充需求，重新生成方案 ────────────────────────────────────
     const reanalyzeResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/analyze`, { supplement: '还要支持验证码登录' }), reanalyzeResponse)
     expect(reanalyzeResponse.status).toBe(200)
