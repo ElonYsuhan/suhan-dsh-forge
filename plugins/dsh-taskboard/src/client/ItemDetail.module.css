@@ -126,6 +126,63 @@
   line-height: 1.5;
   white-space: pre-wrap;
 }
+.previewLink {
+  display: inline-block;
+  margin-top: 8px;
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: none;
+  font-weight: 600;
+}
+.previewLink:hover { text-decoration: underline; }
+
+/* 迷你 Markdown 渲染（方案确认预览 / 冻结方案查看） */
+.markdown {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4,
+.markdown h5,
+.markdown h6 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-primary);
+}
+.markdown h1 { font-size: 14px; }
+.markdown h1:first-child,
+.markdown h2:first-child { margin-top: 0; }
+.markdown p { margin: 4px 0; }
+.markdown ul,
+.markdown ol { margin: 4px 0; padding-left: 18px; }
+.markdown li { margin: 2px 0; }
+.markdown code {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 11px;
+  background: var(--dsw-alias-bg-layer-2);
+  border-radius: 4px;
+  padding: 0 3px;
+}
+.markdown pre {
+  margin: 6px 0;
+  padding: 8px 10px;
+  overflow-x: auto;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+}
+.markdown pre code { background: none; padding: 0; white-space: pre; }
+.markdown blockquote {
+  margin: 6px 0;
+  padding: 2px 10px;
+  border-left: 3px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-tertiary);
+}
+.markdown a { color: var(--dsw-alias-brand-primary); }
+.markdown hr { margin: 8px 0; border: none; border-top: 1px solid var(--dsw-alias-border-l2); }
 
 .planPanel {
   margin: 0 16px 12px;
@@ -151,11 +208,47 @@
   display: block;
   margin-top: 8px;
 }
+.planFieldHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .planLabel {
   display: block;
   margin-bottom: 3px;
   font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
+}
+.planModeSwitch {
+  display: inline-flex;
+  margin-bottom: 3px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  overflow: hidden;
+  flex: none;
+}
+.planModeSwitch button {
+  padding: 1px 8px;
+  border: none;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 10px;
+  line-height: 16px;
+  cursor: pointer;
+}
+.planModeSwitch button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.planModeSwitch button.planModeOn {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+}
+.planPreview {
+  padding: 6px 8px;
+  min-height: 44px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 .planInput,
 .planTextarea {
@@ -292,9 +385,12 @@
 .ghostBtn:disabled,
 .dangerBtn:disabled { opacity: .55; cursor: not-allowed; }
 .ghostBtn {
+  display: inline-flex;
+  align-items: center;
   border: 1px solid var(--dsw-alias-border-l2);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
+  text-decoration: none;
 }
 .ghostBtn:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .dangerBtn {

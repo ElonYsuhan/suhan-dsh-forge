@@ -175,6 +175,12 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     return board.items.find(i => i.id === selectedId && !i.archived) ?? null
   }, [selectedId, board])
 
+  /** 改动预览页地址：任务 worktree 存在（执行中/待交付）或已有集成提交（已完成/旧流程已提交）时提供。 */
+  const previewUrl: string | undefined = selected !== null && board !== null &&
+    (selected.taskWorkspace !== undefined || selected.commitRef !== undefined)
+    ? `/taskboard/boards/${encodeURIComponent(board.projectKey)}/items/${encodeURIComponent(selected.id)}/preview`
+    : undefined
+
   /** 局部更新：看板里某项不存在则追加（新建），存在则替换（更新/流转/执行） */
   const patchBoardItem = useCallback((key: string, updated: WorkItem): void => {
     setData(prev => {
@@ -537,6 +543,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                       typeDef={board.itemTypes.find(t => t.key === selected.type)}
                       parentTitle={selected.parentId === undefined ? undefined : board.items.find(i => i.id === selected.parentId)?.title}
                       busy={running}
+                      previewUrl={previewUrl}
                       onClose={() => setSelectedId(null)}
                       onEdit={() => setEditor({ item: selected })}
                       onDelete={() => setDeleteTarget(selected)}

@@ -7,6 +7,7 @@
 import { useState } from 'react'
 import { creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemDetail.module.css'
+import { MarkdownView } from './MarkdownView.tsx'
 import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Detail panel surface props. */
@@ -17,6 +18,8 @@ export interface ItemDetailProps {
   parentTitle?: string | undefined
   /** 正在提交某个操作 */
   busy: boolean
+  /** 改动预览页地址（任务 worktree 或已集成提交存在时提供） */
+  previewUrl?: string | undefined
   onClose: () => void
   onEdit: () => void
   onDelete: () => void
@@ -66,7 +69,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
   const [planOpen, setPlanOpen] = useState(false)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
@@ -140,14 +143,26 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
             <div className={css.deliveryBox}>
               <strong>交付物等待最终确认</strong>
               <p>{item.deliverySummary ?? '请打开会话检查交付物和质量检查结果。'}</p>
+              {previewUrl !== undefined && (
+                <p>
+                  <a className={css.previewLink} href={previewUrl} target='_blank' rel='noreferrer' data-testid='taskboard-preview-link'>
+                    🔍 预览改动（检查这个任务改了什么）
+                  </a>
+                </p>
+              )}
             </div>
           )}
 
           <div className={css.actions}>
-            {!active && !preConfirm && (
+            {!active && !preConfirm && creationState !== 'completed' && (
               <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
                 {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
               </button>
+            )}
+            {previewUrl !== undefined && (
+              <a className={css.ghostBtn} href={previewUrl} target='_blank' rel='noreferrer'>
+                🔍 预览改动
+              </a>
             )}
             {executionState === 'awaiting-review' && (
               <>
@@ -215,7 +230,9 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, onClose, 
               <h3 className={css.planModalTitle}>冻结方案 · {item.title}</h3>
               <button type='button' className={css.closeBtn} onClick={() => setPlanOpen(false)} aria-label='关闭方案'>✕</button>
             </header>
-            <pre className={css.planFrozen}>{item.frozenPlan}</pre>
+            <div className={css.planFrozen}>
+              <MarkdownView text={item.frozenPlan} className={css.markdown} />
+            </div>
           </div>
         </div>
       )}
@@ -276,6 +293,7 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onVie
 /**
  * 方案待确认的分字段编辑器：每次进入本状态时全新挂载，
  * 轮询刷新不会覆盖用户正在编辑的缓冲；重新分析后回到本状态即重建。
+ * 文本字段采用 Markdown 编辑 / 预览双模，列表字段预览自动转列表。
  */
 function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
   item: WorkItem
@@ -329,30 +347,12 @@ function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
         <span className={css.planLabel}>标题（AI 建议，可修改）</span>
         <input className={css.planInput} value={title} onChange={ev => setTitle(ev.target.value)} data-testid='taskboard-plan-title' />
       </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>需求理解</span>
-        <textarea className={css.planTextarea} rows={3} value={requirementUnderstanding} onChange={ev => setRequirementUnderstanding(ev.target.value)} />
-      </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>项目现状分析</span>
-        <textarea className={css.planTextarea} rows={4} value={projectAnalysis} onChange={ev => setProjectAnalysis(ev.target.value)} />
-      </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>实施方案（每行一步）</span>
-        <textarea className={css.planTextarea} rows={5} value={implementationPlan} onChange={ev => setImplementationPlan(ev.target.value)} />
-      </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>影响范围（每行一项）</span>
-        <textarea className={css.planTextarea} rows={3} value={affectedModules} onChange={ev => setAffectedModules(ev.target.value)} />
-      </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>待确认项（每行一项）</span>
-        <textarea className={css.planTextarea} rows={3} value={pendingQuestions} onChange={ev => setPendingQuestions(ev.target.value)} />
-      </label>
-      <label className={css.planField}>
-        <span className={css.planLabel}>验收标准（每行一项）</span>
-        <textarea className={css.planTextarea} rows={4} value={acceptanceCriteria} onChange={ev => setAcceptanceCriteria(ev.target.value)} />
-      </label>
+      <MdField label='需求理解' value={requirementUnderstanding} onChange={setRequirementUnderstanding} rows={3} />
+      <MdField label='项目现状分析' value={projectAnalysis} onChange={setProjectAnalysis} rows={4} />
+      <MdField label='实施方案（每行一步，支持 Markdown）' value={implementationPlan} onChange={setImplementationPlan} rows={5} list />
+      <MdField label='影响范围（每行一项）' value={affectedModules} onChange={setAffectedModules} rows={3} list />
+      <MdField label='待确认项（每行一项）' value={pendingQuestions} onChange={setPendingQuestions} rows={3} list />
+      <MdField label='验收标准（每行一项）' value={acceptanceCriteria} onChange={setAcceptanceCriteria} rows={4} list />
       <label className={css.planField}>
         <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新分析）</span>
         <textarea className={css.planTextarea} rows={2} value={supplement} onChange={ev => setSupplement(ev.target.value)} placeholder='例如：还要支持手机号登录' data-testid='taskboard-plan-supplement' />
@@ -366,5 +366,57 @@ function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
         </button>
       </div>
     </section>
+  )
+}
+
+/** 每行一项 → 预览用 markdown 列表（已有列表标记的行原样保留）。 */
+function toListMarkdown (value: string): string {
+  return value.split('\n')
+    .map(line => line.trim())
+    .filter(line => line !== '')
+    .map(line => /^[-*] |^\d+[.)] /.test(line) ? line : `- ${line}`)
+    .join('\n')
+}
+
+/** 单个方案字段：编辑 / 预览双模（默认预览，点击「编辑」切换 textarea）。 */
+function MdField ({ label, value, onChange, rows, list }: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  rows: number
+  list?: boolean | undefined
+}) {
+  const [editing, setEditing] = useState(false)
+  return (
+    <div className={css.planField}>
+      <div className={css.planFieldHead}>
+        <span className={css.planLabel}>{label}</span>
+        <span className={css.planModeSwitch} role='group' aria-label={`${label}：编辑或预览`}>
+          <button
+            type='button'
+            className={editing ? css.planModeOn : undefined}
+            onClick={() => setEditing(true)}
+            aria-pressed={editing}
+          >
+            编辑
+          </button>
+          <button
+            type='button'
+            className={editing ? undefined : css.planModeOn}
+            onClick={() => setEditing(false)}
+            aria-pressed={!editing}
+          >
+            预览
+          </button>
+        </span>
+      </div>
+      {editing
+        ? <textarea className={css.planTextarea} rows={rows} value={value} onChange={ev => onChange(ev.target.value)} />
+        : (
+          <div className={css.planPreview}>
+            <MarkdownView text={list === true ? toListMarkdown(value) : value} className={css.markdown} />
+          </div>
+        )}
+    </div>
   )
 }

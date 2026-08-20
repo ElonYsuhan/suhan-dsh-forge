@@ -34,6 +34,7 @@ import { HttpError, readJsonBody } from './http.ts'
 import { createBoard, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type BoardsFile, type ColumnDef, type ExecutionState, type TimelineEntry, type WorkItem } from './shared/types.ts'
 import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
 import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resetTaskWorkspaceWorkingTree, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
+import { renderFilePreview, renderItemPreview } from './preview.ts'
 import { createItemFromBody, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
@@ -1221,6 +1222,23 @@ export function apply (ctx: Context): void {
             })
             return
           }
+          // ── 改动预览：验收时查看本任务修改了哪些文件（独立 HTML 页）──
+          if (parts.length === 6 && parts[5] === 'preview' && method === 'GET') {
+            const item = findItem(board, parts[4] ?? '')
+            const html = await renderItemPreview(board, item)
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(html)
+            return
+          }
+          // 单文件内容页：?path=<仓库相对路径>
+          if (parts.length === 7 && parts[5] === 'preview' && parts[6] === 'file' && method === 'GET') {
+            const item = findItem(board, parts[4] ?? '')
+            const html = await renderFilePreview(board, item, url.searchParams.get('path') ?? '')
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
+            res.end(html)
+            return
+          }
+
           // POST run：首次创建会话；阻塞/失败后的重试继续使用同一会话。
           if (parts.length === 6 && parts[5] === 'run' && method === 'POST') {
             const itemId = parts[4] ?? ''
@@ -1238,9 +1256,16 @@ export function apply (ctx: Context): void {
                 return
               }
               // AI 创建流程：必须先分析并确认方案，才能执行。
-              if (isAiFlowItem(item) && !['confirmed', 'executing'].includes(creationStateOf(item) ?? 'draft')) {
-                send(res, 409, { error: '请先完成 AI 分析并确认方案' })
-                return
+              if (isAiFlowItem(item)) {
+                const creationState = creationStateOf(item) ?? 'draft'
+                if (creationState === 'completed') {
+                  send(res, 409, { error: '该工作项已完成并集成，无需再次执行' })
+                  return
+                }
+                if (!['confirmed', 'executing'].includes(creationState)) {
+                  send(res, 409, { error: '请先完成 AI 分析并确认方案' })
+                  return
+                }
               }
               const firstRun = item.sessionId === undefined
               // AI 流程项首次执行一定从第一列出发（确认前被锁定），重试时不推进。

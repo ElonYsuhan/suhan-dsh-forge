@@ -2,6 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { HttpError } from '../http.ts'
 
 const checkpointMocks = vi.hoisted(() => ({
   capture: vi.fn(async cwd => ({
@@ -31,6 +32,11 @@ const workspaceMocks = vi.hoisted(() => ({
   reset: vi.fn(async () => {})
 }))
 
+const previewMocks = vi.hoisted(() => ({
+  renderItemPreview: vi.fn(async () => '<html>preview</html>'),
+  renderFilePreview: vi.fn(async () => '<html>file</html>')
+}))
+
 vi.mock('@deepseek-ai/dsh-agent', async importOriginal => ({
   ...await importOriginal(),
   installModelSelection: vi.fn()
@@ -51,6 +57,11 @@ vi.mock('../taskWorkspace.ts', async importOriginal => ({
   discardTaskWorkspace: workspaceMocks.discard,
   deleteTaskBranch: workspaceMocks.deleteBranch,
   resetTaskWorkspaceWorkingTree: workspaceMocks.reset
+}))
+
+vi.mock('../preview.ts', () => ({
+  renderItemPreview: previewMocks.renderItemPreview,
+  renderFilePreview: previewMocks.renderFilePreview
 }))
 
 let apply
@@ -88,6 +99,20 @@ function response () {
     },
     end (body) {
       this.body = JSON.parse(body)
+    }
+  }
+}
+
+/** HTML 页面响应（预览端点）。 */
+function textResponse () {
+  return {
+    status: 0,
+    body: undefined,
+    writeHead (status) {
+      this.status = status
+    },
+    end (body) {
+      this.body = body
     }
   }
 }
@@ -351,6 +376,27 @@ describe('AI 创建流程（先分析、后执行）', () => {
     expect(deliverResponse.body.item.integrationState).toBe('merged')
     expect(deliverResponse.body.item.creationState).toBe('completed')
 
+    // ── 完成后：run 闸门给出明确错误，预览路由可用 ────────────
+    const completedRunResponse = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/run`), completedRunResponse)
+    expect(completedRunResponse.status).toBe(409)
+    expect(completedRunResponse.body.error).toContain('已完成并集成')
+
+    const previewResponse = textResponse()
+    await route(request('GET', `/taskboard/boards/workspace-1/items/${draft.id}/preview`), previewResponse)
+    expect(previewResponse.status).toBe(200)
+    expect(previewResponse.body).toContain('<html>preview</html>')
+    expect(previewMocks.renderItemPreview).toHaveBeenCalledWith(
+      expect.objectContaining({ projectKey: 'workspace-1' }),
+      expect.objectContaining({ id: draft.id })
+    )
+
+    const filePreviewResponse = textResponse()
+    await route(request('GET', `/taskboard/boards/workspace-1/items/${draft.id}/preview/file?path=${encodeURIComponent('src/a.ts')}`), filePreviewResponse)
+    expect(filePreviewResponse.status).toBe(200)
+    expect(filePreviewResponse.body).toContain('<html>file</html>')
+    expect(previewMocks.renderFilePreview).toHaveBeenCalledWith(expect.anything(), expect.anything(), 'src/a.ts')
+
     // ── 分析中删除草稿：Agent 停止、worktree 清理 ─────────────
     const delDraftResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -365,6 +411,13 @@ describe('AI 创建流程（先分析、后执行）', () => {
     expect(deleteResponse.body.item.archived).toBe(true)
     expect(liveAgent.cancel).toHaveBeenCalledWith({ kind: 'user' })
     expect(workspaceMocks.discard).toHaveBeenCalled()
+
+    // 预览来源不可用（worktree 已清理等）→ 409 JSON 错误
+    previewMocks.renderItemPreview.mockRejectedValueOnce(new HttpError(409, '任务工作目录已被清理，无法预览任务中的改动'))
+    const previewGoneResponse = response()
+    await route(request('GET', `/taskboard/boards/workspace-1/items/${delDraftId}/preview`), previewGoneResponse)
+    expect(previewGoneResponse.status).toBe(409)
+    expect(previewGoneResponse.body.error).toContain('已被清理')
 
     // ── 非 Git 项目：分析回退主目录，确认执行被前置条件拦截 ────
     const nonGitDraftResponse = response()
