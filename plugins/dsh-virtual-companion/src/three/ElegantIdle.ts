@@ -16,17 +16,23 @@
  * 上臂，会取到零长度的捩骨骼，导致手臂塌缩成一点。
  *
  * 稳定性设计（防两个合法肘解之间来回翻转）：
- * - 全部几何在模型空间求解（目标/肩/极点均模型坐标，偏航无关）
- * - 左右臂「外侧」符号在肩数据有效的首帧冻结，运行期绝不动态判断
- * - 每帧算出圆上两个候选肘解，永远选离上一帧肘位置最近的那个
- * - 连续性约束：与上一帧肘方向绕肩夹角 > 30° 时拒绝并保持上一帧
+ * - 全部几何在姿态模型空间求解（目标/肩/极点均模型坐标，偏航无关），
+ *   世界空间只用于最终旋转写回
+ * - 左右臂「外侧」符号与臂长 l1/l2 在首个有效帧冻结，运行期绝不重判
+ * - 肘解唯一：固定极点所在半平面的候选（E0 + h·dir），不依赖上一帧
+ *   状态，不存在解间翻转
  * - 解析解单帧直接写回，不保留会在相邻帧间反复追赶的旋转残差
+ * - 骨架刷新统一由 Skeleton.prepare 负责（Babylon 9 的
+ *   bone.computeWorldMatrix 是空操作）：写回后由 solveArm 就地刷新，
+ *   调用方在 solve 前后也应刷新以对齐读取（见 MMDCompanion.update）
  */
 import { Bone, Matrix, Mesh, Quaternion, Space, Vector3 } from '@babylonjs/core'
 
 export interface ElegantIdleState {
   leftHand: number[]
   rightHand: number[]
+  leftHandDirection: number[]
+  rightHandDirection: number[]
   leftElbow: number[]
   rightElbow: number[]
   leftAngleDeg: number
@@ -39,10 +45,13 @@ interface ArmChain {
   upper: Bone
   lower: Bone
   wrist: Bone
+  /** 中指根骨：用其枢轴确定手掌/手指的实际朝向。 */
+  handGuide: Bone | null
+  /** 上臂/前臂长度（l1/l2）：首个有效帧从刚性骨链实测后冻结。
+   *  链上有捩骨时长度仍是旋转不变量（局部偏移刚性组合），运行期
+   *  不应依赖每帧世界位置重测——矩阵陈旧时会测出错误长度污染肘圆解。 */
+  lengths: { l1: number; l2: number } | null
 }
-
-/** 连续性约束：新肘解与上一帧肘方向绕肩夹角超过该值则拒绝。 */
-const MAX_ELBOW_TURN_DEG = 30
 
 export class ElegantIdle {
   /**
@@ -52,6 +61,12 @@ export class ElegantIdle {
    */
   leftHand = new Vector3(-0.4, 11.1, -1.2)
   rightHand = new Vector3(0.5, 11.4, -1.45)
+  /**
+   * 双手共同的手指方向（姿态模型空间）。参考立绘是右手轻搭左手，
+   * 两只手的手指均向同一侧略向下延伸；不能沿用左右镜像的绑定姿态，
+   * 否则即使腕点正确也会形成明显的 X 形交叉。
+   */
+  handDirection = new Vector3(-0.84, -0.54, -0.08).normalize()
   /**
    * 肘部极点偏移（模型空间，相对肩部）：x 为「外侧」幅度（左右侧符号
    * 在 attach 时固定），y 向下，z 向前（模型正面 −z，正值 = 向前）。
@@ -76,9 +91,6 @@ export class ElegantIdle {
    *  初始化（全零），会把两侧都判成 +1。 */
   private sideL: number | null = null
   private sideR: number | null = null
-  /** 上一帧肘位置（模型空间），双候选解选择与连续性约束用。 */
-  private prevElbowL: Vector3 | null = null
-  private prevElbowR: Vector3 | null = null
 
   // 每帧求解的暂存量（避免分配）：p* 世界点，s* 求解向量，q* 四元数
   private readonly pS = Vector3.Zero()
@@ -119,12 +131,13 @@ export class ElegantIdle {
    *  左右臂「外侧」符号在首个有效帧（肩数据非零）冻结，运行期不变。 */
   attach (mesh: Mesh, upperLeft: Bone, lowerLeft: Bone, wristLeft: Bone, upperRight: Bone, lowerRight: Bone, wristRight: Bone): void {
     this.mesh = mesh
-    this.left = { upper: upperLeft, lower: lowerLeft, wrist: wristLeft }
-    this.right = { upper: upperRight, lower: lowerRight, wrist: wristRight }
+    const skeleton = upperLeft.getSkeleton()
+    const findHandGuide = (side: '左' | '右'): Bone | null =>
+      skeleton?.bones.find(bone => new RegExp(`^${side}中指[1１]$`).test(bone.name)) ?? null
+    this.left = { upper: upperLeft, lower: lowerLeft, wrist: wristLeft, handGuide: findHandGuide('左'), lengths: null }
+    this.right = { upper: upperRight, lower: lowerRight, wrist: wristRight, handGuide: findHandGuide('右'), lengths: null }
     this.sideL = null
     this.sideR = null
-    this.prevElbowL = null
-    this.prevElbowR = null
   }
 
   detach (): void {
@@ -134,18 +147,17 @@ export class ElegantIdle {
     this.mesh = null
     this.sideL = null
     this.sideR = null
-    this.prevElbowL = null
-    this.prevElbowR = null
     this.rightArmOffset.set(0, 0, 0)
   }
 
   /** 每帧求解：模型空间解出肘位，世界空间写回 腕/ひじ。
-   *  _time 保留给呼吸/摆动微动作（第一阶段关闭，静态稳定后恢复）。 */
+   *  _time 保留给呼吸/摆动微动作（第一阶段关闭，静态稳定后恢复）。
+   *  调用方负责在调用前/后统一刷新骨架（skeleton.prepare）——本模块
+   *  不做逐骨骼刷新（Babylon 9 的 bone.computeWorldMatrix 是空操作）。 */
   update (_time: number): void {
     if (!this.active) return
     const left = this.left as ArmChain
     const right = this.right as ArmChain
-    this.armRoot().computeWorldMatrix(true) // 强制刷新，杜绝陈旧根矩阵
     this.rootMat = this.armRoot().getWorldMatrix()
     this.buildPoseMat()
     // 第一阶段：微动作全关（先验证静态姿态稳定，之后再恢复呼吸/摆动）
@@ -156,24 +168,21 @@ export class ElegantIdle {
     this.sA.copyFrom(this.leftHand)
     this.sA.y += breathe
     this.sA.x += sway
-    const resultL = this.solveArm(left, this.sA, this.sideL, this.prevElbowL)
+    const resultL = this.solveArm(left, this.sA, this.sideL)
     if (resultL.side !== null) this.sideL = resultL.side
-    if (resultL.elbow !== null) {
-      this.prevElbowL ??= Vector3.Zero()
-      this.prevElbowL.copyFrom(resultL.elbow)
-    }
 
     // 右臂（叠加瞬态手势偏移）
     this.sB.copyFrom(this.rightHand)
     this.sB.addInPlace(this.rightArmOffset)
     this.sB.y += breathe
     this.sB.x -= sway
-    const resultR = this.solveArm(right, this.sB, this.sideR, this.prevElbowR)
+    const resultR = this.solveArm(right, this.sB, this.sideR)
     if (resultR.side !== null) this.sideR = resultR.side
-    if (resultR.elbow !== null) {
-      this.prevElbowR ??= Vector3.Zero()
-      this.prevElbowR.copyFrom(resultR.elbow)
-    }
+
+    // 腕点落位后再统一手掌指向。手腕旋转不会改变 IK 末端位置，只会
+    // 消除左右绑定姿态造成的 X 形交叉；每只手写回后刷新供下一只读取。
+    this.orientHand(left)
+    this.orientHand(right)
   }
 
   /** 验证/诊断：手、肘世界位置 + 肘关节角（度，反关节检查用）。 */
@@ -184,6 +193,8 @@ export class ElegantIdle {
     return {
       leftHand: this.worldPos(left.wrist),
       rightHand: this.worldPos(right.wrist),
+      leftHandDirection: this.handDirectionWorld(left),
+      rightHandDirection: this.handDirectionWorld(right),
       leftElbow: this.worldPos(left.lower),
       rightElbow: this.worldPos(right.lower),
       leftAngleDeg: this.elbowAngleDeg(left),
@@ -214,15 +225,21 @@ export class ElegantIdle {
    * 解析 TwoBoneIK（肘圆法，模型空间求解，单帧闭合解）：
    * 1) 目标方向 + 距离钳制（上限满臂长：手必须到达目标，超限才防过度伸展）
    * 2) 肘圆：轴距 a、圆半径 h，圆心 E0
-   * 3) 两个候选肘解（圆上相对两点）：永远选离上一帧肘位置最近的；
-   *    与上一帧绕肩夹角 > 30° 则拒绝并保持上一帧（防两个解之间翻转）
+   * 3) 肘解唯一：取固定极点所在半平面的候选 E0 + h·dir（dir = 极点偏移
+   *    在肘圆平面上的投影方向）。极点固定 ⇒ 候选每帧固定，不存在
+   *    「最近点 + 角度拒绝」这类依赖上一帧状态的连续性选择。
    * 4) 以「最短弧 × 当前世界朝向」写回 腕/ひじ 局部四元数（保留扭转）
+   *
+   * 坐标空间：S/T/P/E 全部在姿态模型空间（poseMat = 根世界矩阵去缩放），
+   * 世界空间只用于最终旋转写回；l1/l2 为首帧冻结的刚性骨链长度。
+   * 骨架刷新：Babylon 9 的 bone.computeWorldMatrix 是空操作，_finalMatrix
+   * 只在 skeleton.prepare 里重算——每次写回后统一由 Skeleton 刷新，
+   * 不做逐骨骼刷新（单骨刷新会导致链上骨骼矩阵彼此不同步）。
    */
-  private solveArm (arm: ArmChain, targetLocal: Vector3, side: number | null, prevElbow: Vector3 | null): { elbow: Vector3 | null; side: number | null } {
+  private solveArm (arm: ArmChain, targetLocal: Vector3, side: number | null): { elbow: Vector3 | null; side: number | null } {
     const { upper, lower, wrist } = arm
+    const skeleton = upper.getSkeleton()
     this.worldPosToRef(upper, this.pS)
-    this.worldPosToRef(lower, this.pE)
-    this.worldPosToRef(wrist, this.pW)
 
     // 模型空间：肩 S、目标 T（targetLocal 即模型空间）、极点 P。
     // 目标必须先复制到独立暂存——targetLocal 可能是 sA/sB，随后会被
@@ -242,9 +259,21 @@ export class ElegantIdle {
     this.pP.set(S.x + side * this.poleOffset.x, S.y + this.poleOffset.y, S.z - this.poleOffset.z)
     const P = this.pP
 
-    const l1 = Vector3.Distance(this.pS, this.pE)
-    const l2 = Vector3.Distance(this.pE, this.pW)
-    if (l1 < 1e-3 || l2 < 1e-3) return { elbow: null, side }
+    // 臂长 l1/l2：腕→腕捩→ひじ 这类链的枢轴距离是旋转不变量，首个
+    // 有效帧冻结后不再每帧重测（矩阵陈旧时会测出错误长度污染肘圆解）。
+    // attach 时矩阵同样未初始化，故冻结时机与 side 一致。
+    let l1: number
+    let l2: number
+    if (arm.lengths === null) {
+      this.worldPosToRef(lower, this.pE)
+      this.worldPosToRef(wrist, this.pW)
+      const m1 = Vector3.Distance(this.pS, this.pE)
+      const m2 = Vector3.Distance(this.pE, this.pW)
+      if (m1 < 1e-3 || m2 < 1e-3) return { elbow: null, side }
+      arm.lengths = { l1: m1, l2: m2 }
+    }
+    l1 = arm.lengths.l1
+    l2 = arm.lengths.l2
 
     // 1) 目标方向 u 与钳制距离
     T.subtractToRef(S, this.sB)
@@ -263,7 +292,7 @@ export class ElegantIdle {
     const h2 = l1 * l1 - a * a
     const h = h2 > 1e-6 ? Math.sqrt(h2) : 0
 
-    // 3) 两个候选肘解 + 连续性选择
+    // 3) 肘解唯一：固定极点所在半平面的候选 E0 + h·dir
     let elbowModel: Vector3
     if (h > 1e-4) {
       P.subtractToRef(S, this.sD)
@@ -272,25 +301,8 @@ export class ElegantIdle {
       this.sD.y -= u.y * pDot
       this.sD.z -= u.z * pDot
       if (this.sD.lengthSquared() > 1e-8) {
-        this.sD.normalize().scaleInPlace(h) // sD = 垂距向量（候选 A 偏移）
-        this.sE.copyFrom(this.sC).addInPlace(this.sD) // 候选 A = E0 + h·dir
-        this.sF.copyFrom(this.sC).subtractInPlace(this.sD) // 候选 B = E0 − h·dir
-        if (prevElbow !== null) {
-          // 永远选离上一帧肘位置最近的候选解
-          if (Vector3.Distance(this.sF, prevElbow) < Vector3.Distance(this.sE, prevElbow)) {
-            this.sE.copyFrom(this.sF)
-          }
-          // 连续性约束：与上一帧肘方向绕肩夹角 > 30° 拒绝，保持上一帧
-          this.sG.copyFrom(this.sE).subtractInPlace(S)
-          this.sH.copyFrom(prevElbow).subtractInPlace(S)
-          const gLen = this.sG.length()
-          const hLen = this.sH.length()
-          if (gLen > 1e-10 && hLen > 1e-10) {
-            const cosAng = Vector3.Dot(this.sG, this.sH) / (gLen * hLen)
-            const angDeg = Math.acos(Math.max(-1, Math.min(1, cosAng))) * 180 / Math.PI
-            if (angDeg > MAX_ELBOW_TURN_DEG) this.sE.copyFrom(prevElbow)
-          }
-        }
+        this.sD.normalize().scaleInPlace(h) // sD = 垂距向量（极点侧偏移）
+        this.sE.copyFrom(this.sC).addInPlace(this.sD) // E0 + h·dir（极点半平面）
         elbowModel = this.sE
       } else {
         elbowModel = this.sC
@@ -303,18 +315,20 @@ export class ElegantIdle {
     Vector3.TransformCoordinatesToRef(elbowModel, this.poseMat, this.pT)
 
     // 4) 肩：最短弧(当前上臂方向 → elbowWorld − S_world)
-    // 注意：u 别名 sB，写回向量必须用其他暂存（sD 在候选选择后已空闲），
-    // 否则步骤 5 的 T′ = S + u·d 会拿被顶掉的 u 计算（前臂指向垃圾方向）。
+    // 注意：u 别名 sB，写回向量必须用其他暂存，否则步骤 5 的
+    // T′ = S + u·d 会拿被顶掉的 u 计算（前臂指向垃圾方向）。
+    this.worldPosToRef(lower, this.pE)
     this.pE.subtractToRef(this.pS, this.sD)
     this.sD.normalize()
     this.pT.subtractToRef(this.pS, this.sC)
     this.sC.normalize()
     this.applyArmRotation(upper, this.sD, this.sC)
 
+    // 上臂写回后统一刷新骨架：不刷新的话，前臂写回用到的父世界朝向
+    //（腕捩 = 腕的子骨）仍是写回前的旧值，弧会落在错误起点上。
+    if (skeleton !== null) skeleton.prepare(true)
+
     // 5) 肘：最短弧(当前前臂方向 → T′_world − elbowWorld)，T′ = S + u·d（钳制后目标点）
-    // 上臂刚刚旋转，肘和腕的世界位置已经改变；必须刷新后再取当前前臂
-    // 方向。沿用步骤 1 的旧位置会让前臂追逐上一帧几何，浏览器中可见
-    // 为手臂在目标两侧反复修正。
     this.worldPosToRef(lower, this.pE)
     this.worldPosToRef(wrist, this.pW)
     this.sG.copyFrom(u).scaleInPlace(d).addInPlace(S) // sG = T′（模型）
@@ -326,6 +340,9 @@ export class ElegantIdle {
     if (this.sC.lengthSquared() < 1e-10) return { elbow: elbowModel, side }
     this.sC.normalize()
     this.applyArmRotation(lower, this.sC, this.sG)
+
+    // 前臂写回后同样统一刷新，保持骨架状态与局部旋转一致
+    if (skeleton !== null) skeleton.prepare(true)
     return { elbow: elbowModel, side }
   }
 
@@ -348,8 +365,34 @@ export class ElegantIdle {
     bone.setRotationQuaternion(this.qF)
   }
 
+  /** 把「手腕→中指根」对齐到共同指向，保留模型原有掌心滚转。 */
+  private orientHand (arm: ArmChain): void {
+    const guide = arm.handGuide
+    if (guide === null) return
+    this.worldPosToRef(arm.wrist, this.pW)
+    this.worldPosToRef(guide, this.pE)
+    this.pE.subtractToRef(this.pW, this.sC)
+    if (this.sC.lengthSquared() < 1e-8) return
+    this.sC.normalize()
+    Vector3.TransformNormalToRef(this.handDirection, this.poseMat, this.sD)
+    this.sD.normalize()
+    this.applyArmRotation(arm.wrist, this.sC, this.sD)
+    arm.wrist.getSkeleton()?.prepare(true)
+  }
+
+  private handDirectionWorld (arm: ArmChain): number[] {
+    if (arm.handGuide === null) return []
+    this.worldPosToRef(arm.wrist, this.pW)
+    this.worldPosToRef(arm.handGuide, this.pE)
+    this.pE.subtractToRef(this.pW, this.sC)
+    if (this.sC.lengthSquared() < 1e-8) return []
+    this.sC.normalize()
+    return [Number(this.sC.x.toFixed(3)), Number(this.sC.y.toFixed(3)), Number(this.sC.z.toFixed(3))]
+  }
+
+  /** 只读骨骼世界位置（终阵缓存）——刷新统一由 Skeleton.prepare 负责，
+   *  不做逐骨骼 computeWorldMatrix（Babylon 9 里它是空操作）。 */
   private worldPosToRef (bone: Bone, out: Vector3): void {
-    bone.computeWorldMatrix(true)
     out.copyFrom(bone.getWorldMatrix().getTranslation())
   }
 
@@ -366,7 +409,6 @@ export class ElegantIdle {
   }
 
   private worldQuatToRef (bone: Bone, out: Quaternion): void {
-    bone.computeWorldMatrix(true)
     bone.getWorldMatrix().decompose(this.wScale, out, this.wTrans)
   }
 

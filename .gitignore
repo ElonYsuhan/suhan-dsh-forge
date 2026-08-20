@@ -23,3 +23,6 @@ plugins/*/datas/worktrees/
 plugins/dsh-virtual-companion/scripts/face-direction.mjs
 plugins/dsh-virtual-companion/scripts/inspect-arm-axes.mjs
 plugins/dsh-virtual-companion/scripts/inspect-bone-rotation.mjs
+
+# Python 字节码缓存
+__pycache__/

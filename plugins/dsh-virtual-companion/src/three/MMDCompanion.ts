@@ -22,6 +22,7 @@ import {
   RawTexture,
   Scene,
   ShadowGenerator,
+  Skeleton,
   Texture,
   UniversalCamera,
   Vector3,
@@ -38,6 +39,39 @@ const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
 const SMILE_CANDIDATES = ['笑い', 'にこり', '微笑', '笑顔']
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ', '左手首', '右手首']
+
+/**
+ * 骨骼数组按「父先子后」原地重排。
+ * Babylon 的 Skeleton._computeTransformMatrices 按数组顺序以
+ * parent.getFinalMatrix() 组合子骨终阵——父排在子后面时（个别 PMX
+ * 违反父先子后的文件约定，如 mintswimsuit 的 ひじ 排在 腕捩 之前），
+ * 子骨用的是父骨上一帧的陈旧终阵，世界矩阵会在两种不一致的计算间
+ * 逐帧摆动。IK（ElegantIdle）读到这种不可能几何后会在多个肘解之间
+ * 轮转，表现为手臂双态/三态闪烁。
+ * 导出供回归测试直接使用（skeleton-order.spec.ts）。
+ */
+export function ensureParentFirstBoneOrder (skeleton: Skeleton): void {
+  const remaining = new Set(skeleton.bones)
+  const sorted: Bone[] = []
+  while (remaining.size > 0) {
+    let progressed = false
+    for (const bone of [...remaining]) {
+      const parent = bone.getParent()
+      if (parent === null || !remaining.has(parent)) {
+        sorted.push(bone)
+        remaining.delete(bone)
+        progressed = true
+      }
+    }
+    if (!progressed) {
+      // 环形引用兜底（正常 PMX 不会出现）：余下按原序追加
+      for (const bone of remaining) sorted.push(bone)
+      remaining.clear()
+    }
+  }
+  skeleton.bones.length = 0
+  skeleton.bones.push(...sorted)
+}
 
 /** 重心偏侧（S 形微侧，避免完全对称的僵硬站姿）：腰/上身/头反向微倾。 */
 const GRAVITY_SHIFT: Record<string, { z?: number }> = {
@@ -62,7 +96,7 @@ const ARM_FALLBACK_OFFSETS: Record<string, { x?: number; z?: number }> = {
 
 /** NaturalHandPose：手指轻微弯曲（段号 1→0 索引；指尖方向经实测为 -x，与肘同向）。 */
 const FINGER_CURVATURE = [-0.05, -0.09, -0.12]
-const FINGER_NAME_RE = /^(左|右)(親指|人差し指|中指|薬指|小指)(\d+)$/
+const FINGER_NAME_RE = /^(左|右)(親指|人差し指|中指|薬指|小指)([0-9０-９]+)$/
 
 const GESTURE_DURATIONS: Record<GestureName, number> = {
   wave: 1_600,
@@ -257,6 +291,8 @@ export class MMDCompanion {
     this.centerY = info.centerY * skeletonScale + this.baseY
     const skeleton1 = root.skeleton
     if (skeleton1 !== null) {
+      // 必须先于任何渲染/求解重排：见 ensureParentFirstBoneOrder 说明
+      ensureParentFirstBoneOrder(skeleton1)
       const s = new Vector3(skeletonScale, skeletonScale, skeletonScale)
       for (const bone of skeleton1.bones) {
         if (bone.getParent() !== null) continue
@@ -322,7 +358,8 @@ export class MMDCompanion {
       for (const bone of skeleton.bones) {
         const match = FINGER_NAME_RE.exec(bone.name)
         if (match === null) continue
-        const segment = Math.max(0, Number(match[3]) - 1)
+        const segmentText = (match[3] ?? '1').replace(/[０-９]/g, digit => String(digit.charCodeAt(0) - 0xfee0))
+        const segment = Math.max(0, Number(segmentText) - 1)
         const curve = FINGER_CURVATURE[Math.min(FINGER_CURVATURE.length - 1, segment)] ?? 0
         const rot = bone.getRotation()
         rot.x += curve
@@ -635,11 +672,19 @@ export class MMDCompanion {
 
     // 站稳：不做 mesh 级漂浮摇摆（CPU 蒙皮忽略 mesh 变换），
     // 呼吸/摆动在骨骼层（updateBodyPose）完成。
+    // 每次修改骨骼后统一由 Skeleton 刷新（prepare 重算 _finalMatrix；
+    // Babylon 9 的 bone.computeWorldMatrix 是空操作，不能逐骨骼刷新）：
+    // 不刷新就继续读的消费者会拿到修改前的陈旧矩阵。
     this.updateBodyPose(time, now)
+    this.mesh.skeleton?.prepare(true)
+
     this.applyGesture(now)
+    this.mesh.skeleton?.prepare(true)
+
     // IK 姿态修正必须最后执行（scene.render() 前）：手势设置的目标
     // 偏移在此刻生效，且 IK 对 腕/ひじ 的覆盖不会被呼吸回写覆盖。
     this.elegantIdle.update(time)
+    this.mesh.skeleton?.prepare(true)
 
     // 诊断快照：近 90 帧的手/肘世界位置
     const ikState = this.elegantIdle.getState()

@@ -48,6 +48,10 @@ describe.skipIf(!existsSync(MODEL_PATH))('ElegantIdle 站姿无振荡回归', ()
       // 手必须落在目标上（肚脐下方小腹前），误差 < 0.1 单位
       expect(Math.abs(r.leftHand[1] - 11.1)).toBeLessThan(0.1)
       expect(Math.abs(r.rightHand[1] - 11.4)).toBeLessThan(0.1)
+      // 参考姿势要求双手轻叠而非镜像张成 X：两手手指必须同向且略向下。
+      expect(dot(r.leftHandDirection, r.rightHandDirection)).toBeGreaterThan(0.98)
+      expect(r.leftHandDirection[1]).toBeLessThan(-0.4)
+      expect(r.rightHandDirection[1]).toBeLessThan(-0.4)
       // 肘必须在各自身体外侧（ganyu PMX 左臂在模型 +x，世界 +x 镜像为 −x）
       if (label === '正面 0°') {
         expect(r.leftElbow[0]).toBeLessThan(0)
@@ -65,6 +69,8 @@ async function runYaw (yaw: number): Promise<{
   rightHand: number[]
   leftElbow: number[]
   rightElbow: number[]
+  leftHandDirection: number[]
+  rightHandDirection: number[]
 }> {
   const { NullEngine, Scene, Vector3, Mesh, FreeCamera } = await import('@babylonjs/core')
   const { PBRMaterialBuilder, PmxLoader } = await import('babylon-mmd')
@@ -178,6 +184,7 @@ async function runYaw (yaw: number): Promise<{
     }
   }
   const last = steady[steady.length - 1]
+  const finalState = idle.getState()!
   const firstSettledHands = initialHands ?? []
   const initialPoseError = Math.max(...firstSettledHands.map((value, index) => Math.abs(value - last[index])))
   return {
@@ -187,6 +194,12 @@ async function runYaw (yaw: number): Promise<{
     leftHand: last.slice(0, 3),
     rightHand: last.slice(3, 6),
     leftElbow: last.slice(6, 9),
-    rightElbow: last.slice(9, 12)
+    rightElbow: last.slice(9, 12),
+    leftHandDirection: finalState.leftHandDirection,
+    rightHandDirection: finalState.rightHandDirection
   }
+}
+
+function dot (a: number[], b: number[]): number {
+  return a.reduce((sum, value, index) => sum + value * (b[index] ?? 0), 0)
 }
