@@ -378,15 +378,22 @@ describe('方案生成流程（先生成方案、后执行）', () => {
     // ── 交付 → 完成流转 ─────────────────────────────────────
     // 释放执行会话的 whenIdle（交付确认后的 preserveTaskSession 会等待会话停稳）。
     idleResolvers[0]()
-    await progressTool.execute({ outcome: 'delivery_ready', summary: '交付完成' }, { agent: liveAgent })
+    await progressTool.execute({
+      outcome: 'delivery_ready',
+      summary: '交付完成',
+      previewUrls: ['/taskboard/boards', 'http://localhost:3080/settings']
+    }, { agent: liveAgent })
     updated = await findItem(draft.id)
     expect(updated.status).toBe('accept')
     expect(updated.executionState).toBe('awaiting-delivery')
+    expect(updated.previewUrls).toEqual(['/taskboard/boards', 'http://localhost:3080/settings'])
     const deliverResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/confirm-delivery`), deliverResponse)
     expect(deliverResponse.status).toBe(200)
     expect(deliverResponse.body.item.integrationState).toBe('merged')
     expect(deliverResponse.body.item.creationState).toBe('completed')
+    // 集成完成后自动归档到历史任务。
+    expect(deliverResponse.body.item.archived).toBe(true)
 
     // ── 完成后：run 闸门给出明确错误，预览路由可用 ────────────
     const completedRunResponse = response()

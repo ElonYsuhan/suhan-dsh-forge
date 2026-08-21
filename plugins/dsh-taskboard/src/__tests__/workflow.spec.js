@@ -322,7 +322,8 @@ describe('taskboard execution workflow', () => {
     expect(deliveryResponse.body.item.executionState).toBe('idle')
     expect(deliveryResponse.body.item.integrationState).toBe('merged')
     expect(deliveryResponse.body.item.commitRef).toBe('integrated-commit')
-    expect(deliveryResponse.body.item.archived).toBe(false)
+    // 审核通过并完成合并提交后自动归档到历史任务。
+    expect(deliveryResponse.body.item.archived).toBe(true)
     expect(deliveryResponse.body.item.status).toBe('accept')
     expect(workspaceMocks.commit).toHaveBeenCalledOnce()
     expect(workspaceMocks.integrate).toHaveBeenCalledOnce()
@@ -333,14 +334,13 @@ describe('taskboard execution workflow', () => {
 
     const historyResponse = response()
     await route(request('GET', '/taskboard/boards/workspace-1/history?offset=0&limit=50'), historyResponse)
-    expect(historyResponse.body.total).toBe(0)
+    expect(historyResponse.body.total).toBe(1)
+    expect(historyResponse.body.items[0].id).toBe(itemId)
 
     const completedBoardResponse = response()
     await route(request('GET', '/taskboard/boards'), completedBoardResponse)
-    const completedItem = completedBoardResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)
-    expect(completedItem.archived).toBe(false)
-    expect(completedItem.status).toBe('accept')
-    expect(completedItem.commitRef).toBe('integrated-commit')
+    // 已归档：不再出现在活动看板，只存在于历史任务。
+    expect(completedBoardResponse.body.boards['workspace-1'].items.find(item => item.id === itemId)).toBeUndefined()
 
     const createAutoResponse = response()
     await route(request('POST', '/taskboard/boards/workspace-1/items', {
@@ -493,7 +493,7 @@ describe('taskboard execution workflow', () => {
     await route(request('POST', `/taskboard/boards/workspace-1/items/${externalBlockId}/run`), retryIntegration)
     expect(retryIntegration.status).toBe(200)
     expect(retryIntegration.body.item.integrationState).toBe('merged')
-    expect(retryIntegration.body.item.archived).toBe(false)
+    expect(retryIntegration.body.item.archived).toBe(true)
     expect(retryIntegration.body.item.status).toBe('accept')
     expect(create).toHaveBeenCalledTimes(agentCreations)
   })

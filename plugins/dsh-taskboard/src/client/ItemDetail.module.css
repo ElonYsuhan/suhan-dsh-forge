@@ -135,6 +135,26 @@
 }
 .previewLink:hover { text-decoration: underline; }
 
+/* 交付时报告的页面预览地址 */
+.previewUrls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin: 6px 0 0;
+}
+.pagePreviewLink {
+  color: var(--dsw-alias-brand-primary);
+  text-decoration: none;
+  font-weight: 600;
+  word-break: break-all;
+}
+.pagePreviewLink:hover { text-decoration: underline; }
+.previewHint {
+  color: var(--dsw-alias-label-tertiary, var(--dsw-alias-label-secondary));
+  font-size: 12px;
+}
+
 /* 迷你 Markdown 渲染（方案确认预览 / 冻结方案查看） */
 .markdown {
   font-size: 12px;

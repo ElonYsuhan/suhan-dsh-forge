@@ -144,6 +144,8 @@ export interface WorkItem {
   reviewSummary?: string | undefined
   /** 最终交付摘要。 */
   deliverySummary?: string | undefined
+  /** 交付时报告的页面预览地址（改动涉及可见页面时）。 */
+  previewUrls?: string[] | undefined
   /** Agent 完成代码提交后报告的提交引用。 */
   commitRef?: string | undefined
   /** 插件自动提交与集成的状态。 */

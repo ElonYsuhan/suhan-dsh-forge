@@ -35,7 +35,7 @@ import { createBoard, creationStateOf, executionModeOf, executionStateOf, isAiFl
 import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
 import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resetTaskWorkspaceWorkingTree, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
 import { renderFilePreview, renderItemPreview } from './preview.ts'
-import { createItemFromBody, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
+import { createItemFromBody, normalizePreviewUrls, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
  * Host services this plugin requires. Cordis only resolves `ctx` property
@@ -365,7 +365,8 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '- 依赖安装只做一次（pnpm install --frozen-lockfile），之后复用；不要重复安装或重新下载依赖。',
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
     '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
-    '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。'
+    '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。',
+    '- 若改动涉及可预览的可见页面（web 界面效果），delivery_ready 时附带 previewUrls：报告改动页面的预览地址（相对路径如 /taskboard/boards，或完整 http(s) URL，最多 10 个），方便人工验收直接打开页面查看效果；不要编造不存在的地址，纯后端/工具改动无需提供。'
   ].filter(line => line !== '').join('\n')
 }
 
@@ -667,7 +668,8 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
     pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '任务提交已自动集成' })
     item.status = finalColumn.id
   }
-  pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}；卡片保留在「${finalColumn?.label ?? '完成'}」列，可手动删除归档` })
+  item.archived = true
+  pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}；任务已归档到历史任务` })
   const sessionWarning = await preserveTaskSession(ctx, item)
   await cleanupCompletedWorkspace(ctx, item)
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
@@ -874,7 +876,8 @@ export function apply (ctx: Context): void {
         description: 'stage_complete=当前环节产出完成；blocked=遇到阻塞；delivery_ready=交付物已就绪；delivered=人工确认后已完成代码提交'
       },
       summary: { type: 'string', description: '本次结果摘要（供人工审核与追溯）' },
-      commitRef: { type: 'string', description: 'delivered 时必填：本任务代码提交 SHA' }
+      commitRef: { type: 'string', description: 'delivered 时必填：本任务代码提交 SHA' },
+      previewUrls: { type: 'array', items: { type: 'string' }, description: 'delivery_ready 时可选：改动涉及可见页面时，报告页面预览地址（相对路径如 /taskboard/boards，或完整 http(s) URL，最多 10 个），供人工验收直接打开页面查看效果' }
     },
     output: {
       schema: { type: 'string' },
@@ -945,6 +948,7 @@ export function apply (ctx: Context): void {
         }
         item.executionState = 'awaiting-delivery'
         item.deliverySummary = summary
+        item.previewUrls = normalizePreviewUrls(args.previewUrls)
         pushTimeline(item, { action: 'note', note: summary === undefined ? '交付物已就绪，等待人工确认' : `交付物已就绪，等待人工确认：${summary}` })
         touch(foundBoard, item)
         await saveBoards(file)

@@ -85,7 +85,7 @@ function validItem (value: unknown): boolean {
     typeof value.archived === 'boolean' && optionalString(value.parentId) && optionalString(value.iteration) &&
     optionalString(value.sessionId) && optionalString(value.agentPreset) && optionalEnum(value.executionMode, EXECUTION_MODES) &&
     optionalEnum(value.executionState, EXECUTION_STATES) && optionalString(value.reviewSummary) &&
-    optionalString(value.deliverySummary) && optionalString(value.commitRef) &&
+    optionalString(value.deliverySummary) && (value.previewUrls === undefined || validStringList(value.previewUrls)) && optionalString(value.commitRef) &&
     optionalEnum(value.integrationState, INTEGRATION_STATES) && validTaskWorkspace(value.taskWorkspace) &&
     optionalString(value.conflictTaskId) && optionalString(value.conflictOf) && optionalString(value.conflictSourceCommit) &&
     optionalString(value.conflictSourceBranch) && validGitCheckpoint(value.gitCheckpoint)

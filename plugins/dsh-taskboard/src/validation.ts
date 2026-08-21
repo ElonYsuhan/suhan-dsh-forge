@@ -68,6 +68,20 @@ function firstLineOf (value: string): string {
   return value.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? ''
 }
 
+/** 清洗交付时报告的页面预览地址：相对路径（/ 开头）或完整 http(s) URL，最多 10 个。 */
+export function normalizePreviewUrls (value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value) || value.length > 10) throw new HttpError(400, 'previewUrls 必须是最多 10 项的字符串数组')
+  const urls: string[] = []
+  for (const entry of value) {
+    if (typeof entry !== 'string') throw new HttpError(400, 'previewUrls 必须是最多 10 项的字符串数组')
+    const url = entry.trim()
+    if (url === '' || url.length > 200 || !/^\/|^https?:\/\//.test(url)) throw new HttpError(400, `previewUrls 含无效地址：${entry}`)
+    urls.push(url)
+  }
+  return urls.length === 0 ? undefined : urls
+}
+
 export function createItemFromBody (board: Board, body: unknown): WorkItem {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
   const now = new Date().toISOString()

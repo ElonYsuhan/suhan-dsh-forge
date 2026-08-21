@@ -143,6 +143,16 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
             <div className={css.deliveryBox}>
               <strong>交付物等待最终确认</strong>
               <p>{item.deliverySummary ?? '请打开会话检查交付物和质量检查结果。'}</p>
+              {(item.previewUrls ?? []).length > 0 && (
+                <p className={css.previewUrls} data-testid='taskboard-page-preview'>
+                  {item.previewUrls!.map(url => (
+                    <a key={url} className={css.pagePreviewLink} href={url} target='_blank' rel='noreferrer'>
+                      🌐 页面预览：{url}
+                    </a>
+                  ))}
+                  <span className={css.previewHint}>（代码合并后生效）</span>
+                </p>
+              )}
               {previewUrl !== undefined && (
                 <p>
                   <a className={css.previewLink} href={previewUrl} target='_blank' rel='noreferrer' data-testid='taskboard-preview-link'>
