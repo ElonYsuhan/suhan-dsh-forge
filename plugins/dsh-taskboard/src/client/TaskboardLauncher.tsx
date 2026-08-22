@@ -24,6 +24,8 @@ export interface TaskboardInjected {
   currentSessionId: () => string | undefined
   /** 订阅 DSH 会话列表及当前会话变化。 */
   subscribeSessions: (listener: () => void) => () => void
+  /** 会话是否仍存在（任务验收归档后会被移除；区分「会话切换」与「会话终结」）。 */
+  isSessionAlive: (sessionId: string) => boolean
   /** 当前 DSH 会话所属工作区，用于首次打开时自动选中。 */
   currentProjectPath: () => string | undefined
 }
@@ -44,7 +46,7 @@ const CURRENT_KEY = 'suhan-dsh-taskboard-current'
  * Render the workspace.
  * @param props - injected openSession + composed slot props.
  */
-export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSessions, currentProjectPath }: TaskboardLauncherProps) {
+export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSessions, isSessionAlive, currentProjectPath }: TaskboardLauncherProps) {
   const [open, setOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const shellRef = useRef<HTMLDivElement>(null)
@@ -133,6 +135,9 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     if (!open) return
     const openedFrom = currentSessionId()
     const unsubscribe = subscribeSessions(() => {
+      // 打开看板时的会话被移除/归档（如任务确认验收后会话终结）：
+      // 不算「用户切换会话」，保持看板打开，便于继续执行其他任务。
+      if (openedFrom !== undefined && !isSessionAlive(openedFrom)) return
       if (currentSessionId() !== openedFrom) closeAll()
     })
     const sidebar = shellRef.current?.closest('[data-shell-overlay]')?.parentElement?.firstElementChild
@@ -147,7 +152,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       unsubscribe()
       document.removeEventListener('click', handleSidebarClick, true)
     }
-  }, [closeAll, currentSessionId, open, subscribeSessions])
+  }, [closeAll, currentSessionId, isSessionAlive, open, subscribeSessions])
 
   /** 加载全量数据；选定项目（记忆上次选择） */
   const load = useCallback(async (): Promise<void> => {

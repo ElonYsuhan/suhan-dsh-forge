@@ -9,7 +9,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import { DEPENDENCY_LABELS, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type DependencyType, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemDetail.module.css'
-import { MarkdownView } from './MarkdownView.tsx'
+import { MarkdownView, renderInlineText } from './MarkdownView.tsx'
 import type { LivePreviewResponse } from './api.ts'
 
 /** Detail panel surface props. */
@@ -303,7 +303,9 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                           {board.columns.find(c => c.id === entry.from)?.label ?? entry.from} → {board.columns.find(c => c.id === entry.to)?.label ?? entry.to}
                         </div>
                       )}
-                      {entry.note !== undefined && entry.note !== '' && <div className={css.timelineNote}>{entry.note}</div>}
+                      {entry.note !== undefined && entry.note !== '' && (
+                        <div className={css.timelineNote}>{renderInlineText(entry.note, `${entry.at}-note`)}</div>
+                      )}
                       {entry.sessionId !== undefined && (
                         <button type='button' className={css.timelineSession} onClick={() => onOpenSession(entry.sessionId as string)}>
                           查看会话

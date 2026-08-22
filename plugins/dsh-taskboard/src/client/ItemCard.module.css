@@ -33,18 +33,18 @@
   gap: 6px;
 }
 .typeBadge {
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
   border: 1px solid;
   border-radius: 4px;
   padding: 0 5px;
-  line-height: 16px;
+  line-height: 18px;
 }
 .priority {
-  font-size: 10px;
+  font-size: 11px;
   border-radius: 4px;
   padding: 0 5px;
-  line-height: 16px;
+  line-height: 18px;
   background: var(--dsw-alias-bg-layer-1);
   color: var(--dsw-alias-label-tertiary);
 }
@@ -55,14 +55,14 @@
 
 .cardTitle {
   margin-top: 5px;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
   word-break: break-word;
 }
 .cardDesc {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.45;
   color: var(--dsw-alias-label-secondary);
   word-break: break-word;
@@ -78,7 +78,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  font-size: 11px;
+  font-size: 12px;
   color: var(--dsw-alias-label-tertiary);
 }
 .parent {
@@ -91,14 +91,14 @@
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   padding: 0 6px;
-  line-height: 16px;
+  line-height: 18px;
 }
 .mode,
 .executionState {
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 999px;
   padding: 0 6px;
-  line-height: 16px;
+  line-height: 18px;
 }
 .executionState { color: var(--dsw-alias-brand-primary); }
 /* 方案生成中：醒目进度徽标 */
@@ -131,7 +131,7 @@
 .sessionDot {
   margin-left: auto;
   color: var(--dsw-alias-state-success-primary);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .labels {
@@ -141,10 +141,10 @@
   gap: 5px;
 }
 .label {
-  font-size: 10px;
+  font-size: 11px;
   color: var(--dsw-alias-label-tertiary);
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 4px;
   padding: 0 5px;
-  line-height: 15px;
+  line-height: 17px;
 }

@@ -35,13 +35,13 @@
 
 .title {
   margin: 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--dsw-alias-label-primary);
 }
 .message {
   margin: 8px 0 16px;
-  font-size: 13px;
+  font-size: 15px;
   line-height: 1.55;
   color: var(--dsw-alias-label-secondary);
 }
@@ -54,7 +54,7 @@
 .confirmBtn {
   padding: 7px 16px;
   border-radius: 8px;
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
 }
 .cancelBtn {

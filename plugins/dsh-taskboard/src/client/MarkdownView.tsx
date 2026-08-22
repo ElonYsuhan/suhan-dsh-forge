@@ -15,13 +15,36 @@ type InlinePart =
 
 const INLINE_RE = /(`[^`]+`)|(\*\*[^*]+?\*\*)|(\*[^*]+?\*)|(\[[^\]\n]+\]\([^)\n]+\))/g
 
-/** 切分行内片段（code / bold / italic / link）。 */
+/**
+ * 自动识别的高置信代码标识符（无需作者写反引号即可着色）：
+ * - 点文件/带扩展名文件名：.env.example、docker-compose.yml
+ * - 路径：src/client/api.ts、.vitepress/config.ts、docker/compose/...
+ * - 版本号：1.6.4、0.65.4
+ * - commit hash：f96d4c0（7-40 位 hex，至少含一个数字，避免误伤全字母单词）
+ */
+const AUTO_CODE_RE = /((?=[\w.~-]*[A-Za-z])[\w.~-]+(?:\/[\w.~-]+)+)|(?:\.(?:[\w-]+\.)*[\w-]+)|([\w-]+(?:\.[\w-]+)+)|(\b(?=[0-9a-f]*[0-9])[0-9a-f]{7,40}\b)/g
+
+/** 纯文本片段 → 自动 code 高亮切片。 */
+function splitAutoCode (text: string): InlinePart[] {
+  const parts: InlinePart[] = []
+  let last = 0
+  for (const match of text.matchAll(AUTO_CODE_RE)) {
+    const index = match.index ?? 0
+    if (index > last) parts.push({ kind: 'text', text: text.slice(last, index) })
+    parts.push({ kind: 'code', text: match[0] })
+    last = index + match[0].length
+  }
+  if (last < text.length) parts.push({ kind: 'text', text: text.slice(last) })
+  return parts
+}
+
+/** 切分行内片段（code / bold / italic / link，未标记的代码标识符自动高亮）。 */
 function parseInline (text: string): InlinePart[] {
   const parts: InlinePart[] = []
   let last = 0
   for (const match of text.matchAll(INLINE_RE)) {
     const index = match.index ?? 0
-    if (index > last) parts.push({ kind: 'text', text: text.slice(last, index) })
+    if (index > last) parts.push(...splitAutoCode(text.slice(last, index)))
     const [, code, bold, italic, link] = match
     if (code !== undefined) parts.push({ kind: 'code', text: code.slice(1, -1) })
     else if (bold !== undefined) parts.push({ kind: 'bold', children: parseInline(bold.slice(2, -2)) })
@@ -32,7 +55,7 @@ function parseInline (text: string): InlinePart[] {
     }
     last = index + (match[0] ?? '').length
   }
-  if (last < text.length) parts.push({ kind: 'text', text: text.slice(last) })
+  if (last < text.length) parts.push(...splitAutoCode(text.slice(last)))
   return parts
 }
 
@@ -180,4 +203,9 @@ export function MarkdownView ({ text, className }: { text: string; className?: s
       {parseBlocks(text).map((block, index) => renderBlock(block, String(index)))}
     </div>
   )
+}
+
+/** 行内片段渲染（供看板其他面板复用：需求追溯的关键词着色）。 */
+export function renderInlineText (text: string, keyBase = 'inline'): ReactNode {
+  return renderInline(parseInline(text), keyBase)
 }

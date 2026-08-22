@@ -42,6 +42,12 @@ export function apply (ctx: ClientContext): void {
         },
         currentSessionId: () => sessions.list.getSnapshot().current,
         subscribeSessions: (listener: () => void) => sessions.list.subscribe(listener),
+        /** 会话是否仍存在于宿主列表（任务验收归档后会话会被移除/终结）。 */
+        isSessionAlive: (sessionId: string) => {
+          const snapshot = sessions.list.getSnapshot()
+          const id = sessionId as SessionId
+          return snapshot.ids.includes(id) || snapshot.byId[id] !== undefined
+        },
         currentProjectPath: () => {
           const snapshot = sessions.list.getSnapshot()
           return snapshot.current === undefined ? undefined : snapshot.byId[snapshot.current]?.cwd
