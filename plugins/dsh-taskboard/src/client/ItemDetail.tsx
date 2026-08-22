@@ -71,7 +71,6 @@ function splitLines (value: string): string[] {
  */
 export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
-  const [planOpen, setPlanOpen] = useState(false)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
   const executionMode = executionModeOf(item)
@@ -92,172 +91,155 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
         tabIndex={-1}
         onClick={event => event.stopPropagation()}
       >
-        <div className={css.summary}>
-          <header className={css.head}>
-            <div className={css.headMain}>
-              <span className={css.typeBadge} style={{ color: typeDef?.color, borderColor: typeDef?.color }}>
-                {typeDef?.label ?? item.type}
-              </span>
-              <h3 className={css.title}>{item.title}</h3>
-            </div>
-            <button type='button' className={css.closeBtn} onClick={onClose} aria-label='关闭详情'>✕</button>
-          </header>
-
-          <dl className={css.fields}>
-            <div className={css.fieldRow}><dt>环节</dt><dd>{statusLabel}</dd></div>
-            <div className={css.fieldRow}><dt>执行方式</dt><dd>{executionMode === 'review' ? '重大任务 · 逐环节审核' : '小任务 · AI 自主推进'}</dd></div>
-            <div className={css.fieldRow}><dt>执行状态</dt><dd>{STATE_LABEL[executionState] ?? executionState}</dd></div>
-            <div className={css.fieldRow}><dt>优先级</dt><dd>{item.priority}</dd></div>
-            {item.iteration !== undefined && item.iteration !== '' && <div className={css.fieldRow}><dt>迭代</dt><dd>{item.iteration}</dd></div>}
-            {parentItem !== undefined && (
-              <div className={css.fieldRow}><dt>追溯父级</dt><dd>{parentTitle ?? parentItem.title}</dd></div>
-            )}
-            {item.labels.length > 0 && (
-              <div className={css.fieldRow}><dt>标签</dt><dd>{item.labels.join('、')}</dd></div>
-            )}
-            {item.sessionId !== undefined && (
-              <div className={css.fieldRow}><dt>会话</dt><dd className={css.mono}>{item.sessionId}</dd></div>
-            )}
-          </dl>
-
-          {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
-
-          {isAiFlowItem(item) && (
-            <PlanPanel
-              item={item}
-              creationState={creationState ?? 'draft'}
-              busy={busy}
-              onAnalyze={onAnalyze}
-              onConfirmPlan={onConfirmPlan}
-              onViewPlan={() => setPlanOpen(true)}
-            />
-          )}
-
-          {executionState === 'awaiting-review' && (
-            <div className={css.reviewBox}>
-              <strong>当前环节等待审核</strong>
-              <p>{item.reviewSummary ?? '请打开会话检查本环节完整输出。'}</p>
-            </div>
-          )}
-          {executionState === 'awaiting-delivery' && (
-            <div className={css.deliveryBox}>
-              <strong>交付物等待最终确认</strong>
-              <p>{item.deliverySummary ?? '请打开会话检查交付物和质量检查结果。'}</p>
-              {(item.previewUrls ?? []).length > 0 && (
-                <p className={css.previewUrls} data-testid='taskboard-page-preview'>
-                  {item.previewUrls!.map(url => (
-                    <a key={url} className={css.pagePreviewLink} href={url} target='_blank' rel='noreferrer'>
-                      🌐 页面预览：{url}
-                    </a>
-                  ))}
-                  <span className={css.previewHint}>（代码合并后生效）</span>
-                </p>
-              )}
-              {previewUrl !== undefined && (
-                <p>
-                  <a className={css.previewLink} href={previewUrl} target='_blank' rel='noreferrer' data-testid='taskboard-preview-link'>
-                    🔍 预览改动（检查这个任务改了什么）
-                  </a>
-                </p>
-              )}
-            </div>
-          )}
-
-          <div className={css.actions}>
-            {!active && !preConfirm && creationState !== 'completed' && (
-              <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
-                {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
-              </button>
-            )}
-            {previewUrl !== undefined && (
-              <a className={css.ghostBtn} href={previewUrl} target='_blank' rel='noreferrer'>
-                🔍 预览改动
-              </a>
-            )}
-            {executionState === 'awaiting-review' && (
-              <>
-                <button type='button' className={css.approveBtn} onClick={onApprove} disabled={busy}>✓ 批准并继续</button>
-                <button type='button' className={css.rejectBtn} onClick={onReject} disabled={busy}>↩ 退回修订</button>
-              </>
-            )}
-            {executionState === 'awaiting-delivery' && (
-              <button type='button' className={css.approveBtn} onClick={onConfirmDelivery} disabled={busy}>✓ 确认交付并提交</button>
-            )}
-            {item.sessionId !== undefined && (
-              <button type='button' className={css.sessionBtn} onClick={() => onOpenSession(item.sessionId as string)}>
-                打开会话
-              </button>
-            )}
-            {!preConfirm && (
-              <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
-            )}
-            <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
-            {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
-              <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
-            )}
+        <header className={css.head}>
+          <div className={css.headMain}>
+            <span className={css.typeBadge} style={{ color: typeDef?.color, borderColor: typeDef?.color }}>
+              {typeDef?.label ?? item.type}
+            </span>
+            <h3 className={css.title}>{item.title}</h3>
           </div>
-        </div>
+          <button type='button' className={css.closeBtn} onClick={onClose} aria-label='关闭详情'>✕</button>
+        </header>
 
-        <section className={css.timeline} aria-label='需求追溯'>
-          <h4 className={css.timelineTitle}>需求追溯</h4>
-          <ol className={css.timelineList}>
-            {[...item.timeline].reverse().map((entry, idx) => (
-              <li key={`${entry.at}-${idx}`} className={css.timelineEntry}>
-                <span className={`${css.timelineDot} ${css['action-' + entry.action]}`} aria-hidden='true' />
-                <div className={css.timelineBody}>
-                  <div className={css.timelineHead}>
-                    <span className={css.timelineAction}>{ACTION_LABEL[entry.action] ?? entry.action}</span>
-                    <span className={css.timelineTime}>{formatTime(entry.at)}</span>
-                  </div>
-                  {entry.action === 'moved' && (
-                    <div className={css.timelineNote}>
-                      {board.columns.find(c => c.id === entry.from)?.label ?? entry.from} → {board.columns.find(c => c.id === entry.to)?.label ?? entry.to}
-                    </div>
+        <dl className={css.fields}>
+          <div className={css.fieldRow}><dt>环节</dt><dd>{statusLabel}</dd></div>
+          <div className={css.fieldRow}><dt>执行方式</dt><dd>{executionMode === 'review' ? '重大任务 · 逐环节审核' : '小任务 · AI 自主推进'}</dd></div>
+          <div className={css.fieldRow}><dt>执行状态</dt><dd>{STATE_LABEL[executionState] ?? executionState}</dd></div>
+          <div className={css.fieldRow}><dt>优先级</dt><dd>{item.priority}</dd></div>
+          {item.iteration !== undefined && item.iteration !== '' && <div className={css.fieldRow}><dt>迭代</dt><dd>{item.iteration}</dd></div>}
+          {parentItem !== undefined && (
+            <div className={css.fieldRow}><dt>追溯父级</dt><dd>{parentTitle ?? parentItem.title}</dd></div>
+          )}
+          {item.labels.length > 0 && (
+            <div className={css.fieldRow}><dt>标签</dt><dd>{item.labels.join('、')}</dd></div>
+          )}
+          {item.sessionId !== undefined && (
+            <div className={css.fieldRow}><dt>会话</dt><dd className={css.mono}>{item.sessionId}</dd></div>
+          )}
+        </dl>
+
+        <div className={css.split}>
+          <section className={css.left} aria-label='任务详情'>
+            {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
+            {isAiFlowItem(item) && (
+              <PlanPanel
+                item={item}
+                creationState={creationState ?? 'draft'}
+                busy={busy}
+                onAnalyze={onAnalyze}
+                onConfirmPlan={onConfirmPlan}
+              />
+            )}
+          </section>
+
+          <section className={css.right} aria-label='操作与追溯'>
+            <div className={css.rightTop}>
+              {executionState === 'awaiting-review' && (
+                <div className={css.reviewBox}>
+                  <strong>当前环节等待审核</strong>
+                  <p>{item.reviewSummary ?? '请打开会话检查本环节完整输出。'}</p>
+                </div>
+              )}
+              {executionState === 'awaiting-delivery' && (
+                <div className={css.deliveryBox}>
+                  <strong>交付物等待最终确认</strong>
+                  <p>{item.deliverySummary ?? '请打开会话检查交付物和质量检查结果。'}</p>
+                  {(item.previewUrls ?? []).length > 0 && (
+                    <p className={css.previewUrls} data-testid='taskboard-page-preview'>
+                      {item.previewUrls!.map(url => (
+                        <a key={url} className={css.pagePreviewLink} href={url} target='_blank' rel='noreferrer'>
+                          🌐 页面预览：{url}
+                        </a>
+                      ))}
+                      <span className={css.previewHint}>（代码合并后生效）</span>
+                    </p>
                   )}
-                  {entry.note !== undefined && entry.note !== '' && <div className={css.timelineNote}>{entry.note}</div>}
-                  {entry.sessionId !== undefined && (
-                    <button type='button' className={css.timelineSession} onClick={() => onOpenSession(entry.sessionId as string)}>
-                      查看会话
-                    </button>
+                  {previewUrl !== undefined && (
+                    <p>
+                      <a className={css.previewLink} href={previewUrl} target='_blank' rel='noreferrer' data-testid='taskboard-preview-link'>
+                        🔍 预览改动（检查这个任务改了什么）
+                      </a>
+                    </p>
                   )}
                 </div>
-              </li>
-            ))}
-          </ol>
-        </section>
-      </aside>
+              )}
 
-      {planOpen && item.frozenPlan !== undefined && (
-        <div className={css.mask} onClick={() => setPlanOpen(false)}>
-          <div
-            className={css.planModal}
-            role='dialog'
-            aria-modal='true'
-            aria-label='冻结方案'
-            onClick={event => event.stopPropagation()}
-          >
-            <header className={css.planModalHead}>
-              <h3 className={css.planModalTitle}>冻结方案 · {item.title}</h3>
-              <button type='button' className={css.closeBtn} onClick={() => setPlanOpen(false)} aria-label='关闭方案'>✕</button>
-            </header>
-            <div className={css.planFrozen}>
-              <MarkdownView text={item.frozenPlan} className={css.markdown} />
+              <div className={css.actions}>
+                {!active && !preConfirm && creationState !== 'completed' && (
+                  <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
+                    {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
+                  </button>
+                )}
+                {previewUrl !== undefined && (
+                  <a className={css.ghostBtn} href={previewUrl} target='_blank' rel='noreferrer'>
+                    🔍 预览改动
+                  </a>
+                )}
+                {executionState === 'awaiting-review' && (
+                  <>
+                    <button type='button' className={css.approveBtn} onClick={onApprove} disabled={busy}>✓ 批准并继续</button>
+                    <button type='button' className={css.rejectBtn} onClick={onReject} disabled={busy}>↩ 退回修订</button>
+                  </>
+                )}
+                {executionState === 'awaiting-delivery' && (
+                  <button type='button' className={css.approveBtn} onClick={onConfirmDelivery} disabled={busy}>✓ 确认交付并提交</button>
+                )}
+                {item.sessionId !== undefined && (
+                  <button type='button' className={css.sessionBtn} onClick={() => onOpenSession(item.sessionId as string)}>
+                    打开会话
+                  </button>
+                )}
+                {!preConfirm && (
+                  <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
+                )}
+                <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
+                {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
+                  <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
+                )}
+              </div>
             </div>
-          </div>
+
+            <section className={css.timeline} aria-label='需求追溯'>
+              <h4 className={css.timelineTitle}>需求追溯</h4>
+              <ol className={css.timelineList}>
+                {[...item.timeline].reverse().map((entry, idx) => (
+                  <li key={`${entry.at}-${idx}`} className={css.timelineEntry}>
+                    <span className={`${css.timelineDot} ${css['action-' + entry.action]}`} aria-hidden='true' />
+                    <div className={css.timelineBody}>
+                      <div className={css.timelineHead}>
+                        <span className={css.timelineAction}>{ACTION_LABEL[entry.action] ?? entry.action}</span>
+                        <span className={css.timelineTime}>{formatTime(entry.at)}</span>
+                      </div>
+                      {entry.action === 'moved' && (
+                        <div className={css.timelineNote}>
+                          {board.columns.find(c => c.id === entry.from)?.label ?? entry.from} → {board.columns.find(c => c.id === entry.to)?.label ?? entry.to}
+                        </div>
+                      )}
+                      {entry.note !== undefined && entry.note !== '' && <div className={css.timelineNote}>{entry.note}</div>}
+                      {entry.sessionId !== undefined && (
+                        <button type='button' className={css.timelineSession} onClick={() => onOpenSession(entry.sessionId as string)}>
+                          查看会话
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            </section>
+          </section>
         </div>
-      )}
+      </aside>
     </div>
   )
 }
 
 /** AI 创建流程方案面板：按创建状态切换内容。 */
-function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onViewPlan }: {
+function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan }: {
   item: WorkItem
   creationState: CreationState
   busy: boolean
   onAnalyze: (supplement?: string) => void
   onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
-  onViewPlan: () => void
 }) {
   if (creationState === 'draft') {
     return (
@@ -286,16 +268,26 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan, onVie
   if (creationState === 'pending_confirm') {
     return <PlanConfirmEditor item={item} busy={busy} onAnalyze={onAnalyze} onConfirmPlan={onConfirmPlan} />
   }
-  // confirmed / executing / completed：冻结方案入口（点击查看完整方案）。
+  // confirmed / executing / completed：冻结方案直接内嵌全文展示（无需弹窗）。
+  const pendingQuestions = item.aiAnalysis?.pendingQuestions ?? []
   return (
-    <section className={css.planPanel}>
+    <section className={css.planPanel} data-testid='taskboard-plan-frozen'>
       <h4 className={css.planTitle}>冻结方案（执行唯一依据）</h4>
-      <p className={css.planHint}>方案确认后已冻结，开发执行严格按此方案进行。</p>
-      <div className={css.planActions}>
-        <button type='button' className={css.planConfirmBtn} onClick={onViewPlan} data-testid='taskboard-plan-view'>
-          📋 查看方案
-        </button>
+      <div className={css.planFrozenInline}>
+        {item.frozenPlan !== undefined
+          ? <MarkdownView text={item.frozenPlan} className={css.markdown} />
+          : <p className={css.planHint}>方案已确认，冻结内容暂不可用。</p>}
       </div>
+      {pendingQuestions.length > 0 && (
+        <div className={css.pendingCard}>
+          <strong>待确认项</strong>
+          <ul>
+            {pendingQuestions.map((question, index) => (
+              <li key={`${question}-${index}`}>{question}</li>
+            ))}
+          </ul>
+        </div>
+      )}
     </section>
   )
 }

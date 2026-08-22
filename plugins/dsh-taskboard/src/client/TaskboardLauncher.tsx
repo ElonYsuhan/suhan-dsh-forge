@@ -534,7 +534,6 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                     board={board}
                     onMove={(id, status) => handleMove(id, status)}
                     onSelect={item => setSelectedId(item.id)}
-                    onAdd={status => setEditor({ item: null, defaultStatus: status })}
                   />
                   {selected !== null && (
                     <ItemDetail

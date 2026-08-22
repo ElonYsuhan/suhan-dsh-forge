@@ -11,14 +11,13 @@ export interface BoardProps {
   board: BoardModel
   onMove: (itemId: string, status: string) => void
   onSelect: (item: WorkItem) => void
-  onAdd: (status: string) => void
 }
 
 /**
  * Render the board columns.
  * @param props - board data and callbacks.
  */
-export function Board ({ board, onMove, onSelect, onAdd }: BoardProps) {
+export function Board ({ board, onMove, onSelect }: BoardProps) {
   const [dragOver, setDragOver] = useState<string | null>(null)
   const [dragging, setDragging] = useState<string | null>(null)
 
@@ -44,7 +43,7 @@ export function Board ({ board, onMove, onSelect, onAdd }: BoardProps) {
 
   return (
     <div className={css.board}>
-      {board.columns.map((column, index) => {
+      {board.columns.map(column => {
         const items = board.items.filter(i => i.status === column.id && !i.archived)
         return (
           <section
@@ -75,16 +74,6 @@ export function Board ({ board, onMove, onSelect, onAdd }: BoardProps) {
               ))}
               {items.length === 0 && <div className={css.columnEmpty}>拖拽工作项到此环节</div>}
             </div>
-            {index === 0 && (
-              <button
-                type='button'
-                className={css.addBtn}
-                onClick={() => onAdd(column.id)}
-                data-testid={`taskboard-add-${column.id}`}
-              >
-                + 新建
-              </button>
-            )}
           </section>
         )
       })}

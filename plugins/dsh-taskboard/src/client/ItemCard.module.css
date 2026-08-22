@@ -101,6 +101,33 @@
   line-height: 16px;
 }
 .executionState { color: var(--dsw-alias-brand-primary); }
+/* 方案生成中：醒目进度徽标 */
+.analyzing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: var(--dsw-alias-brand-primary);
+  background: color-mix(in srgb, var(--dsw-alias-brand-primary) 14%, transparent);
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 600;
+  animation: taskboard-analyzing-pulse 1.4s ease-in-out infinite;
+}
+.analyzing::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: taskboard-analyzing-blink 1.4s ease-in-out infinite;
+}
+@keyframes taskboard-analyzing-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .62; }
+}
+@keyframes taskboard-analyzing-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: .25; }
+}
 .sessionDot {
   margin-left: auto;
   color: var(--dsw-alias-state-success-primary);

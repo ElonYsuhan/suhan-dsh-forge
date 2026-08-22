@@ -74,8 +74,11 @@ export function ItemCard ({ item, typeDef, parentTitle, dragging, onDragStart, o
       <div className={css.cardTitle}>{item.title}</div>
       {item.desc !== '' && <div className={css.cardDesc}>{item.desc}</div>}
       <div className={css.cardMeta}>
-        {isAiFlowItem(item) && creationState !== undefined && creationState !== 'executing' && creationState !== 'completed' &&
-          <span className={css.executionState}>{CREATION_STATE_LABEL[creationState]}</span>}
+        {isAiFlowItem(item) && creationState !== undefined && creationState !== 'executing' && creationState !== 'completed' && (
+          creationState === 'analyzing'
+            ? <span className={`${css.executionState} ${css.analyzing}`} data-testid='taskboard-creating'>方案生成中…</span>
+            : <span className={css.executionState}>{CREATION_STATE_LABEL[creationState]}</span>
+        )}
         <span className={css.mode}>{executionModeOf(item) === 'review' ? '重大任务' : 'AI 自主'}</span>
         {STATE_LABEL[executionState] !== undefined && <span className={css.executionState}>{STATE_LABEL[executionState]}</span>}
         {parentTitle !== undefined && <span className={css.parent} title={`追溯：${parentTitle}`}>⬆ {parentTitle}</span>}
