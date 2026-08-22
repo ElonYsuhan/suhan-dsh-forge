@@ -159,6 +159,9 @@
   color: var(--dsw-alias-label-secondary);
   white-space: pre-wrap;
   word-break: break-word;
+  /* 长描述限高滚动：不把下方内容（方案/时间线）挤出可视区 */
+  max-height: 220px;
+  overflow-y: auto;
 }
 
 .reviewBox,

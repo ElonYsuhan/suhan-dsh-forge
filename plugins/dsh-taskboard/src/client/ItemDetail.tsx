@@ -150,7 +150,7 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
 
         <div className={css.split}>
           <section className={css.left} aria-label='任务详情'>
-            {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
+            {/* AI 流程项：方案（核心）优先于原始需求，避免长描述把方案挤出首屏 */}
             {isAiFlowItem(item) && (
               <PlanPanel
                 item={item}
@@ -161,6 +161,7 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                 onConfirmPlan={onConfirmPlan}
               />
             )}
+            {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
           </section>
 
           <section className={css.right} aria-label='操作与追溯'>

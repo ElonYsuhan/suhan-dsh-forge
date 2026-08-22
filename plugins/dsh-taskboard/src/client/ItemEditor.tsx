@@ -67,7 +67,8 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
         parentId: null,
         iteration: null,
         status: board.columns[0]?.id ?? 'todo',
-        executionMode: 'auto'
+        executionMode: 'auto',
+        ...(dependencies.length === 0 ? {} : { dependencies })
       }, true)
       return
     }
@@ -100,9 +101,66 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
       parentId: null,
       iteration: null,
       status: board.columns[0]?.id ?? 'todo',
-      executionMode: 'auto'
+      executionMode: 'auto',
+      ...(dependencies.length === 0 ? {} : { dependencies })
     }, false)
   }
+
+  // ── 任务依赖配置（新建与编辑共用；可选，最多 10 项） ──────
+  const depSection = (
+    <section className={css.depSection}>
+      <div className={css.depHead}>
+        <span className={css.fieldLabel}>任务依赖（可选）</span>
+        <button
+          type='button'
+          className={css.depAddBtn}
+          onClick={() => setDependencies(prev => [...prev, { taskId: dependencyOptions[0]?.value ?? '', type: 'before' }])}
+          disabled={dependencies.length >= 10 || dependencyOptions.length === 0}
+          data-testid='taskboard-editor-dep-add'
+        >
+          + 添加依赖
+        </button>
+      </div>
+      <p className={css.depHint}>
+        在此之前 = 本任务先执行，完成后自动开始该任务；之后 = 本任务等待该任务，其完成后自动开始本任务；并行 = 无顺序约束。关联任务成功后自动串联执行。
+      </p>
+      {dependencies.length === 0
+        ? <p className={css.depEmpty}>未配置任务依赖</p>
+        : (
+          <ul className={css.depList}>
+            {dependencies.map((dep, index) => (
+              <li key={`${dep.taskId}-${index}`} className={css.depRow}>
+                <UiSelect
+                  className={css.select}
+                  value={dep.taskId}
+                  onValueChange={taskId => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, taskId } : d))}
+                  options={dependencyOptions}
+                  placeholder='选择任务'
+                  ariaLabel={`依赖 ${index + 1} 目标任务`}
+                  dataTestId={`taskboard-editor-dep-target-${index}`}
+                />
+                <UiSelect
+                  className={css.select}
+                  value={dep.type}
+                  onValueChange={typeValue => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, type: typeValue as DependencyType } : d))}
+                  options={DEPENDENCY_TYPE_OPTIONS}
+                  ariaLabel={`依赖 ${index + 1} 类型`}
+                  dataTestId={`taskboard-editor-dep-type-${index}`}
+                />
+                <button
+                  type='button'
+                  className={css.depRemoveBtn}
+                  onClick={() => setDependencies(prev => prev.filter((_, i) => i !== index))}
+                  aria-label={`移除依赖 ${index + 1}`}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+    </section>
+  )
 
   // ── 新建：AI 创建流程极简表单 ─────────────────────────────
   if (item === null) {
@@ -144,6 +202,8 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
                     data-testid='taskboard-editor-requirement'
                   />
                 </label>
+
+                {depSection}
 
                 <footer className={css.foot}>
                   <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
@@ -270,58 +330,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
                 <input className={css.input} value={labels} onChange={ev => setLabels(ev.target.value)} placeholder='如 工程、迁移' />
               </label>
 
-              <section className={css.depSection}>
-                <div className={css.depHead}>
-                  <span className={css.fieldLabel}>任务依赖（可选）</span>
-                  <button
-                    type='button'
-                    className={css.depAddBtn}
-                    onClick={() => setDependencies(prev => [...prev, { taskId: dependencyOptions[0]?.value ?? '', type: 'before' }])}
-                    disabled={dependencies.length >= 10 || dependencyOptions.length === 0}
-                    data-testid='taskboard-editor-dep-add'
-                  >
-                    + 添加依赖
-                  </button>
-                </div>
-                <p className={css.depHint}>
-                  在此之前 = 本任务先执行，完成后自动开始该任务；之后 = 本任务等待该任务，其完成后自动开始本任务；并行 = 无顺序约束。关联任务成功后自动串联执行。
-                </p>
-                {dependencies.length === 0
-                  ? <p className={css.depEmpty}>未配置任务依赖</p>
-                  : (
-                    <ul className={css.depList}>
-                      {dependencies.map((dep, index) => (
-                        <li key={`${dep.taskId}-${index}`} className={css.depRow}>
-                          <UiSelect
-                            className={css.select}
-                            value={dep.taskId}
-                            onValueChange={taskId => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, taskId } : d))}
-                            options={dependencyOptions}
-                            placeholder='选择任务'
-                            ariaLabel={`依赖 ${index + 1} 目标任务`}
-                            dataTestId={`taskboard-editor-dep-target-${index}`}
-                          />
-                          <UiSelect
-                            className={css.select}
-                            value={dep.type}
-                            onValueChange={typeValue => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, type: typeValue as DependencyType } : d))}
-                            options={DEPENDENCY_TYPE_OPTIONS}
-                            ariaLabel={`依赖 ${index + 1} 类型`}
-                            dataTestId={`taskboard-editor-dep-type-${index}`}
-                          />
-                          <button
-                            type='button'
-                            className={css.depRemoveBtn}
-                            onClick={() => setDependencies(prev => prev.filter((_, i) => i !== index))}
-                            aria-label={`移除依赖 ${index + 1}`}
-                          >
-                            ✕
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-              </section>
+              {depSection}
 
               <footer className={css.foot}>
                 <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
