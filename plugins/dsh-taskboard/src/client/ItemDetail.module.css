@@ -316,6 +316,10 @@
   resize: vertical;
   font-family: inherit;
 }
+/* 方案字段编辑框：默认给足高度（约 8 行），长方案不用先滚动/拖拽才能看全 */
+.planMdTextarea {
+  min-height: 150px;
+}
 .planActions {
   position: sticky;
   bottom: 0;

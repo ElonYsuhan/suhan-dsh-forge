@@ -445,7 +445,15 @@ function MdField ({ label, value, onChange, rows, list }: {
         </span>
       </div>
       {editing
-        ? <textarea className={css.planTextarea} rows={rows} value={value} onChange={ev => onChange(ev.target.value)} />
+        ? (
+          <textarea
+            className={`${css.planTextarea} ${css.planMdTextarea}`}
+            rows={rows}
+            value={value}
+            onChange={ev => onChange(ev.target.value)}
+            onBlur={() => setEditing(false)}
+          />
+        )
         : (
           <div className={css.planPreview}>
             <MarkdownView text={list === true ? toListMarkdown(value) : value} className={css.markdown} />
