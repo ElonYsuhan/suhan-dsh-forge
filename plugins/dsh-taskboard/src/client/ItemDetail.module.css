@@ -320,6 +320,23 @@
 .planMdTextarea {
   min-height: 150px;
 }
+/* 方案确认编辑器：标题与操作按钮固定，只有中间字段区滚动 */
+.planEditorFill {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.planEditorFill .planFields {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.planEditorFill .planActions {
+  position: static;
+  flex: none;
+}
 .planActions {
   position: sticky;
   bottom: 0;

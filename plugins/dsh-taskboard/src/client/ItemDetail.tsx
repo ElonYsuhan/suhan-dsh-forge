@@ -375,22 +375,24 @@ function PlanConfirmEditor ({ item, busy, onAnalyze, onConfirmPlan }: {
   }
 
   return (
-    <section className={css.planPanel} data-testid='taskboard-plan-editor'>
+    <section className={`${css.planPanel} ${css.planEditorFill}`} data-testid='taskboard-plan-editor'>
       <h4 className={css.planTitle}>AI 方案（待确认）</h4>
-      <label className={css.planField}>
-        <span className={css.planLabel}>标题（AI 建议，可修改）</span>
-        <input className={css.planInput} value={title} onChange={ev => setTitle(ev.target.value)} data-testid='taskboard-plan-title' />
-      </label>
-      <MdField label='需求理解' value={requirementUnderstanding} onChange={setRequirementUnderstanding} rows={3} />
-      <MdField label='项目现状分析' value={projectAnalysis} onChange={setProjectAnalysis} rows={4} />
-      <MdField label='实施方案（每行一步，支持 Markdown）' value={implementationPlan} onChange={setImplementationPlan} rows={5} list />
-      <MdField label='影响范围（每行一项）' value={affectedModules} onChange={setAffectedModules} rows={3} list />
-      <MdField label='待确认项（每行一项）' value={pendingQuestions} onChange={setPendingQuestions} rows={3} list />
-      <MdField label='验收标准（每行一项）' value={acceptanceCriteria} onChange={setAcceptanceCriteria} rows={4} list />
-      <label className={css.planField}>
-        <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新生成方案）</span>
-        <textarea className={css.planTextarea} rows={2} value={supplement} onChange={ev => setSupplement(ev.target.value)} placeholder='例如：还要支持手机号登录' data-testid='taskboard-plan-supplement' />
-      </label>
+      <div className={css.planFields}>
+        <label className={css.planField}>
+          <span className={css.planLabel}>标题（AI 建议，可修改）</span>
+          <input className={css.planInput} value={title} onChange={ev => setTitle(ev.target.value)} data-testid='taskboard-plan-title' />
+        </label>
+        <MdField label='需求理解' value={requirementUnderstanding} onChange={setRequirementUnderstanding} rows={3} />
+        <MdField label='项目现状分析' value={projectAnalysis} onChange={setProjectAnalysis} rows={4} />
+        <MdField label='实施方案（每行一步，支持 Markdown）' value={implementationPlan} onChange={setImplementationPlan} rows={5} list />
+        <MdField label='影响范围（每行一项）' value={affectedModules} onChange={setAffectedModules} rows={3} list />
+        <MdField label='待确认项（每行一项）' value={pendingQuestions} onChange={setPendingQuestions} rows={3} list />
+        <MdField label='验收标准（每行一项）' value={acceptanceCriteria} onChange={setAcceptanceCriteria} rows={4} list />
+        <label className={css.planField}>
+          <span className={css.planLabel}>补充需求（可选，将追加进原始需求并重新生成方案）</span>
+          <textarea className={css.planTextarea} rows={2} value={supplement} onChange={ev => setSupplement(ev.target.value)} placeholder='例如：还要支持手机号登录' data-testid='taskboard-plan-supplement' />
+        </label>
+      </div>
       <div className={css.planActions}>
         <button type='button' className={css.ghostBtn} onClick={() => onAnalyze(supplement.trim() === '' ? undefined : supplement.trim())} disabled={busy}>
           ↻ 重新生成方案
