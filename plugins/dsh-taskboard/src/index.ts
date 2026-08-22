@@ -18,7 +18,7 @@
  */
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, rename, writeFile } from 'node:fs/promises'
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import process from 'node:process'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -36,6 +36,7 @@ import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './stor
 import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resetTaskWorkspaceWorkingTree, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
 import { renderFilePreview, renderItemPreview } from './preview.ts'
 import { resolvePreviewBase } from './previewServer.ts'
+import { createPortLeaseStore } from './portLease.ts'
 import { createItemFromBody, normalizePreviewUrls, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
@@ -49,6 +50,12 @@ export const inject = ['webServer', 'workspaceRegistry', 'sessions', 'agents', '
 const DATA_PATHS = taskboardDataPaths(import.meta.url)
 const DATA_FILE = DATA_PATHS.dataFile
 const LEGACY_WORKTREES_ROOT = resolve(dirname(DATA_FILE), 'worktrees')
+
+/**
+ * 任务实时预览端口租约：端口池 4300-4999 按任务组租用（xx0 前端 / xx1 API / xx2 Storybook / 备用），
+ * 持久化在数据目录 port-leases.json，跨重启恢复；心跳超时由惰性 sweep 回收。
+ */
+const portLeases = createPortLeaseStore({ leasesFile: join(dirname(DATA_FILE), 'port-leases.json') })
 
 /** 活动执行句柄（createAgent 返回的 owner 能力）：归档时停止 agent 并归档会话。 */
 const agentHandles = new Map<string, AgentHandle>()
@@ -671,6 +678,8 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   }
   item.archived = true
   pushTimeline(item, { action: 'note', note: `自动提交并集成完成：${result.commit}；任务已归档到历史任务` })
+  // 任务结束：终止预览 dev server，归还端口组
+  await portLeases.release(item.id)
   const sessionWarning = await preserveTaskSession(ctx, item)
   await cleanupCompletedWorkspace(ctx, item)
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
@@ -788,6 +797,9 @@ export function apply (ctx: Context): void {
     return errorId
   }
   cache = null
+
+  // 启动恢复端口租约：进程仍在的任务预览 dev server 续租，残留进程释放端口组。
+  void portLeases.recover().catch(error => { reportError(error) })
 
   ctx.effect(() => async () => {
     lifecycle.active = false
@@ -920,6 +932,8 @@ export function apply (ctx: Context): void {
         item.commitRef = result.commit
         item.integrationState = 'merged'
         item.executionState = 'idle'
+        // 集成完成即任务终结：终止预览 dev server，归还端口组
+        void portLeases.release(item.id).catch(() => {})
         const finalColumn = foundBoard.columns.at(-1)
         if (finalColumn !== undefined && item.status !== finalColumn.id) {
           pushTimeline(item, { action: 'moved', from: item.status, to: finalColumn.id, note: '冲突已自主解决并完成变基集成' })
@@ -963,6 +977,8 @@ export function apply (ctx: Context): void {
         item.commitRef = commitRef
         item.deliverySummary = summary ?? item.deliverySummary
         item.executionState = 'idle'
+        // 交付完成即任务终结：终止预览 dev server，归还端口组
+        void portLeases.release(item.id).catch(() => {})
         if (isAiFlowItem(item)) item.creationState = 'completed'
         const finalColumn = foundBoard.columns.at(-1)
         if (finalColumn !== undefined && item.status !== finalColumn.id) {
@@ -1183,6 +1199,8 @@ export function apply (ctx: Context): void {
             const itemId = parts[4] ?? ''
             await withLock(`item:${board.projectKey}:${itemId}`, async () => {
             const item = findItem(board, itemId)
+            // 删除即任务终结：终止预览 dev server，归还端口组（成功/失败路径都覆盖）
+            void portLeases.release(item.id).catch(() => {})
             const sid = item.sessionId
             let rolledBack = false
             let warning: string | undefined
@@ -1242,6 +1260,24 @@ export function apply (ctx: Context): void {
             const html = await renderItemPreview(board, item)
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
             res.end(html)
+            return
+          }
+          // ── 实时预览：任务执行期间的工作区 dev server（端口租约懒启动 + 心跳）──
+          // 客户端在执行中每 3s 轮询本端点：任务依赖装好后自动分配端口组并启动 dev server，
+          // 心跳同时续租；任务结束（交付/强制关闭/删除/失败）或心跳超时后释放端口组。
+          if (parts.length === 6 && parts[5] === 'live-preview' && method === 'GET') {
+            const item = findItem(board, parts[4] ?? '')
+            const workspace = item.taskWorkspace
+            const state = executionStateOf(item)
+            const previewable = workspace !== undefined && !item.archived &&
+              (executionActive(state) || state === 'blocked')
+            if (!previewable) {
+              send(res, 200, { url: null, pending: false, reason: '任务不在执行中' })
+              return
+            }
+            portLeases.touch(item.id)
+            const result = await portLeases.ensureTaskPreview(item.id, workspace.path)
+            send(res, 200, result)
             return
           }
           // 单文件内容页：?path=<仓库相对路径>
@@ -1444,6 +1480,8 @@ export function apply (ctx: Context): void {
             const itemId = parts[4] ?? ''
             await withLock(`item:${board.projectKey}:${itemId}`, async () => {
             const item = findItem(board, itemId)
+            // 强制关闭即任务终结：终止预览 dev server，归还端口组（成功/失败路径都覆盖）
+            void portLeases.release(item.id).catch(() => {})
             const sessionId = item.sessionId
             if (item.taskWorkspace === undefined && item.gitCheckpoint === undefined) {
               send(res, 409, { error: '工作项没有可回退的执行会话或 Git 基线' })

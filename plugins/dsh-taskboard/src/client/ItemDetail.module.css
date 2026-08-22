@@ -179,6 +179,29 @@
   font-size: 12px;
 }
 
+/* 任务执行中的实时预览（worktree dev server，端口租约懒启动） */
+.livePreviewBox {
+  padding: 10px 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-primary);
+  font-size: 12px;
+}
+.livePreviewBox p { margin: 4px 0 0; }
+.livePreviewUrl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.livePreviewUrl .previewLink { margin-top: 0; }
+.livePreviewHint {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1.5;
+}
+
 /* 迷你 Markdown 渲染（方案确认预览 / 冻结方案查看） */
 .markdown {
   font-size: 12px;

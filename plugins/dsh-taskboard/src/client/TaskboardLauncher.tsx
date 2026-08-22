@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, fetchPreviewBase, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, fetchLivePreview, fetchPreviewBase, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput, type LivePreviewResponse } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
@@ -12,7 +12,7 @@ import { ItemEditor } from './ItemEditor.tsx'
 import { SettingsEditor } from './SettingsEditor.tsx'
 import { HistoryPanel } from './HistoryPanel.tsx'
 import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
-import type { AiAnalysis } from '../shared/types.ts'
+import { executionStateOf, type AiAnalysis } from '../shared/types.ts'
 import css from './TaskboardLauncher.module.css'
 
 /** 注入面：会话联动（浏览器半 sessions 服务的 open） */
@@ -67,6 +67,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   /** 页面预览基地址（项目 dev server）；解析失败时带原因。 */
   const [previewBase, setPreviewBase] = useState<{ baseUrl: string | null; error?: string | undefined } | null>(null)
   const [previewBasePending, setPreviewBasePending] = useState(false)
+  /** 任务实时预览（端口租约懒启动：依赖装好后自动给出地址）。 */
+  const [livePreview, setLivePreview] = useState<LivePreviewResponse | null>(null)
 
   const closeAll = useCallback((): void => {
     setOpen(false)
@@ -209,6 +211,22 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     })
     return () => { cancelled = true }
   }, [currentKey, detailItem])
+
+  /** 任务执行中每 3s 轮询实时预览：服务端懒启动 worktree dev server 并返回端口（心跳续租）。 */
+  useEffect(() => {
+    const taskRunning = detailItem !== null && currentKey !== null && historyDetail === null &&
+      ['running', 'blocked', 'awaiting-review', 'awaiting-delivery', 'committing'].includes(executionStateOf(detailItem))
+    if (!taskRunning) {
+      setLivePreview(null)
+      return
+    }
+    const poll = (): void => {
+      void fetchLivePreview(currentKey as string, detailItem.id).then(setLivePreview).catch(() => {})
+    }
+    poll()
+    const timer = window.setInterval(poll, 3000)
+    return () => window.clearInterval(timer)
+  }, [currentKey, detailItem, historyDetail])
 
   /**
    * 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。
@@ -590,6 +608,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
               pagePreviewUrls={resolvedPreviewUrls}
               previewBasePending={previewBasePending}
               previewBaseError={previewBase?.error}
+              livePreview={livePreview}
               readOnly={historyDetail !== null}
               onClose={() => historyDetail !== null ? setHistoryDetail(null) : setSelectedId(null)}
               onEdit={() => setEditor({ item: detailItem })}

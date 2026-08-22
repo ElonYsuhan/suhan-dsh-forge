@@ -168,6 +168,19 @@ async function executeAction (key: string, id: string, action: string): Promise<
   return body.item
 }
 
+/** 任务实时预览探测结果：url 就绪 / pending（依赖安装中、启动中）/ 失败原因。 */
+export interface LivePreviewResponse {
+  url: string | null
+  pending: boolean
+  reason?: string | undefined
+}
+
+/** 任务实时预览：确保执行中任务的工作区 dev server 运行并返回预览地址（端口租约）。 */
+export async function fetchLivePreview (key: string, id: string): Promise<LivePreviewResponse> {
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/items/${encodeURIComponent(id)}/live-preview`)
+  return jsonResponse<LivePreviewResponse>(res, 'taskboard: live-preview failed')
+}
+
 /** 页面预览基地址响应：baseUrl 为空时 error 说明原因。 */
 export interface PreviewBaseResponse {
   baseUrl: string | null

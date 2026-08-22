@@ -9,6 +9,7 @@ import { creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type 
 import css from './ItemDetail.module.css'
 import { MarkdownView } from './MarkdownView.tsx'
 import { useDialogFocus } from './useDialogFocus.ts'
+import type { LivePreviewResponse } from './api.ts'
 
 /** Detail panel surface props. */
 export interface ItemDetailProps {
@@ -26,6 +27,8 @@ export interface ItemDetailProps {
   previewBasePending?: boolean
   /** 页面预览不可用原因（未启动 dev server 等） */
   previewBaseError?: string | undefined
+  /** 任务实时预览（执行中 worktree dev server，端口租约懒启动） */
+  livePreview?: LivePreviewResponse | null
   /** 只读查看（历史任务详情）：隐藏全部操作按钮，方案区强制只读全文 */
   readOnly?: boolean
   onClose: () => void
@@ -77,7 +80,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, readOnly, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, livePreview, readOnly, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
@@ -179,6 +182,22 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                         🔍 预览改动（检查这个任务改了什么）
                       </a>
                     </p>
+                  )}
+                </div>
+              )}
+
+              {(active || executionState === 'blocked') && (
+                <div className={css.livePreviewBox} data-testid='taskboard-live-preview-box'>
+                  <strong>实时预览（任务独立工作区）</strong>
+                  {livePreview?.url != null ? (
+                    <p className={css.livePreviewUrl}>
+                      <a className={css.previewLink} href={livePreview.url} target='_blank' rel='noreferrer' data-testid='taskboard-live-preview'>
+                        🔗 打开实时预览：{livePreview.url}
+                      </a>
+                      <span className={css.previewHint}>（任务 worktree 实时效果，改动自动生效）</span>
+                    </p>
+                  ) : (
+                    <p className={css.livePreviewHint}>{livePreview?.reason ?? '预览地址获取中…'}</p>
                   )}
                 </div>
               )}
