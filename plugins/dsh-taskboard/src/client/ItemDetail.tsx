@@ -22,6 +22,8 @@ export interface ItemDetailProps {
   previewUrl?: string | undefined
   /** 页面预览完整地址（相对路径已解析到项目 dev server 基地址） */
   pagePreviewUrls: string[]
+  /** 基地址解析中（项目 dev server 正在启动） */
+  previewBasePending?: boolean
   /** 页面预览不可用原因（未启动 dev server 等） */
   previewBaseError?: string | undefined
   onClose: () => void
@@ -73,7 +75,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBaseError, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
@@ -156,6 +158,11 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                         </a>
                       ))}
                       <span className={css.previewHint}>（项目 dev server 运行中，代码合并后即最新效果）</span>
+                    </p>
+                  )}
+                  {(item.previewUrls ?? []).length > 0 && previewBasePending && (
+                    <p className={css.previewUrls} data-testid='taskboard-page-preview-pending'>
+                      <span className={css.previewHint}>⏳ 正在启动项目 dev server，预览地址解析中…</span>
                     </p>
                   )}
                   {pagePreviewUrls.length === 0 && (item.previewUrls ?? []).length > 0 && previewBaseError !== undefined && (

@@ -64,6 +64,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [notice, setNotice] = useState<string | null>(null)
   /** 页面预览基地址（项目 dev server）；解析失败时带原因。 */
   const [previewBase, setPreviewBase] = useState<{ baseUrl: string | null; error?: string | undefined } | null>(null)
+  const [previewBasePending, setPreviewBasePending] = useState(false)
 
   const closeAll = useCallback((): void => {
     setOpen(false)
@@ -187,20 +188,30 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   useEffect(() => {
     if (currentKey === null || selected === null || (selected.previewUrls ?? []).length === 0) {
       setPreviewBase(null)
+      setPreviewBasePending(false)
       return
     }
     let cancelled = false
+    setPreviewBasePending(true)
     void fetchPreviewBase(currentKey).then(result => {
-      if (!cancelled) setPreviewBase(result)
+      if (!cancelled) { setPreviewBase(result); setPreviewBasePending(false) }
     }).catch(err => {
-      if (!cancelled) setPreviewBase({ baseUrl: null, error: err instanceof Error ? err.message : String(err) })
+      if (!cancelled) {
+        setPreviewBase({ baseUrl: null, error: err instanceof Error ? err.message : String(err) })
+        setPreviewBasePending(false)
+      }
     })
     return () => { cancelled = true }
   }, [currentKey, selected])
 
-  /** 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。 */
-  const resolvedPreviewUrls: string[] = (selected?.previewUrls ?? []).map(url =>
-    /^https?:\/\//.test(url) ? url : `${previewBase?.baseUrl ?? ''}${url}`)
+  /**
+   * 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。
+   * 基地址尚未解析出来（启动中）或解析失败时不产出相对路径链接——
+   * 否则 href 按当前宿主 origin（3080）解析，落到宿主页面而非改动项目。
+   */
+  const resolvedPreviewUrls: string[] = (selected?.previewUrls ?? [])
+    .filter(url => /^https?:\/\//.test(url) || (previewBase !== null && previewBase.baseUrl !== null))
+    .map(url => /^https?:\/\//.test(url) ? url : `${previewBase?.baseUrl ?? ''}${url}`)
 
   /** 局部更新：看板里某项不存在则追加（新建），存在则替换（更新/流转/执行） */
   const patchBoardItem = useCallback((key: string, updated: WorkItem): void => {
@@ -565,6 +576,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                       busy={running}
                       previewUrl={previewUrl}
                       pagePreviewUrls={resolvedPreviewUrls}
+                      previewBasePending={previewBasePending}
                       previewBaseError={previewBase?.error}
                       onClose={() => setSelectedId(null)}
                       onEdit={() => setEditor({ item: selected })}

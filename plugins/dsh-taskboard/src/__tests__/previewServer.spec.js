@@ -13,7 +13,7 @@ const spawnCalls = []
 
 vi.mock('node:child_process', () => ({
   spawn: (command, args, options) => {
-    spawnCalls.push({ command, args, cwd: options?.cwd })
+    spawnCalls.push({ command, args, cwd: options?.cwd, env: options?.env })
     return { unref: vi.fn() }
   },
   execFile: (command, args, _options, callback) => {
@@ -87,8 +87,13 @@ describe('resolvePreviewBase', () => {
 
     // 无运行端口：进入启动分支，pnpm dev 被拉起（真实轮询间隔 ~800ms/轮）
     await vi.waitFor(() => {
-      expect(spawnCalls).toEqual([{ command: 'pnpm', args: ['dev'], cwd: project }])
+      expect(spawnCalls).toHaveLength(1)
+      expect(spawnCalls[0].command).toBe('pnpm')
+      expect(spawnCalls[0].args).toEqual(['dev'])
+      expect(spawnCalls[0].cwd).toBe(project)
     })
+    // 无 TTY 下 pnpm 依赖重装不应中止（否则 vitepress 等项目永远起不来）
+    expect(spawnCalls[0].env?.CI).toBe('true')
 
     // dev server 出现后下一轮探测到并返回
     listeners.set(5173, { pid: 202, cwd: project })

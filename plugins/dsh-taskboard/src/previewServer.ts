@@ -141,7 +141,13 @@ async function startDevServer (projectPath: string): Promise<string | null> {
   const child = spawn('pnpm', ['dev'], {
     cwd: projectPath,
     detached: true,
-    stdio: ['ignore', logFd, logFd]
+    stdio: ['ignore', logFd, logFd],
+    env: {
+      ...process.env,
+      // pnpm 11：依赖变化需重装时默认交互确认删除 modules 目录，无 TTY 下直接中止 dev server 启动；
+      // 该确认只认 CI 环境变量（npm_config_ 形式无效），CI=true 下 pnpm 自动跳过并继续重装
+      CI: 'true'
+    }
   })
   child.unref()
   const deadline = Date.now() + START_TIMEOUT_MS
