@@ -1,7 +1,7 @@
 {
   "name": "@suhan-dsh/taskboard",
   "description": "DSH Web taskboard plugin with workspace-scoped Agent sessions, staged human review, delivery confirmation, and durable archival",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",
@@ -54,8 +54,8 @@
     "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-client-ui-settings": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-client-ui-slots": ">=0.1.0-rc.6 <0.2.0",
-    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-home-paths": ">=0.1.0-rc.6 <0.2.0",
+    "@deepseek-ai/dsh-host-webserver": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-llm": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-session": ">=0.1.0-rc.6 <0.2.0",
     "@deepseek-ai/dsh-tools": ">=0.1.0-rc.6 <0.2.0",
@@ -63,10 +63,10 @@
     "react": "^18.3.1"
   },
   "devDependencies": {
+    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.6",
     "@types/node": "catalog:",
     "@types/react": "catalog:",
-    "@deepseek-ai/dsh-home-paths": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-settings": "^0.1.0-rc.6",
     "lightningcss": "catalog:",
     "react": "catalog:",
     "tsdown": "catalog:",
@@ -106,5 +106,11 @@
   "author": "ElonYsuhan",
   "publishConfig": {
     "access": "public"
+  },
+  "dependencies": {
+    "@radix-ui/react-alert-dialog": "^1.1.23",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-select": "^2.3.7",
+    "@radix-ui/react-toggle-group": "^1.1.19"
   }
 }

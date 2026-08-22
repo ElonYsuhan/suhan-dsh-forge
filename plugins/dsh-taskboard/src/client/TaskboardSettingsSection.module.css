@@ -39,6 +39,11 @@
   color: var(--dsw-alias-label-secondary);
 }
 .projectSelect {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
   min-width: 200px;
   max-width: 320px;
   box-sizing: border-box;
@@ -50,7 +55,14 @@
   font-size: 13px;
   padding: 6px 10px;
 }
-.projectSelect:focus {
+.projectSelect > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projectSelect[data-state='open'] {
   border-color: var(--dsw-alias-brand-primary);
 }
 .section :is(button, input, select):focus-visible {

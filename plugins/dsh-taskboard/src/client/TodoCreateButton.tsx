@@ -1,12 +1,13 @@
 /**
- * 聊天页「＋待办」：composer 工具行左端的小控件，点击弹出创建表单，
+ * 聊天页「＋待办」（Radix Dialog）：composer 工具行左端的小控件，点击弹出创建表单，
  * 把想法以草稿形式建到所选项目看板第一列（需生成任务方案并确认后才能执行）。
  */
 import { useCallback, useEffect, useState, type FormEvent } from 'react'
+import * as Dialog from '@radix-ui/react-dialog'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { createItem, fetchBoards, type BoardsResponse } from './api.ts'
+import { UiSelect } from './ui/Select.tsx'
 import css from './TodoCreateButton.module.css'
-import { useDialogFocus } from './useDialogFocus.ts'
 
 /** 当前聊天会话所属项目。 */
 export interface TodoCreateInjected {
@@ -29,7 +30,6 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const closeDialog = useCallback(() => setOpen(false), [])
-  const panelRef = useDialogFocus<HTMLFormElement>(closeDialog, open)
 
   useEffect(() => {
     if (!open) return
@@ -70,6 +70,10 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
       .catch(err => setError(err instanceof Error ? err.message : String(err)))
   }
 
+  const projectOptions = boards === null
+    ? []
+    : Object.entries(boards.boards).map(([key, board]) => ({ value: key, label: board.projectTitle }))
+
   return (
     <>
       <button
@@ -83,71 +87,68 @@ export function TodoCreateButton ({ projectPath }: TodoCreateButtonProps) {
         ＋待办
       </button>
 
-      {open && (
-        <div className={css.mask} onClick={closeDialog}>
-          <form
-            className={css.panel}
-            ref={panelRef}
-            role='dialog'
-            aria-modal='true'
-            aria-label='创建想法草稿'
-            onClick={ev => ev.stopPropagation()}
-            onSubmit={handleSubmit}
-            tabIndex={-1}
-          >
-            <header className={css.head}>
-              <h3 className={css.title}>创建想法草稿</h3>
-              <button type='button' className={css.closeBtn} onClick={closeDialog} aria-label='关闭'>✕</button>
-            </header>
+      <Dialog.Root open={open} onOpenChange={setOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className={css.mask} />
+          <div className={css.layer}>
+            <Dialog.Content asChild aria-label='创建想法草稿'>
+              <form className={css.panel} onSubmit={handleSubmit}>
+                <header className={css.head}>
+                  <h3 className={css.title}>创建想法草稿</h3>
+                  <Dialog.Close asChild>
+                    <button type='button' className={css.closeBtn} aria-label='关闭'>✕</button>
+                  </Dialog.Close>
+                </header>
 
-            <label className={css.field}>
-              <span className={css.fieldLabel}>项目</span>
-              <select
-                className={css.select}
-                value={projectKey}
-                onChange={ev => setProjectKey(ev.target.value)}
-                data-testid='taskboard-todo-project'
-              >
-                {boards !== null && Object.entries(boards.boards).map(([key, board]) => (
-                  <option key={key} value={key}>{board.projectTitle}</option>
-                ))}
-              </select>
-            </label>
+                <label className={css.field}>
+                  <span className={css.fieldLabel}>项目</span>
+                  <UiSelect
+                    className={css.select}
+                    value={projectKey}
+                    onValueChange={setProjectKey}
+                    options={projectOptions}
+                    placeholder='请选择项目'
+                    ariaLabel='项目'
+                    dataTestId='taskboard-todo-project'
+                  />
+                </label>
 
-            <label className={css.field}>
-              <span className={css.fieldLabel}>标题（可选）</span>
-              <input
-                className={css.input}
-                value={title}
-                onChange={ev => setTitle(ev.target.value)}
-                placeholder='如：给系统加个登录功能'
-                data-dialog-initial-focus
-                data-testid='taskboard-todo-title'
-              />
-            </label>
+                <label className={css.field}>
+                  <span className={css.fieldLabel}>标题（可选）</span>
+                  <input
+                    className={css.input}
+                    value={title}
+                    onChange={ev => setTitle(ev.target.value)}
+                    placeholder='如：给系统加个登录功能'
+                    autoFocus
+                    data-testid='taskboard-todo-title'
+                  />
+                </label>
 
-            <label className={css.field}>
-              <span className={css.fieldLabel}>想法计划描述</span>
-              <textarea
-                className={css.textarea}
-                value={requirement}
-                onChange={ev => setRequirement(ev.target.value)}
-                placeholder='用自然语言描述你的想法，会结合项目生成可执行方案'
-                rows={4}
-                data-testid='taskboard-todo-requirement'
-              />
-            </label>
+                <label className={css.field}>
+                  <span className={css.fieldLabel}>想法计划描述</span>
+                  <textarea
+                    className={css.textarea}
+                    value={requirement}
+                    onChange={ev => setRequirement(ev.target.value)}
+                    placeholder='用自然语言描述你的想法，会结合项目生成可执行方案'
+                    rows={4}
+                    data-testid='taskboard-todo-requirement'
+                  />
+                </label>
 
-            {error !== null && <div className={css.error} role='alert'>{error}</div>}
-            {notice !== null && <div className={css.notice} role='status'>{notice}</div>}
+                {error !== null && <div className={css.error} role='alert'>{error}</div>}
+                {notice !== null && <div className={css.notice} role='status'>{notice}</div>}
 
-            <footer className={css.foot}>
-              <button type='button' className={css.cancelBtn} onClick={closeDialog}>取消</button>
-              <button type='submit' className={css.saveBtn} disabled={projectKey === '' || (title.trim() === '' && requirement.trim() === '')}>创建草稿</button>
-            </footer>
-          </form>
-        </div>
-      )}
+                <footer className={css.foot}>
+                  <button type='button' className={css.cancelBtn} onClick={closeDialog}>取消</button>
+                  <button type='submit' className={css.saveBtn} disabled={projectKey === '' || (title.trim() === '' && requirement.trim() === '')}>创建草稿</button>
+                </footer>
+              </form>
+            </Dialog.Content>
+          </div>
+        </Dialog.Portal>
+      </Dialog.Root>
     </>
   )
 }

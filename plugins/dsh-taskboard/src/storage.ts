@@ -66,6 +66,11 @@ function validStringList (value: unknown): boolean {
   return Array.isArray(value) && value.every(item => typeof item === 'string')
 }
 
+function validDependencyList (value: unknown): boolean {
+  return value === undefined || (Array.isArray(value) && value.every(entry => isObject(entry) &&
+    typeof entry.taskId === 'string' && (entry.type === 'before' || entry.type === 'after' || entry.type === 'parallel')))
+}
+
 function validAiAnalysis (value: unknown): boolean {
   return value === undefined || (isObject(value) && optionalString(value.suggestedTitle) &&
     typeof value.requirementUnderstanding === 'string' && typeof value.projectAnalysis === 'string' &&
@@ -85,7 +90,7 @@ function validItem (value: unknown): boolean {
     typeof value.archived === 'boolean' && optionalString(value.parentId) && optionalString(value.iteration) &&
     optionalString(value.sessionId) && optionalString(value.agentPreset) && optionalEnum(value.executionMode, EXECUTION_MODES) &&
     optionalEnum(value.executionState, EXECUTION_STATES) && optionalString(value.reviewSummary) &&
-    optionalString(value.deliverySummary) && (value.previewUrls === undefined || validStringList(value.previewUrls)) && optionalString(value.commitRef) &&
+    optionalString(value.deliverySummary) && (value.previewUrls === undefined || validStringList(value.previewUrls)) && validDependencyList(value.dependencies) && optionalString(value.commitRef) &&
     optionalEnum(value.integrationState, INTEGRATION_STATES) && validTaskWorkspace(value.taskWorkspace) &&
     optionalString(value.conflictTaskId) && optionalString(value.conflictOf) && optionalString(value.conflictSourceCommit) &&
     optionalString(value.conflictSourceBranch) && validGitCheckpoint(value.gitCheckpoint)

@@ -1,0 +1,56 @@
+/* 看板统一选择器（Radix Select）。视觉底色由调用方 .select 类提供。 */
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  height: auto;
+  margin-left: 6px;
+  flex: none;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px;
+}
+
+.content {
+  z-index: 80;
+  min-width: var(--radix-select-trigger-width);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  padding: 4px;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+}
+
+.viewport {
+  padding: 0;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.item[data-highlighted] {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
+}
+.item[data-state='checked'] {
+  color: var(--dsw-alias-brand-primary);
+  font-weight: 500;
+}
+.item[data-disabled] {
+  opacity: .5;
+  pointer-events: none;
+}
+
+.indicator {
+  flex: none;
+}

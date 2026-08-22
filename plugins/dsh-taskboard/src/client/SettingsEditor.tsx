@@ -1,10 +1,10 @@
 /**
- * 看板设置弹窗：复用 SettingsForm 编辑自定义环节（列）与工作项类型。
+ * 看板设置弹窗（Radix Dialog）：复用 SettingsForm 编辑自定义环节（列）与工作项类型。
  */
+import * as Dialog from '@radix-ui/react-dialog'
 import type { Board, ColumnDef, ItemTypeDef } from '../shared/types.ts'
 import css from './SettingsEditor.module.css'
 import { SettingsForm } from './SettingsForm.tsx'
-import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Settings surface props. */
 export interface SettingsEditorProps {
@@ -18,26 +18,23 @@ export interface SettingsEditorProps {
  * @param props - the board and callbacks.
  */
 export function SettingsEditor ({ board, onCancel, onSave }: SettingsEditorProps) {
-  const panelRef = useDialogFocus<HTMLDivElement>(onCancel)
-
   return (
-    <div className={css.mask} onClick={onCancel}>
-      <div
-        className={css.panel}
-        ref={panelRef}
-        role='dialog'
-        aria-modal='true'
-        aria-label='看板设置'
-        onClick={ev => ev.stopPropagation()}
-        tabIndex={-1}
-      >
-        <header className={css.head}>
-          <h3 className={css.title}>看板设置</h3>
-          <button type='button' className={css.closeBtn} onClick={onCancel} aria-label='关闭'>✕</button>
-        </header>
+    <Dialog.Root open onOpenChange={open => { if (!open) onCancel() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className={css.mask} />
+        <div className={css.layer}>
+          <Dialog.Content className={css.panel} aria-label='看板设置'>
+            <header className={css.head}>
+              <h3 className={css.title}>看板设置</h3>
+              <Dialog.Close asChild>
+                <button type='button' className={css.closeBtn} aria-label='关闭'>✕</button>
+              </Dialog.Close>
+            </header>
 
-        <SettingsForm board={board} onCancel={onCancel} onSave={onSave} />
-      </div>
-    </div>
+            <SettingsForm board={board} onCancel={onCancel} onSave={onSave} />
+          </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }

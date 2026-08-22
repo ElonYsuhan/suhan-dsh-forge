@@ -1,9 +1,9 @@
 /**
- * Destructive-action confirmation dialog (never window.confirm).
+ * Destructive-action confirmation dialog (Radix AlertDialog, never window.confirm).
+ * onPointerDownOutside → onCancel 保持原「点遮罩取消」行为；确认按钮自动聚焦。
  */
-import { useId } from 'react'
+import * as AlertDialog from '@radix-ui/react-alert-dialog'
 import css from './ConfirmDialog.module.css'
-import { useDialogFocus } from './useDialogFocus.ts'
 
 /** Confirm dialog surface props. */
 export interface ConfirmDialogProps {
@@ -19,28 +19,27 @@ export interface ConfirmDialogProps {
  * @param props - copy and callbacks.
  */
 export function ConfirmDialog ({ title, message, confirmLabel = '确认', onCancel, onConfirm }: ConfirmDialogProps) {
-  const titleId = useId()
-  const messageId = useId()
-  const panelRef = useDialogFocus<HTMLDivElement>(onCancel)
   return (
-    <div className={css.mask} onClick={onCancel}>
-      <div
-        className={css.panel}
-        ref={panelRef}
-        role='alertdialog'
-        aria-modal='true'
-        aria-labelledby={titleId}
-        aria-describedby={messageId}
-        tabIndex={-1}
-        onClick={ev => ev.stopPropagation()}
-      >
-        <h3 className={css.title} id={titleId}>{title}</h3>
-        <p className={css.message} id={messageId}>{message}</p>
-        <footer className={css.foot}>
-          <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
-          <button type='button' className={css.confirmBtn} onClick={onConfirm} data-dialog-initial-focus>{confirmLabel}</button>
-        </footer>
-      </div>
-    </div>
+    <AlertDialog.Root open onOpenChange={open => { if (!open) onCancel() }}>
+      <AlertDialog.Portal>
+        {/* AlertDialog 语义上 Content 不允许点外关闭（只能按钮操作），
+            这里在 Overlay 上直接拦 pointer-down 保持原「点遮罩取消」行为。 */}
+        <AlertDialog.Overlay className={css.mask} onPointerDown={onCancel} />
+        <div className={css.layer}>
+          <AlertDialog.Content className={css.panel}>
+            <AlertDialog.Title className={css.title}>{title}</AlertDialog.Title>
+            <AlertDialog.Description className={css.message}>{message}</AlertDialog.Description>
+            <footer className={css.foot}>
+              <AlertDialog.Cancel asChild>
+                <button type='button' className={css.cancelBtn}>取消</button>
+              </AlertDialog.Cancel>
+              <AlertDialog.Action asChild>
+                <button type='button' className={css.confirmBtn} autoFocus onClick={onConfirm} data-testid='taskboard-confirm-btn'>{confirmLabel}</button>
+              </AlertDialog.Action>
+            </footer>
+          </AlertDialog.Content>
+        </div>
+      </AlertDialog.Portal>
+    </AlertDialog.Root>
   )
 }

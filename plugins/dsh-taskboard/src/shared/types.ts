@@ -108,6 +108,23 @@ export interface TimelineEntry {
   sessionId?: string
 }
 
+/** 依赖方向（配置在任务 A 上指向任务 B，语义均为「本任务视角」） */
+export type DependencyType = 'before' | 'after' | 'parallel'
+
+/** 任务依赖：A 关联 B。before = A 在 B 之前执行（B 等 A，A 完成提交后自动触发 B）；
+ * after = A 在 B 之后执行（A 等 B，B 完成提交后自动触发 A）；parallel = 无顺序约束。 */
+export interface TaskDependency {
+  taskId: string
+  type: DependencyType
+}
+
+/** 依赖类型展示名（配置在任务 A 上指向任务 B，均为本任务视角）。 */
+export const DEPENDENCY_LABELS: Record<DependencyType, string> = {
+  before: '在此之前',
+  after: '之后',
+  parallel: '并行'
+}
+
 /** 工作项（史诗/需求/任务/缺陷的统一载体） */
 export interface WorkItem {
   /** 稳定 id */
@@ -146,6 +163,8 @@ export interface WorkItem {
   deliverySummary?: string | undefined
   /** 交付时报告的页面预览地址（改动涉及可见页面时）。 */
   previewUrls?: string[] | undefined
+  /** 任务依赖（可选）：关联同项目任务，按 before/after/parallel 约束执行顺序与自动串联。 */
+  dependencies?: TaskDependency[] | undefined
   /** Agent 完成代码提交后报告的提交引用。 */
   commitRef?: string | undefined
   /** 插件自动提交与集成的状态。 */

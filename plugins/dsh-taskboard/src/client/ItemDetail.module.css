@@ -1,5 +1,12 @@
-/* 工作项详情弹框：字段 + 需求追溯时间线 + 会话联动。 */
+/* 工作项详情弹框（Radix Dialog：Overlay 背景 + .layer 居中承载 Content）。 */
 .mask {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+}
+.layer {
   position: fixed;
   inset: 0;
   z-index: 45;
@@ -8,8 +15,9 @@
   justify-content: center;
   padding: 16px;
   box-sizing: border-box;
-  background: rgba(0, 0, 0, .45);
-  backdrop-filter: blur(2px);
+  pointer-events: none;
+}
+.layer > * {
   pointer-events: auto;
 }
 
@@ -119,6 +127,26 @@
 .fieldRow dt { color: var(--dsw-alias-label-tertiary); }
 .fieldRow dd { margin: 0; color: var(--dsw-alias-label-secondary); }
 .mono { font-family: var(--dsw-font-family); word-break: break-all; }
+/* 任务依赖条目：类型徽标 + 目标任务标题 + 语义提示 */
+.depEntry {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+}
+.depBadge {
+  flex: none;
+  padding: 0 5px;
+  border: 1px solid var(--dsw-alias-brand-primary);
+  border-radius: 4px;
+  color: var(--dsw-alias-brand-primary);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+}
+.depHint {
+  color: var(--dsw-alias-label-tertiary);
+}
 
 .desc {
   margin: 0 0 12px;

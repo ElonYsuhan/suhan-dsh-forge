@@ -686,6 +686,108 @@ async function finalizeIsolatedTask (ctx: Context, file: BoardsFile, board: Boar
   if (sessionWarning !== undefined) pushTimeline(item, { action: 'note', note: `代码已集成，但历史会话落盘失败：${sessionWarning}` })
   touch(board, item)
   await saveBoards(file)
+  // 任务完成并提交后：自动触发依赖本任务的后继任务执行
+  await triggerSuccessors(ctx, file, board, item)
+}
+
+/** 依赖任务是否已完成（交付确认并集成归档；commitRef 为集成提交）。 */
+function isDependencySatisfied (board: Board, taskId: string): boolean {
+  const target = board.items.find(candidate => candidate.id === taskId)
+  return target !== undefined && target.archived === true && target.commitRef !== undefined
+}
+
+/**
+ * 任务 X 的未满足依赖（执行闸门）：
+ * - X.dependencies 中 type=after 的目标（X 在该任务之后 → 等它完成）；
+ * - 其他任务声明的 type=before 指向 X（他人 X 之前 → X 等他人完成）。
+ */
+function dependencyGateUnmet (board: Board, item: WorkItem): WorkItem[] {
+  const unmet: WorkItem[] = []
+  const seen = new Set<string>()
+  const byId = new Map(board.items.map(candidate => [candidate.id, candidate]))
+  const check = (taskId: string): void => {
+    if (seen.has(taskId)) return
+    seen.add(taskId)
+    if (!isDependencySatisfied(board, taskId)) {
+      const target = byId.get(taskId)
+      if (target !== undefined) unmet.push(target)
+    }
+  }
+  for (const dep of item.dependencies ?? []) {
+    if (dep.type === 'after') check(dep.taskId)
+  }
+  for (const other of board.items) {
+    if (other.id === item.id) continue
+    for (const dep of other.dependencies ?? []) {
+      if (dep.type === 'before' && dep.taskId === item.id) check(other.id)
+    }
+  }
+  return unmet
+}
+
+/** 已完成任务 C 的后继任务：C 声明 before 指向的 + 声明 after C 的（去重、排除归档）。 */
+function successorsOf (board: Board, itemId: string): WorkItem[] {
+  const successors: WorkItem[] = []
+  const seen = new Set<string>()
+  const byId = new Map(board.items.map(candidate => [candidate.id, candidate]))
+  const add = (taskId: string): void => {
+    if (taskId === itemId || seen.has(taskId)) return
+    seen.add(taskId)
+    const target = byId.get(taskId)
+    if (target !== undefined && !target.archived) successors.push(target)
+  }
+  for (const dep of byId.get(itemId)?.dependencies ?? []) {
+    if (dep.type === 'before') add(dep.taskId)
+  }
+  for (const other of board.items) {
+    if (other.id === itemId) continue
+    for (const dep of other.dependencies ?? []) {
+      if (dep.type === 'after' && dep.taskId === itemId) add(other.id)
+    }
+  }
+  return successors
+}
+
+/**
+ * 任务完成并集成后自动触发后继任务（各自独立 worktree 并行执行）。
+ * 只启动「方案已确认、无未满足依赖、当前未在执行」的后继；其余跳过并留时间线说明。
+ * 调用方持有已完成任务的 item lock。
+ */
+async function triggerSuccessors (ctx: Context, file: BoardsFile, board: Board, completed: WorkItem): Promise<void> {
+  for (const successor of successorsOf(board, completed.id)) {
+    try {
+      await withLock(`item:${board.projectKey}:${successor.id}`, async () => {
+        const target = findItem(board, successor.id)
+        if (target.archived || executionActive(executionStateOf(target))) return
+        const unmet = dependencyGateUnmet(board, target)
+        if (unmet.length > 0) {
+          pushTimeline(target, { action: 'note', note: `前置任务「${completed.title}」已完成并集成，但还有其他未完成的前置任务（${unmet.map(task => task.title).join('、')}），暂不自动执行` })
+          touch(board, target)
+          await saveBoards(file)
+          return
+        }
+        if (isAiFlowItem(target) && creationStateOf(target) !== 'confirmed') {
+          pushTimeline(target, { action: 'note', note: `前置任务「${completed.title}」已完成并集成；方案未确认，请先完成任务方案生成并确认方案后执行` })
+          touch(board, target)
+          await saveBoards(file)
+          return
+        }
+        pushTimeline(target, { action: 'note', note: `前置任务「${completed.title}」已完成并集成，依赖满足，自动开始执行` })
+        touch(board, target)
+        await saveBoards(file)
+        await startExecution(ctx, file, board, target, {
+          advanceStatus: true,
+          statusMoveNote: '前置任务完成，依赖满足，自动开始执行',
+          timelineNote: '前置任务完成，自动开始执行'
+        })
+      })
+    } catch (error) {
+      // 单个后继启动失败不影响其他后继与已完成任务本身
+      pushTimeline(successor, { action: 'note', note: `自动执行启动失败：${error instanceof Error ? error.message : String(error)}` })
+      touch(board, successor)
+      await saveBoards(file).catch(() => {})
+    }
+  }
 }
 
 interface StartExecutionOptions {
@@ -1154,7 +1256,7 @@ export function apply (ctx: Context): void {
             const changesExecutionData = patch.title !== undefined || patch.desc !== undefined || patch.type !== undefined ||
               patch.originalRequirement !== undefined || patch.priority !== undefined || patch.labels !== undefined ||
               patch.parentId !== undefined || patch.iteration !== undefined || patch.executionMode !== undefined ||
-              patch.status !== undefined
+              patch.status !== undefined || patch.dependencies !== undefined
             if (changesExecutionData && executionActive(executionStateOf(item))) {
               send(res, 409, { error: '执行中的工作项不能编辑或手动改变环节' })
               return
@@ -1184,6 +1286,11 @@ export function apply (ctx: Context): void {
               else item.iteration = patch.iteration
             }
             if (patch.executionMode !== undefined) item.executionMode = patch.executionMode
+            if (patch.dependencies !== undefined) {
+              if (patch.dependencies === null) delete item.dependencies
+              else item.dependencies = patch.dependencies
+              pushTimeline(item, { action: 'note', note: '更新了任务依赖' })
+            }
             if (patch.status !== undefined && patch.status !== item.status) {
               pushTimeline(item, { action: 'moved', from: item.status, to: patch.status })
               item.status = patch.status
@@ -1338,6 +1445,12 @@ export function apply (ctx: Context): void {
                   return
                 }
               }
+              // 依赖闸门：本任务的前置依赖（after 目标 / 声明本任务在其之前的任务）必须已完成集成。
+              const unmetDeps = dependencyGateUnmet(board, item)
+              if (unmetDeps.length > 0) {
+                send(res, 409, { error: `依赖任务未完成：${unmetDeps.map(task => task.title).join('、')}` })
+                return
+              }
               const firstRun = item.sessionId === undefined
               // AI 流程项首次执行一定从第一列出发（确认前被锁定），重试时不推进。
               await startExecution(ctx, file, board, item, {
@@ -1484,6 +1597,15 @@ export function apply (ctx: Context): void {
               // 防御加固：清除分析期 Agent 在 worktree 中的误写（快照含用户未提交改动，无损）。
               if (item.taskWorkspace !== undefined) {
                 await resetTaskWorkspaceWorkingTree(item.taskWorkspace).catch(() => {})
+              }
+              // 依赖闸门：前置任务未完成时不启动，方案保持 confirmed，其完成后自动开始执行。
+              const unmetDeps = dependencyGateUnmet(board, item)
+              if (unmetDeps.length > 0) {
+                pushTimeline(item, { action: 'note', note: `方案已确认；依赖任务未完成（${unmetDeps.map(task => task.title).join('、')}），将在其完成后自动开始执行` })
+                touch(board, item)
+                await saveBoards(file)
+                send(res, 200, { item })
+                return
               }
               // 先落盘 confirmed 再启动执行：启动失败（如非 Git）保持 confirmed 可经 run 重试。
               await startExecution(ctx, file, board, item, {

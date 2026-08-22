@@ -73,6 +73,38 @@ describe('taskboard request validation', () => {
     expect(() => validateAiAnalysisBody(undefined)).toThrow('analysis 必须是对象')
   })
 
+  it('validates task dependencies：自引用/重复/越界/无效类型/不存在任务', () => {
+    const board = createBoard('project', '/tmp/project', '项目')
+    const a = createItemFromBody(board, itemBody('任务 A'))
+    const b = createItemFromBody(board, itemBody('任务 B'))
+    board.items.push(a, b)
+    // 有效列表原样接受（before/after/parallel）
+    const c = createItemFromBody(board, {
+      ...itemBody('任务 C'),
+      dependencies: [{ taskId: a.id, type: 'before' }, { taskId: b.id, type: 'after' }]
+    })
+    expect(c.dependencies).toEqual([{ taskId: a.id, type: 'before' }, { taskId: b.id, type: 'after' }])
+    // 不传 / 空数组 → 无依赖
+    expect(createItemFromBody(board, itemBody('无依赖')).dependencies).toBeUndefined()
+    expect(createItemFromBody(board, { ...itemBody('空数组'), dependencies: [] }).dependencies).toBeUndefined()
+    // 自引用（PATCH 路径）→ 400
+    expect(() => validateItemPatch(board, a, { dependencies: [{ taskId: a.id, type: 'after' }] })).toThrow('不能依赖自身')
+    // 重复关联同一任务 → 400
+    expect(() => validateItemPatch(board, a, { dependencies: [{ taskId: b.id, type: 'before' }, { taskId: b.id, type: 'after' }] })).toThrow('不能重复关联')
+    // 目标不在当前看板 → 400
+    expect(() => validateItemPatch(board, a, { dependencies: [{ taskId: 'nope', type: 'after' }] })).toThrow('不在当前看板中')
+    // 无效类型 → 400
+    expect(() => validateItemPatch(board, a, { dependencies: [{ taskId: b.id, type: 'during' }] })).toThrow('type 无效')
+    // null 清空依赖
+    expect(validateItemPatch(board, a, { dependencies: null })).toEqual({ dependencies: null })
+    // 最多 10 项
+    const others = Array.from({ length: 10 }, (_, index) => createItemFromBody(board, itemBody(`依赖目标 ${index}`)))
+    board.items.push(...others)
+    const ten = others.map(task => ({ taskId: task.id, type: 'after' }))
+    expect(validateItemPatch(board, a, { dependencies: ten }).dependencies).toHaveLength(10)
+    expect(() => validateItemPatch(board, a, { dependencies: [...ten, { taskId: b.id, type: 'after' }] })).toThrow('最多 10 项')
+  })
+
   it('normalizePreviewUrls 把 localhost 完整地址归一化为相对路径（预览基地址由看板统一管理）', () => {
     expect(normalizePreviewUrls(['http://localhost:5174/about/', '/blog/'])).toEqual(['/about/', '/blog/'])
     expect(normalizePreviewUrls(['http://127.0.0.1:4300/now/'])).toEqual(['/now/'])

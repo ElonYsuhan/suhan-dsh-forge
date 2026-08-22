@@ -120,6 +120,11 @@
 }
 
 .projectSelect {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
   border: 1px solid var(--dsw-alias-border-l2);
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-3);
@@ -129,7 +134,14 @@
   padding: 6px 10px;
   max-width: 200px;
 }
-.projectSelect:focus { border-color: var(--dsw-alias-brand-primary); }
+.projectSelect > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.projectSelect[data-state='open'] { border-color: var(--dsw-alias-brand-primary); }
 .shell :is(button, select):focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);
   outline-offset: 2px;

@@ -5,10 +5,11 @@
  * 补充需求重新分析 / 确认并执行；已确认及之后 → 只读冻结方案。
  */
 import { useState } from 'react'
-import { creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
+import * as Dialog from '@radix-ui/react-dialog'
+import * as ToggleGroup from '@radix-ui/react-toggle-group'
+import { DEPENDENCY_LABELS, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type DependencyType, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
 import css from './ItemDetail.module.css'
 import { MarkdownView } from './MarkdownView.tsx'
-import { useDialogFocus } from './useDialogFocus.ts'
 import type { LivePreviewResponse } from './api.ts'
 
 /** Detail panel surface props. */
@@ -55,6 +56,13 @@ const ACTION_LABEL: Record<string, string> = {
   note: '备注'
 }
 
+/** 依赖类型在本任务视角下的含义 */
+const DEPENDENCY_HINT: Record<DependencyType, string> = {
+  before: '本任务完成后自动开始该任务',
+  after: '该任务完成后自动开始本任务',
+  parallel: '无顺序约束'
+}
+
 const STATE_LABEL: Record<string, string> = {
   idle: '未执行',
   running: 'AI 执行中',
@@ -81,7 +89,6 @@ function splitLines (value: string): string[] {
  * @param props - the item, its board, and action callbacks.
  */
 export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, livePreview, readOnly, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
-  const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
   const executionMode = executionModeOf(item)
@@ -92,25 +99,22 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
   const active = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing'
 
   return (
-    <div className={css.mask} onClick={onClose}>
-      <aside
-        className={css.detail}
-        ref={detailRef}
-        role='dialog'
-        aria-modal='true'
-        aria-label='工作项详情'
-        tabIndex={-1}
-        onClick={event => event.stopPropagation()}
-      >
-        <header className={css.head}>
-          <div className={css.headMain}>
-            <span className={css.typeBadge} style={{ color: typeDef?.color, borderColor: typeDef?.color }}>
-              {typeDef?.label ?? item.type}
-            </span>
-            <h3 className={css.title}>{item.title}</h3>
-          </div>
-          <button type='button' className={css.closeBtn} onClick={onClose} aria-label='关闭详情'>✕</button>
-        </header>
+    <Dialog.Root open onOpenChange={open => { if (!open) onClose() }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className={css.mask} />
+        <div className={css.layer}>
+          <Dialog.Content className={css.detail} aria-label='工作项详情'>
+            <header className={css.head}>
+              <div className={css.headMain}>
+                <span className={css.typeBadge} style={{ color: typeDef?.color, borderColor: typeDef?.color }}>
+                  {typeDef?.label ?? item.type}
+                </span>
+                <h3 className={css.title}>{item.title}</h3>
+              </div>
+              <Dialog.Close asChild>
+                <button type='button' className={css.closeBtn} aria-label='关闭详情'>✕</button>
+              </Dialog.Close>
+            </header>
 
         <dl className={css.fields}>
           <div className={css.fieldRow}><dt>环节</dt><dd>{statusLabel}</dd></div>
@@ -123,6 +127,21 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
           )}
           {item.labels.length > 0 && (
             <div className={css.fieldRow}><dt>标签</dt><dd>{item.labels.join('、')}</dd></div>
+          )}
+          {(item.dependencies ?? []).length > 0 && item.dependencies !== undefined && (
+            item.dependencies.map((dep, index) => {
+              const target = board.items.find(i => i.id === dep.taskId)
+              return (
+                <div className={css.fieldRow} key={`${dep.taskId}-${index}`} data-testid='taskboard-dep-row'>
+                  <dt>任务依赖</dt>
+                  <dd className={css.depEntry}>
+                    <span className={css.depBadge}>{DEPENDENCY_LABELS[dep.type]}</span>
+                    {target?.title ?? dep.taskId}
+                    <span className={css.depHint}>（{DEPENDENCY_HINT[dep.type]}）</span>
+                  </dd>
+                </div>
+              )
+            })
           )}
           {item.sessionId !== undefined && (
             <div className={css.fieldRow}><dt>会话</dt><dd className={css.mono}>{item.sessionId}</dd></div>
@@ -270,8 +289,10 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
             </section>
           </section>
         </div>
-      </aside>
-    </div>
+          </Dialog.Content>
+        </div>
+      </Dialog.Portal>
+    </Dialog.Root>
   )
 }
 
@@ -435,24 +456,17 @@ function MdField ({ label, value, onChange, rows, list }: {
     <div className={css.planField}>
       <div className={css.planFieldHead}>
         <span className={css.planLabel}>{label}</span>
-        <span className={css.planModeSwitch} role='group' aria-label={`${label}：编辑或预览`}>
-          <button
-            type='button'
-            className={editing ? css.planModeOn : undefined}
-            onClick={() => setEditing(true)}
-            aria-pressed={editing}
-          >
-            编辑
-          </button>
-          <button
-            type='button'
-            className={editing ? undefined : css.planModeOn}
-            onClick={() => setEditing(false)}
-            aria-pressed={!editing}
-          >
-            预览
-          </button>
-        </span>
+        <ToggleGroup.Root
+          type='single'
+          className={css.planModeSwitch}
+          value={editing ? 'edit' : 'preview'}
+          onValueChange={value => { if (value === 'edit' || value === 'preview') setEditing(value === 'edit') }}
+          aria-label={`${label}：编辑或预览`}
+          data-testid={`taskboard-plan-mode-${label}`}
+        >
+          <ToggleGroup.Item value='edit' className={editing ? css.planModeOn : undefined}>编辑</ToggleGroup.Item>
+          <ToggleGroup.Item value='preview' className={editing ? undefined : css.planModeOn}>预览</ToggleGroup.Item>
+        </ToggleGroup.Root>
       </div>
       {editing
         ? (

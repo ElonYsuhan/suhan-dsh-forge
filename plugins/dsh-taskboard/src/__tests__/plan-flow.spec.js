@@ -471,4 +471,247 @@ describe('方案生成流程（先生成方案、后执行）', () => {
     expect(retryRunResponse.body.item.creationState).toBe('executing')
     expect(create).toHaveBeenCalledTimes(4) // 分析(×3) + 补齐 worktree 后换新执行会话
   })
+
+  it('任务依赖：前置未完成拦截执行，前置完成后自动串联执行', async () => {
+    let route
+    const toolsByName = {}
+    let liveAgent
+    const followup = vi.fn()
+    const idleResolvers = []
+    const attachSession = vi.fn(async () => {})
+    const detachSession = vi.fn(async () => {})
+    const registeredByPath = new Map()
+    const registeredById = new Map()
+    let workspaceCounter = 0
+    const createWorkspace = vi.fn(async (path, title) => {
+      const workspace = {
+        id: `task-workspace-${++workspaceCounter}`,
+        path,
+        title,
+        sessionIds: [],
+        attachSession,
+        detachSession
+      }
+      registeredByPath.set(path, workspace)
+      registeredById.set(workspace.id, workspace)
+      return workspace
+    })
+    const deleteWorkspace = vi.fn(async id => {
+      const workspace = registeredById.get(id)
+      if (workspace === undefined) return false
+      registeredById.delete(id)
+      registeredByPath.delete(workspace.path)
+      return true
+    })
+    const archiveSession = vi.fn(async () => {})
+    const mountPreset = vi.fn(async () => {})
+    const logError = vi.fn()
+    // 多任务链：每个会话单独建档，按 sessionId 精确取回（startExecution 的 resolveTaskAgent 复用分析会话）。
+    const agentsById = new Map()
+    const create = vi.fn(async options => {
+      await options.setup({})
+      let resolveAgentIdle
+      const agentIdle = new Promise(resolve => {
+        resolveAgentIdle = resolve
+      })
+      idleResolvers.push(resolveAgentIdle)
+      const agent = {
+        id: options.sessionId,
+        session: { header: { agentPreset: options.meta.agentPreset } },
+        followup,
+        whenIdle: vi.fn(() => agentIdle),
+        cancel: vi.fn(() => resolveAgentIdle())
+      }
+      agentsById.set(options.sessionId, agent)
+      liveAgent = agent
+      return { agent, dispose: vi.fn(async () => {}) }
+    })
+    const ctx = {
+      logger: vi.fn(() => ({ error: logError })),
+      effect (factory) {
+        factory()
+      },
+      get (name) {
+        if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'test', model: 'test-model' }) }
+        if (name === 'agentPresets') return { resolve: async () => ({ id: 'standard' }), mount: mountPreset }
+        return undefined
+      },
+      tools: {
+        register (tool) {
+          toolsByName[tool.name] = tool
+          return () => {}
+        }
+      },
+      webServer: {
+        register (registration) {
+          route = registration.handler
+          return () => {}
+        }
+      },
+      workspaceRegistry: {
+        list: () => [{ id: 'workspace-1', path: dataDir, title: '测试项目', sessionIds: [] }],
+        resolveByPath: async path => registeredByPath.get(path),
+        create: createWorkspace,
+        get: id => registeredById.get(id),
+        delete: deleteWorkspace,
+        archiveSession
+      },
+      agents: { create, get: id => agentsById.get(String(id)) ?? liveAgent },
+      sessions: { flush: vi.fn(async () => {}) }
+    }
+    apply(ctx)
+
+    const findItem = async id => {
+      const boards = response()
+      await route(request('GET', '/taskboard/boards'), boards)
+      return boards.body.boards['workspace-1'].items.find(item => item.id === id)
+    }
+    const createDraft = async (requirement, dependencies) => {
+      const res = response()
+      await route(request('POST', '/taskboard/boards/workspace-1/items', {
+        type: 'task', title: '', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto',
+        originalRequirement: requirement, dependencies
+      }), res)
+      expect(res.status).toBe(200)
+      return res.body.item
+    }
+    const analyzeAndConfirm = async item => {
+      const analyzeRes = response()
+      await route(request('POST', `/taskboard/boards/workspace-1/items/${item.id}/analyze`), analyzeRes)
+      expect(analyzeRes.status).toBe(200)
+      const analyzed = analyzeRes.body.item
+      const toolResult = await toolsByName.taskboard_analysis.execute(ANALYSIS, { agent: agentsById.get(analyzed.sessionId) })
+      expect(toolResult).toContain('待确认')
+      const confirmRes = response()
+      await route(request('POST', `/taskboard/boards/workspace-1/items/${item.id}/confirm-plan`, { analysis: ANALYSIS }), confirmRes)
+      return confirmRes
+    }
+    const deliver = async item => {
+      const progress = await toolsByName.taskboard_progress.execute({
+        outcome: 'delivery_ready',
+        summary: '交付完成',
+        previewUrls: ['/taskboard/boards']
+      }, { agent: agentsById.get(item.sessionId) })
+      expect(progress).toContain('验收')
+      const confirm = response()
+      await route(request('POST', `/taskboard/boards/workspace-1/items/${item.id}/confirm-delivery`), confirm)
+      expect(confirm.status).toBe(200)
+      expect(confirm.body.item.integrationState).toBe('merged')
+      expect(confirm.body.item.archived).toBe(true)
+    }
+    const timelineHas = (item, text) => item.timeline.some(entry => entry.note?.includes(text))
+
+    // ── 创建任务链：C（before A，A 等 C）→ A → B（after A，B 等 A）；D 未确认方案 ──
+    const a = await createDraft('任务 A：基础能力')
+    const c = await createDraft('任务 C：前置工作', [{ taskId: a.id, type: 'before' }])
+    expect(c.dependencies).toEqual([{ taskId: a.id, type: 'before' }])
+    const b = await createDraft('任务 B：后续能力', [{ taskId: a.id, type: 'after' }])
+    expect(b.dependencies).toEqual([{ taskId: a.id, type: 'after' }])
+    const d = await createDraft('任务 D：跳过执行', [{ taskId: c.id, type: 'after' }])
+    expect(d.dependencies).toEqual([{ taskId: c.id, type: 'after' }])
+    // 创建期校验：目标不在当前看板 → 400
+    const badDep = response()
+    await route(request('POST', '/taskboard/boards/workspace-1/items', {
+      type: 'task', title: '', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto',
+      originalRequirement: '无效依赖', dependencies: [{ taskId: 'not-a-task', type: 'after' }]
+    }), badDep)
+    expect(badDep.status).toBe(400)
+    expect(badDep.body.error).toContain('不在当前看板中')
+
+    // 草稿阶段 run 先被方案生成闸门拦截（AI 流程闸门先于依赖闸门）
+    const bDraftRun = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${b.id}/run`), bDraftRun)
+    expect(bDraftRun.status).toBe(409)
+    expect(bDraftRun.body.error).toContain('任务方案生成')
+
+    // ── 分析并确认：B 被 A 拦截、A 被 C 拦截（保留 confirmed 不执行），C 正常执行 ──
+    const confirmB = await analyzeAndConfirm(b)
+    expect(confirmB.status).toBe(200)
+    expect(confirmB.body.item.creationState).toBe('confirmed')
+    expect(confirmB.body.item.executionState).toBe('idle')
+    expect(confirmB.body.item.status).toBe('todo')
+    expect(confirmB.body.item.frozenPlan).toContain('# 登录功能')
+    expect(timelineHas(confirmB.body.item, '依赖任务未完成')).toBe(true)
+
+    const confirmA = await analyzeAndConfirm(a)
+    expect(confirmA.status).toBe(200)
+    expect(confirmA.body.item.creationState).toBe('confirmed')
+    expect(confirmA.body.item.executionState).toBe('idle')
+    expect(timelineHas(confirmA.body.item, '依赖任务未完成')).toBe(true)
+
+    const confirmC = await analyzeAndConfirm(c)
+    expect(confirmC.status).toBe(200)
+    expect(confirmC.body.item.creationState).toBe('executing')
+    expect(confirmC.body.item.executionState).toBe('running')
+    expect(confirmC.body.item.status).toBe('in-dev')
+    expect(create).toHaveBeenCalledTimes(3) // 三张卡各一次分析会话
+
+    // 已确认但前置未完成：run 被依赖闸门拦截，给出明确依赖名单（显示确认后的标题）
+    const bRunBlocked = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${b.id}/run`), bRunBlocked)
+    expect(bRunBlocked.status).toBe(409)
+    expect(bRunBlocked.body.error).toContain('依赖任务未完成')
+    expect(bRunBlocked.body.error).toContain(confirmA.body.item.title)
+    const aRunBlocked = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${a.id}/run`), aRunBlocked)
+    expect(aRunBlocked.status).toBe(409)
+    expect(aRunBlocked.body.error).toContain('依赖任务未完成')
+    expect(aRunBlocked.body.error).toContain(confirmC.body.item.title)
+
+    // 依赖配置支持 PATCH 修改；自引用被拒绝；null 清空
+    const selfDep = response()
+    await route(request('PATCH', `/taskboard/boards/workspace-1/items/${a.id}`, { dependencies: [{ taskId: a.id, type: 'after' }] }), selfDep)
+    expect(selfDep.status).toBe(400)
+    expect(selfDep.body.error).toContain('不能依赖自身')
+    const addParallel = response()
+    await route(request('PATCH', `/taskboard/boards/workspace-1/items/${a.id}`, { dependencies: [{ taskId: c.id, type: 'parallel' }] }), addParallel)
+    expect(addParallel.status).toBe(200)
+    expect(addParallel.body.item.dependencies).toEqual([{ taskId: c.id, type: 'parallel' }])
+    expect(timelineHas(addParallel.body.item, '更新了任务依赖')).toBe(true)
+    const clearDeps = response()
+    await route(request('PATCH', `/taskboard/boards/workspace-1/items/${a.id}`, { dependencies: null }), clearDeps)
+    expect(clearDeps.status).toBe(200)
+    expect(clearDeps.body.item.dependencies).toBeUndefined()
+
+    // 执行指令已在确认时发出（C 的执行依据）
+    expect(followup).toHaveBeenCalledTimes(4)
+    expect(followup.mock.calls[3][0].content[0].text).toContain('【执行依据】')
+
+    // ── C 完成并集成 → A 自动开始执行；D 方案未确认被跳过 ──
+    idleResolvers[2]() // C 会话停稳
+    await deliver(confirmC.body.item)
+    const autoA = await findItem(a.id)
+    expect(autoA.status).toBe('in-dev')
+    expect(autoA.creationState).toBe('executing')
+    expect(autoA.executionState).toBe('running')
+    expect(autoA.sessionId).toBe(confirmA.body.item.sessionId) // 复用分析会话，无新会话
+    expect(timelineHas(autoA, `前置任务「${confirmC.body.item.title}」已完成并集成，依赖满足，自动开始执行`)).toBe(true)
+    expect(timelineHas(autoA, '前置任务完成，自动开始执行')).toBe(true)
+    const autoD = await findItem(d.id)
+    expect(autoD.status).toBe('todo')
+    expect(autoD.creationState).toBe('draft')
+    expect(timelineHas(autoD, '方案未确认')).toBe(true)
+    expect(create).toHaveBeenCalledTimes(3) // 自动执行复用各卡分析会话
+    expect(followup).toHaveBeenCalledTimes(5)
+    expect(followup.mock.calls[4][0].content[0].text).toContain('【执行依据】') // A 自动执行
+
+    // ── A 完成并集成 → B 自动开始执行 ──
+    idleResolvers[1]() // A 会话停稳
+    await deliver(confirmA.body.item)
+    const autoB = await findItem(b.id)
+    expect(autoB.status).toBe('in-dev')
+    expect(autoB.creationState).toBe('executing')
+    expect(autoB.executionState).toBe('running')
+    expect(autoB.sessionId).toBe(confirmB.body.item.sessionId) // 复用分析会话
+    expect(timelineHas(autoB, `前置任务「${confirmA.body.item.title}」已完成并集成，依赖满足，自动开始执行`)).toBe(true)
+    expect(create).toHaveBeenCalledTimes(3)
+    expect(followup).toHaveBeenCalledTimes(6)
+    expect(followup.mock.calls[5][0].content[0].text).toContain('【执行依据】') // B 自动执行
+
+    // 自动执行中 run 被「已有进行中的执行」拦截
+    const bRunDuringAuto = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${b.id}/run`), bRunDuringAuto)
+    expect(bRunDuringAuto.status).toBe(409)
+    expect(bRunDuringAuto.body.error).toContain('已有进行中的执行')
+  })
 })

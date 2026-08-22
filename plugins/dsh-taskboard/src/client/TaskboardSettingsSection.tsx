@@ -8,6 +8,7 @@ import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import { fetchBoards, saveSettings, type BoardsResponse } from './api.ts'
 import { SettingsForm } from './SettingsForm.tsx'
+import { UiSelect } from './ui/Select.tsx'
 import type { Board, ColumnDef, ItemTypeDef } from '../shared/types.ts'
 import css from './TaskboardSettingsSection.module.css'
 
@@ -97,22 +98,21 @@ export function TaskboardSettingsSection (_props: TaskboardSettingsSectionProps)
                 : (
                   <>
                     <div className={css.projectBar}>
-                      <label className={css.projectLabel} htmlFor='taskboard-settings-project'>项目</label>
-                      <select
-                        id='taskboard-settings-project'
+                      <span className={css.projectLabel} id='taskboard-settings-project-label'>项目</span>
+                      <UiSelect
                         className={css.projectSelect}
                         value={currentKey ?? ''}
-                        onChange={ev => {
-                          setCurrentKey(ev.target.value)
+                        onValueChange={key => {
+                          setCurrentKey(key)
                           setFormVersion(version => version + 1)
                           setError(null)
                           setNotice(null)
                         }}
-                      >
-                        {data.workspaces.map(workspace => (
-                          <option key={workspace.id} value={workspace.id}>{workspace.title}</option>
-                        ))}
-                      </select>
+                        options={data.workspaces.map(workspace => ({ value: workspace.id, label: workspace.title }))}
+                        placeholder='请选择项目'
+                        ariaLabel='项目'
+                        dataTestId='taskboard-settings-project'
+                      />
                     </div>
                     {board === null
                       ? <div className={css.empty}>该项目暂无看板。</div>

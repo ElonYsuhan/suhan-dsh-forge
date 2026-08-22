@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { HttpError } from './http.ts'
-import type { AiAnalysis, Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from './shared/types.ts'
+import type { AiAnalysis, Board, ColumnDef, DependencyType, ExecutionMode, ItemTypeDef, Priority, TaskDependency, WorkItem } from './shared/types.ts'
 
 const PRIORITIES = new Set<Priority>(['low', 'medium', 'high', 'urgent'])
 const IDENTIFIER = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/
@@ -90,9 +90,39 @@ export function normalizePreviewUrls (value: unknown): string[] | undefined {
   return urls.length === 0 ? undefined : urls
 }
 
+/** 依赖类型展示名（shared/types 提供，客户端共用）。 */
+export { DEPENDENCY_LABELS } from './shared/types.ts'
+
+/**
+ * 校验任务依赖列表（A 关联 B，本任务视角）：
+ * 最多 10 项、taskId 不重复、不得以自身为依赖、目标必须是同看板内工作项。
+ */
+export function dependencies (board: Board, itemId: string, value: unknown): TaskDependency[] {
+  if (value === undefined) return []
+  if (value === null) return []
+  if (!Array.isArray(value) || value.length > 10) throw new HttpError(400, 'dependencies 必须是最多 10 项的数组')
+  const byId = new Map(board.items.map(item => [item.id, item]))
+  const result: TaskDependency[] = []
+  const seen = new Set<string>()
+  for (const [index, entry] of value.entries()) {
+    if (!isObject(entry)) throw new HttpError(400, `dependencies[${index}] 必须是对象`)
+    const taskId = text(entry.taskId, `dependencies[${index}].taskId`, 128, false)
+    if (taskId === itemId) throw new HttpError(400, '任务不能依赖自身')
+    if (seen.has(taskId)) throw new HttpError(400, 'dependencies 不能重复关联同一任务')
+    if (byId.get(taskId) === undefined) throw new HttpError(400, `依赖任务 ${taskId} 不在当前看板中`)
+    if (entry.type !== 'before' && entry.type !== 'after' && entry.type !== 'parallel') {
+      throw new HttpError(400, `dependencies[${index}].type 无效`)
+    }
+    seen.add(taskId)
+    result.push({ taskId, type: entry.type as DependencyType })
+  }
+  return result
+}
+
 export function createItemFromBody (board: Board, body: unknown): WorkItem {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
   const now = new Date().toISOString()
+  const id = randomUUID()
   const mode: ExecutionMode = body.executionMode === 'review' ? 'review' : 'auto'
   // 方案生成流程：标题与原始需求互为空兜底（只填标题 → 以标题为需求；
   // 只填需求 → 标题取需求首行；都空 → 400）。新工作项一律落在第一列（创意想法）。
@@ -107,8 +137,9 @@ export function createItemFromBody (board: Board, body: unknown): WorkItem {
     : text(body.title, 'title', 200, false)
   const requirementText = rawRequirement === '' ? title : rawRequirement
   if (title === '' && requirementText === '') throw new HttpError(400, '请填写标题或想法描述')
+  const deps = dependencies(board, id, body.dependencies)
   return {
-    id: randomUUID(),
+    id,
     type: itemType(board, body.type),
     title,
     desc: requirementText,
@@ -122,6 +153,7 @@ export function createItemFromBody (board: Board, body: unknown): WorkItem {
     iteration: body.iteration === undefined || body.iteration === null || body.iteration === '' ? undefined : text(body.iteration, 'iteration', 120, false),
     executionMode: mode,
     executionState: 'idle',
+    dependencies: deps.length === 0 ? undefined : deps,
     timeline: [],
     createdAt: now,
     updatedAt: now,
@@ -140,12 +172,13 @@ export interface ValidItemPatch {
   iteration?: string | null
   executionMode?: ExecutionMode
   status?: string
+  dependencies?: TaskDependency[] | null
   note?: string
 }
 
 export function validateItemPatch (board: Board, item: WorkItem, body: unknown): ValidItemPatch {
   if (!isObject(body)) throw new HttpError(400, '请求体必须是对象')
-  const allowed = new Set(['title', 'desc', 'originalRequirement', 'type', 'priority', 'labels', 'parentId', 'iteration', 'executionMode', 'status', 'meta'])
+  const allowed = new Set(['title', 'desc', 'originalRequirement', 'type', 'priority', 'labels', 'parentId', 'iteration', 'executionMode', 'status', 'dependencies', 'meta'])
   if (Object.keys(body).some(key => !allowed.has(key))) throw new HttpError(400, '请求体包含不支持的字段')
   const patch: ValidItemPatch = {}
   if ('title' in body) patch.title = text(body.title, 'title', 200, false)
@@ -161,6 +194,10 @@ export function validateItemPatch (board: Board, item: WorkItem, body: unknown):
     patch.executionMode = body.executionMode
   }
   if ('status' in body) patch.status = status(board, body.status, false)
+  if ('dependencies' in body) {
+    // null 表示清空依赖；数组走统一校验（自引用/重复/存在性/类型）
+    patch.dependencies = body.dependencies === null ? null : dependencies(board, item.id, body.dependencies)
+  }
   if ('meta' in body) {
     if (!isObject(body.meta) || (body.meta.note !== undefined && typeof body.meta.note !== 'string')) throw new HttpError(400, 'meta.note 必须是字符串')
     if (body.meta.note !== undefined) patch.note = text(body.meta.note, 'meta.note', 2_000)

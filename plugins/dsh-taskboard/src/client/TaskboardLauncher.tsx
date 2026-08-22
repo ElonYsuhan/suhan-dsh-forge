@@ -11,6 +11,7 @@ import { ItemDetail } from './ItemDetail.tsx'
 import { ItemEditor } from './ItemEditor.tsx'
 import { SettingsEditor } from './SettingsEditor.tsx'
 import { HistoryPanel } from './HistoryPanel.tsx'
+import { UiSelect } from './ui/Select.tsx'
 import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
 import { executionStateOf, type AiAnalysis } from '../shared/types.ts'
 import css from './TaskboardLauncher.module.css'
@@ -318,7 +319,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     void loadHistory(false)
   }
 
-  const handleSaveItem = async (input: ItemInput): Promise<void> => {
+  /** 保存工作项：新建时 generatePlan=true 走「创建 + 方案生成」，false 仅保存草稿（稍后再生成方案）。 */
+  const handleSaveItem = async (input: ItemInput, generatePlan = true): Promise<void> => {
     if (board === null || currentKey === null) return
     try {
       const editingItem = editor?.item ?? null
@@ -330,6 +332,11 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       setSelectedId(updated.id)
       setEditor(null)
       setError(null)
+      // 保存草稿：只创建，不启动方案生成（可随时打开详情生成）。
+      if (creating && generatePlan === false) {
+        setNotice('草稿已保存，可随时打开详情生成任务方案')
+        return
+      }
       // AI 创建流程：草稿创建后立即启动 AI 分析；失败仅留草稿（可稍后重试）。
       if (creating && (input.originalRequirement ?? '').trim() !== '') {
         try {
@@ -546,17 +553,15 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
             </div>
             <div className={css.headRight}>
               {data !== null && data.workspaces.length > 0 && (
-                <select
+                <UiSelect
                   className={css.projectSelect}
                   value={currentKey ?? ''}
-                  onChange={ev => handleSelectProject(ev.target.value)}
-                  aria-label='切换项目'
-                  data-testid='taskboard-project-select'
-                >
-                  {data.workspaces.map(w => (
-                    <option key={w.id} value={w.id}>{w.title}</option>
-                  ))}
-                </select>
+                  onValueChange={handleSelectProject}
+                  options={data.workspaces.map(w => ({ value: w.id, label: w.title }))}
+                  placeholder='切换项目'
+                  ariaLabel='切换项目'
+                  dataTestId='taskboard-project-select'
+                />
               )}
               {board !== null && (
                 <>
@@ -659,7 +664,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
           board={board}
           defaultStatus={editor.defaultStatus}
           onCancel={() => setEditor(null)}
-          onSave={input => handleSaveItem(input)}
+          onSave={(input, generatePlan) => handleSaveItem(input, generatePlan)}
         />
       )}
 

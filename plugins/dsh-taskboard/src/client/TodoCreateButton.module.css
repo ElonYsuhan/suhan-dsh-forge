@@ -22,11 +22,21 @@
   position: fixed;
   inset: 0;
   z-index: 70;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+}
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, .45);
-  backdrop-filter: blur(2px);
+  padding: 16px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.layer > * {
   pointer-events: auto;
 }
 .panel {
@@ -84,8 +94,23 @@
   padding: 7px 10px;
 }
 .input:focus,
-.textarea:focus,
-.select:focus { border-color: var(--dsw-alias-brand-primary); }
+.textarea:focus { border-color: var(--dsw-alias-brand-primary); }
+/* Radix Select Trigger：展开态用 data-state；flex 排布 值 + 箭头 */
+.select[data-state='open'] { border-color: var(--dsw-alias-brand-primary); }
+.select {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+.select > span:first-child {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .panel :is(button, input, select, textarea):focus-visible,
 .trigger:focus-visible {
   outline: 2px solid var(--dsw-alias-brand-primary);

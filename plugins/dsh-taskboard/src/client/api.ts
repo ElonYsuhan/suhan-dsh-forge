@@ -1,7 +1,7 @@
 /**
  * 需求看板 REST 客户端（同源，无 CORS）。
  */
-import type { AiAnalysis, Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, WorkItem } from '../shared/types.ts'
+import type { AiAnalysis, Board, ColumnDef, ExecutionMode, ItemTypeDef, Priority, TaskDependency, WorkItem } from '../shared/types.ts'
 
 /** workspace 元信息（来自 ctx.workspaceRegistry） */
 export interface WorkspaceMeta {
@@ -35,6 +35,8 @@ export interface ItemInput {
   iteration?: string | null | undefined
   status: string
   executionMode: ExecutionMode
+  /** 任务依赖（可选）：编辑时提交变更后的依赖列表；null 表示清空。 */
+  dependencies?: TaskDependency[] | null | undefined
 }
 
 async function jsonResponse<T> (res: Response, fallback: string): Promise<T> {
