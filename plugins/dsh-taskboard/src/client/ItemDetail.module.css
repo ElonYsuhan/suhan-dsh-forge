@@ -381,28 +381,6 @@
   background: var(--dsw-alias-bg-layer-1);
   word-break: break-word;
 }
-/* 待确认项卡片：固定在方案区最底部，不随方案滚动 */
-.pendingCard {
-  flex: none;
-  margin-top: 10px;
-  padding: 8px 10px;
-  border: 1px solid #fab219;
-  border-radius: 8px;
-  background: color-mix(in srgb, #fab219 8%, transparent);
-}
-.pendingCard strong {
-  font-size: 12px;
-  color: #b8860b;
-}
-.pendingCard ul {
-  margin: 4px 0 0;
-  padding-left: 18px;
-  font-size: 12px;
-  line-height: 1.55;
-  color: var(--dsw-alias-label-secondary);
-}
-.pendingCard li { margin: 2px 0; }
-
 /* 操作按钮保持一排：不换行，超宽横向滚动兜底；按钮自身文字也禁止折行 */
 .actions {
   display: flex;

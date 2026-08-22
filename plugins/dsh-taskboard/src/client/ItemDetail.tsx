@@ -293,8 +293,7 @@ function PlanPanel ({ item, creationState, busy, readOnly, onAnalyze, onConfirmP
     return <PlanConfirmEditor item={item} busy={busy} onAnalyze={onAnalyze} onConfirmPlan={onConfirmPlan} />
   }
   // confirmed / executing / completed（及历史任务只读）：冻结方案直接内嵌全文展示（无需弹窗）。
-  // 方案区占满中间大块，待确认项卡片固定在方案区最底部。
-  const pendingQuestions = item.aiAnalysis?.pendingQuestions ?? []
+  // 方案区占满中间大块；待确认项已包含在冻结方案全文里，不再单独展示卡片。
   return (
     <section className={`${css.planPanel} ${css.planPanelFill}`} data-testid='taskboard-plan-frozen'>
       <h4 className={css.planTitle}>{readOnly ? '任务方案' : '冻结方案（执行唯一依据）'}</h4>
@@ -310,16 +309,6 @@ function PlanPanel ({ item, creationState, busy, readOnly, onAnalyze, onConfirmP
             )
             : <p className={css.planHint}>该任务没有方案记录。</p>}
       </div>
-      {pendingQuestions.length > 0 && (
-        <div className={css.pendingCard}>
-          <strong>待确认项</strong>
-          <ul>
-            {pendingQuestions.map((question, index) => (
-              <li key={`${question}-${index}`}>{question}</li>
-            ))}
-          </ul>
-        </div>
-      )}
     </section>
   )
 }
