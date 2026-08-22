@@ -501,7 +501,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
               )}
               {board !== null && (
                 <>
-                  <button type='button' className={css.headBtn} onClick={() => setEditor({ item: null, defaultStatus: board.columns[0]?.id })}>＋ 新建工作项</button>
+                  <button type='button' className={`${css.headBtn} ${css.headBtnCreate}`} onClick={() => setEditor({ item: null, defaultStatus: board.columns[0]?.id })}>＋ 新建工作项</button>
                   <button
                     type='button'
                     className={css.headBtn}
