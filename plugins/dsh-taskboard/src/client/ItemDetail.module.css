@@ -46,7 +46,7 @@
 }
 .right {
   flex: none;
-  width: 390px;
+  width: 480px;
   min-height: 0;
   display: flex;
   flex-direction: column;
@@ -362,7 +362,7 @@
 }
 .pendingCard li { margin: 2px 0; }
 
-/* 操作按钮保持一排：不换行，超宽横向滚动 */
+/* 操作按钮保持一排：不换行，超宽横向滚动；按钮自身文字也禁止折行 */
 .actions {
   display: flex;
   flex-wrap: nowrap;
@@ -370,6 +370,10 @@
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
+}
+.actions :is(button, a) {
+  flex: none;
+  white-space: nowrap;
 }
 .runBtn,
 .sessionBtn,
