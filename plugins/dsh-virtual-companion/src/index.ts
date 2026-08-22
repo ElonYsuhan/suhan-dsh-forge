@@ -68,7 +68,8 @@ const MODEL_LABELS: Record<string, string> = {
 
 const MOTION_LABELS: Record<string, string> = {
   'i-love-you': '我爱你',
-  'vietnam-drum': '越南鼓甜舞'
+  'vietnam-drum': '越南鼓甜舞',
+  yaotounaonao: '摇头晃脑'
 }
 
 /** 模型静态资产内容类型（按扩展名）。 */
