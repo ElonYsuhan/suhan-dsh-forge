@@ -30,6 +30,7 @@ import {
 } from '@babylonjs/core'
 import { ShadowOnlyMaterial } from '@babylonjs/materials'
 import { PBRMaterialBuilder, RegisterMmdModelLoaders } from 'babylon-mmd'
+import { DEFAULT_BRIGHTNESS, DEFAULT_FACE_LIGHT } from '../shared/settings'
 import { ElegantIdle } from './ElegantIdle'
 import { VmdMotionPlayer } from './VmdMotionPlayer'
 
@@ -147,6 +148,9 @@ export class MMDCompanion {
   private smileMorph: string | undefined
   private vmdMorphs: VmdMorphTrack[] = []
   private faceLight: DirectionalLight | null = null
+  /** 面板亮度/面部光参数：setter 先落盘再应用，模型重新加载后回放。 */
+  private brightness = DEFAULT_BRIGHTNESS
+  private faceLightIntensity = DEFAULT_FACE_LIGHT
   private ground: Mesh | null = null
   private shadowGen: ShadowGenerator | null = null
   private speaking = false
@@ -426,6 +430,10 @@ export class MMDCompanion {
     this.applyUserTransform()
     this.resize()
     this.start()
+    // 光照参数在新模型加载完成后重新生效：面板同步回调只在设置变化时
+    // 触发，首次加载时 scene 尚未创建会被跳过，不能依赖「设置变化才同步」
+    this.setBrightness(this.brightness)
+    this.setFaceLight(this.faceLightIntensity)
     this.options.onStatus?.('ready')
   }
 
@@ -490,13 +498,15 @@ export class MMDCompanion {
   }
 
   setBrightness (brightness: number): void {
+    this.brightness = brightness
     const scene = this.scene
     if (scene === null) return
     scene.imageProcessingConfiguration.exposure = brightness
   }
 
   setFaceLight (intensity: number): void {
-    if (this.faceLight !== null) this.faceLight.intensity = Math.min(2, Math.max(0, intensity))
+    this.faceLightIntensity = Math.min(2, Math.max(0, intensity))
+    if (this.faceLight !== null) this.faceLight.intensity = this.faceLightIntensity
   }
 
   setSpeechLevel (level: number): void {

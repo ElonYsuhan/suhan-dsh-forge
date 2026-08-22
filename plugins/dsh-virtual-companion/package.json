@@ -1,7 +1,7 @@
 {
   "name": "@suhan-dsh/virtual-companion",
   "description": "DSH Web always-on-top draggable portrait companion with proactive voice chat",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

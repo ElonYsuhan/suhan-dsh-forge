@@ -5,9 +5,11 @@
  * - 人物形象为打包进插件的立绘 PNG（/virtual-companion/portrait），
  *   说话时以浮动缩放表达「在说话」；设置面板支持角色、背景、音色与流式回复
  */
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
-// Reka UI 系组件（Radix 同源）：Select 原生只在高亮项上按 Enter/点击才提交，
-// 这里在方向键移动高亮时即时应用当前项（不等 Enter 确认），模型下拉借此逐项实时换模。
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+// Reka UI 系组件（Radix 同源）：Select 原生只在高亮项上按 Enter/点击才提交；
+// 这里监听每一项的 DOM focus——高亮移动（键盘 ↑/↓、Home/End、鼠标悬停）与
+// onFocus 天然同步，focus 到哪项就即时应用哪项（不等 Enter 确认），
+// 模型下拉借此逐项实时换模。
 import * as Select from '@radix-ui/react-select'
 import * as Slider from '@radix-ui/react-slider'
 import * as Switch from '@radix-ui/react-switch'
@@ -84,21 +86,13 @@ interface PanelSelectProps {
  * 触发器聚焦后 ↑/↓ 键移动高亮即实时应用该项（不等 Enter 确认），
  * 模型下拉借此实现上下键逐项实时换模。
  *
- * Radix 只在 Enter/点击时提交 onValueChange，方向键只移动高亮；这里在
- * Content 上拦截方向键，等 Radix 更新完 data-highlighted 后从 DOM 读出
- * 当前高亮项并立即回调，Enter 再按只幂等提交并关闭浮层。
+ * Radix 只在 Enter/点击时提交 onValueChange，方向键/悬停只移动 DOM focus；
+ * 这里监听每项的 onFocus——焦点移动到哪项就立即回调哪项的值（值相同则跳过，
+ * 如浮层打开时 Radix 聚焦当前选中项）。Enter 再按只幂等提交并关闭浮层。
+ * 注意不能用 rAF 轮询 data-highlighted：Radix 移动焦点走 setTimeout，
+ * 与 rAF 的先后顺序依赖浏览器调度，会造成场景落后一次按键。
  */
 function PanelSelect ({ value, onValueChange, ariaLabel, items, disabled, testId }: PanelSelectProps) {
-  const handleContentKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
-    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp' && event.key !== 'Home' && event.key !== 'End') return
-    // Radix 在事件处理后才把高亮移到新项，下一帧读取保证拿到移动后的结果
-    const content = event.currentTarget
-    requestAnimationFrame(() => {
-      const highlighted = content.querySelector('[data-highlighted]')
-      const next = highlighted?.getAttribute('data-vc-value')
-      if (next !== undefined && next !== null && next !== value) onValueChange(next)
-    })
-  }
   return (
     <Select.Root value={value} onValueChange={onValueChange} {...(disabled === true ? { disabled: true } : {})}>
       <Select.Trigger className={css.selectTrigger} aria-label={ariaLabel} data-testid={testId}>
@@ -106,10 +100,17 @@ function PanelSelect ({ value, onValueChange, ariaLabel, items, disabled, testId
         <Select.Icon className={css.selectIcon}>▾</Select.Icon>
       </Select.Trigger>
       <Select.Portal>
-        <Select.Content className={css.selectContent} position='popper' sideOffset={4} onKeyDown={handleContentKeyDown}>
+        <Select.Content className={css.selectContent} position='popper' sideOffset={4}>
           <Select.Viewport className={css.selectViewport}>
             {items.map(item => (
-              <Select.Item key={item.value} value={item.value} className={css.selectItem} data-vc-value={item.value}>
+              <Select.Item
+                key={item.value}
+                value={item.value}
+                className={css.selectItem}
+                onFocus={() => {
+                  if (item.value !== value) onValueChange(item.value)
+                }}
+              >
                 <Select.ItemText>{item.label}</Select.ItemText>
                 <Select.ItemIndicator className={css.selectItemIndicator}>✓</Select.ItemIndicator>
               </Select.Item>
