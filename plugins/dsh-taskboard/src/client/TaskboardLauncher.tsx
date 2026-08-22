@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
-import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
+import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, fetchPreviewBase, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
@@ -62,6 +62,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [running, setRunning] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
+  /** 页面预览基地址（项目 dev server）；解析失败时带原因。 */
+  const [previewBase, setPreviewBase] = useState<{ baseUrl: string | null; error?: string | undefined } | null>(null)
 
   const closeAll = useCallback((): void => {
     setOpen(false)
@@ -180,6 +182,25 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     (selected.taskWorkspace !== undefined || selected.commitRef !== undefined)
     ? `/taskboard/boards/${encodeURIComponent(board.projectKey)}/items/${encodeURIComponent(selected.id)}/preview`
     : undefined
+
+  /** 选中任务时解析页面预览基地址（项目 dev server），相对路径拼成完整可打开地址。 */
+  useEffect(() => {
+    if (currentKey === null || selected === null || (selected.previewUrls ?? []).length === 0) {
+      setPreviewBase(null)
+      return
+    }
+    let cancelled = false
+    void fetchPreviewBase(currentKey).then(result => {
+      if (!cancelled) setPreviewBase(result)
+    }).catch(err => {
+      if (!cancelled) setPreviewBase({ baseUrl: null, error: err instanceof Error ? err.message : String(err) })
+    })
+    return () => { cancelled = true }
+  }, [currentKey, selected])
+
+  /** 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。 */
+  const resolvedPreviewUrls: string[] = (selected?.previewUrls ?? []).map(url =>
+    /^https?:\/\//.test(url) ? url : `${previewBase?.baseUrl ?? ''}${url}`)
 
   /** 局部更新：看板里某项不存在则追加（新建），存在则替换（更新/流转/执行） */
   const patchBoardItem = useCallback((key: string, updated: WorkItem): void => {
@@ -543,6 +564,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                       parentTitle={selected.parentId === undefined ? undefined : board.items.find(i => i.id === selected.parentId)?.title}
                       busy={running}
                       previewUrl={previewUrl}
+                      pagePreviewUrls={resolvedPreviewUrls}
+                      previewBaseError={previewBase?.error}
                       onClose={() => setSelectedId(null)}
                       onEdit={() => setEditor({ item: selected })}
                       onDelete={() => setDeleteTarget(selected)}

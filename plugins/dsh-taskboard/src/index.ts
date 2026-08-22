@@ -35,6 +35,7 @@ import { createBoard, creationStateOf, executionModeOf, executionStateOf, isAiFl
 import { readStoredBoards, taskboardDataPaths, TaskboardDataError } from './storage.ts'
 import { commitTaskWorkspace, continueTaskIntegration, discardTaskWorkspace, integrateTaskWorkspace, prepareTaskWorkspace, resetTaskWorkspaceWorkingTree, resolveGitRoot, TaskWorkspacePreconditionError, type IntegrationResult } from './taskWorkspace.ts'
 import { renderFilePreview, renderItemPreview } from './preview.ts'
+import { resolvePreviewBase } from './previewServer.ts'
 import { createItemFromBody, normalizePreviewUrls, validateAiAnalysisBody, validateItemPatch, validateSettings } from './validation.ts'
 
 /**
@@ -1061,6 +1062,15 @@ export function apply (ctx: Context): void {
         const board = file.boards[key]
         if (board === undefined) {
           send(res, 404, { error: '看板不存在' })
+          return
+        }
+
+        // ── 页面预览基地址：确保项目 dev server 已启动并返回其基地址 ──
+        // 验收框的「🌐 页面预览」相对路径链接解析为 baseUrl + 路径，
+        // 直接打开项目真实运行页面查看效果（而非 3080 宿主页面）。
+        if (parts.length === 4 && parts[3] === 'preview-base' && method === 'GET') {
+          const result = await resolvePreviewBase(board.projectPath)
+          send(res, 200, result)
           return
         }
 

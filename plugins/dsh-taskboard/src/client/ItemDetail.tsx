@@ -20,6 +20,10 @@ export interface ItemDetailProps {
   busy: boolean
   /** 改动预览页地址（任务 worktree 或已集成提交存在时提供） */
   previewUrl?: string | undefined
+  /** 页面预览完整地址（相对路径已解析到项目 dev server 基地址） */
+  pagePreviewUrls: string[]
+  /** 页面预览不可用原因（未启动 dev server 等） */
+  previewBaseError?: string | undefined
   onClose: () => void
   onEdit: () => void
   onDelete: () => void
@@ -69,7 +73,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBaseError, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
@@ -144,14 +148,19 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                 <div className={css.deliveryBox}>
                   <strong>交付物等待最终确认</strong>
                   <p>{item.deliverySummary ?? '请打开会话检查交付物和质量检查结果。'}</p>
-                  {(item.previewUrls ?? []).length > 0 && (
+                  {pagePreviewUrls.length > 0 && (
                     <p className={css.previewUrls} data-testid='taskboard-page-preview'>
-                      {item.previewUrls!.map(url => (
+                      {pagePreviewUrls.map(url => (
                         <a key={url} className={css.pagePreviewLink} href={url} target='_blank' rel='noreferrer'>
                           🌐 页面预览：{url}
                         </a>
                       ))}
-                      <span className={css.previewHint}>（代码合并后生效）</span>
+                      <span className={css.previewHint}>（项目 dev server 运行中，代码合并后即最新效果）</span>
+                    </p>
+                  )}
+                  {pagePreviewUrls.length === 0 && (item.previewUrls ?? []).length > 0 && previewBaseError !== undefined && (
+                    <p className={css.previewUrls} data-testid='taskboard-page-preview-unavailable'>
+                      <span className={css.previewHint}>⚠ 页面预览不可用：{previewBaseError}</span>
                     </p>
                   )}
                   {previewUrl !== undefined && (

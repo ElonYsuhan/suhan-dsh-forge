@@ -168,6 +168,18 @@ async function executeAction (key: string, id: string, action: string): Promise<
   return body.item
 }
 
+/** 页面预览基地址响应：baseUrl 为空时 error 说明原因。 */
+export interface PreviewBaseResponse {
+  baseUrl: string | null
+  error?: string | undefined
+}
+
+/** 项目 dev server 基地址：探测/启动后返回，用于把相对预览路径解析为可打开的真实页面。 */
+export async function fetchPreviewBase (key: string): Promise<PreviewBaseResponse> {
+  const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/preview-base`)
+  return jsonResponse<PreviewBaseResponse>(res, 'taskboard: preview-base failed')
+}
+
 /** 保存看板设置（自定义环节/类型） */
 export async function saveSettings (key: string, settings: { columns?: ColumnDef[]; itemTypes?: ItemTypeDef[] }): Promise<Board> {
   const res = await fetch(`/taskboard/boards/${encodeURIComponent(key)}/settings`, {
