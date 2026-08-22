@@ -68,7 +68,12 @@ function firstLineOf (value: string): string {
   return value.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? ''
 }
 
-/** 清洗交付时报告的页面预览地址：相对路径（/ 开头）或完整 http(s) URL，最多 10 个。 */
+/**
+ * 清洗交付时报告的页面预览地址：相对路径（/ 开头）或完整 http(s) URL，最多 10 个。
+ * localhost/127.0.0.1 的完整地址归一化为相对路径——预览基地址由看板统一管理
+ * （任务 worktree 租约 dev server），落地数据的端口必须是统一的，不得残留
+ * 执行 Agent 自起 dev server 的端口（否则页面预览与实时预览出现两个地址）。
+ */
 export function normalizePreviewUrls (value: unknown): string[] | undefined {
   if (value === undefined) return undefined
   if (!Array.isArray(value) || value.length > 10) throw new HttpError(400, 'previewUrls 必须是最多 10 项的字符串数组')
@@ -77,7 +82,10 @@ export function normalizePreviewUrls (value: unknown): string[] | undefined {
     if (typeof entry !== 'string') throw new HttpError(400, 'previewUrls 必须是最多 10 项的字符串数组')
     const url = entry.trim()
     if (url === '' || url.length > 200 || !/^\/|^https?:\/\//.test(url)) throw new HttpError(400, `previewUrls 含无效地址：${entry}`)
-    urls.push(url)
+    const stripped = url.replace(/^https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?/i, '')
+    if (stripped === '') urls.push('/')
+    else if (stripped.startsWith('/')) urls.push(stripped)
+    else urls.push(url)
   }
   return urls.length === 0 ? undefined : urls
 }

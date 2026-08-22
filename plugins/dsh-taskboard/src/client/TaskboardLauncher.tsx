@@ -192,9 +192,14 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     ? `/taskboard/boards/${encodeURIComponent(board.projectKey)}/items/${encodeURIComponent(detailItem.id)}/preview`
     : undefined
 
+  /** 任务处于执行/阻塞中：页面预览与实时预览统一使用端口租约的 worktree dev server。 */
+  const taskRunning = detailItem !== null && currentKey !== null && historyDetail === null &&
+    ['running', 'blocked', 'awaiting-review', 'awaiting-delivery', 'committing'].includes(executionStateOf(detailItem))
+
   /** 选中任务/历史详情时解析页面预览基地址（项目 dev server），相对路径拼成完整可打开地址。 */
   useEffect(() => {
-    if (currentKey === null || detailItem === null || (detailItem.previewUrls ?? []).length === 0) {
+    if (currentKey === null || detailItem === null || (detailItem.previewUrls ?? []).length === 0 || taskRunning) {
+      // 执行中任务：基地址由下方 live-preview 轮询提供（同一租约 server，避免双端口不统一）
       setPreviewBase(null)
       setPreviewBasePending(false)
       return
@@ -210,12 +215,10 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       }
     })
     return () => { cancelled = true }
-  }, [currentKey, detailItem])
+  }, [currentKey, detailItem, taskRunning])
 
   /** 任务执行中每 3s 轮询实时预览：服务端懒启动 worktree dev server 并返回端口（心跳续租）。 */
   useEffect(() => {
-    const taskRunning = detailItem !== null && currentKey !== null && historyDetail === null &&
-      ['running', 'blocked', 'awaiting-review', 'awaiting-delivery', 'committing'].includes(executionStateOf(detailItem))
     if (!taskRunning) {
       setLivePreview(null)
       return
@@ -226,16 +229,37 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     poll()
     const timer = window.setInterval(poll, 3000)
     return () => window.clearInterval(timer)
-  }, [currentKey, detailItem, historyDetail])
+  }, [currentKey, detailItem, taskRunning])
 
   /**
-   * 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。
-   * 基地址尚未解析出来（启动中）或解析失败时不产出相对路径链接——
-   * 否则 href 按当前宿主 origin（3080）解析，落到宿主页面而非改动项目。
+   * 解析后的页面预览完整地址，基地址统一为：
+   *   执行中/阻塞任务 → 端口租约 worktree dev server（livePreview.url，与「实时预览」同一地址）；
+   *   其余（历史/归档/集成后）→ board 级 preview-base（主项目 dev server 或宿主 3080）。
+   * localhost 完整地址也 re-base 到统一基地址（兼容存量交付数据里的 ad-hoc 端口）。
+   * 基地址尚未就绪时不产出链接，否则 href 按宿主 origin（3080）解析落到宿主页面。
    */
-  const resolvedPreviewUrls: string[] = (detailItem?.previewUrls ?? [])
-    .filter(url => /^https?:\/\//.test(url) || (previewBase !== null && previewBase.baseUrl !== null))
-    .map(url => /^https?:\/\//.test(url) ? url : `${previewBase?.baseUrl ?? ''}${url}`)
+  const previewBaseUrl = taskRunning ? (livePreview?.url ?? null) : (previewBase?.baseUrl ?? null)
+  const resolvedPreviewUrls: string[] = (detailItem?.previewUrls ?? []).flatMap(url => {
+    if (/^https?:\/\//i.test(url)) {
+      let host = ''
+      try { host = new URL(url).hostname } catch { return [] }
+      if (host === 'localhost' || host === '127.0.0.1') {
+        if (previewBaseUrl === null) return []
+        const rebased = new URL(url)
+        return [`${previewBaseUrl}${rebased.pathname}${rebased.search}`]
+      }
+      return [url]
+    }
+    return previewBaseUrl === null ? [] : [`${previewBaseUrl}${url}`]
+  })
+
+  /** 页面预览基地址状态：执行中由 live-preview 轮询派生，否则用 preview-base 解析结果。 */
+  const pagePreviewBasePending: boolean = taskRunning
+    ? (livePreview?.pending === true && livePreview.url === null)
+    : previewBasePending
+  const pagePreviewBaseError: string | undefined = taskRunning
+    ? (livePreview?.url === null && livePreview?.pending !== true ? livePreview?.reason : undefined)
+    : previewBase?.error
 
   /** 局部更新：看板里某项不存在则追加（新建），存在则替换（更新/流转/执行） */
   const patchBoardItem = useCallback((key: string, updated: WorkItem): void => {
@@ -606,8 +630,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
               busy={running}
               previewUrl={previewUrl}
               pagePreviewUrls={resolvedPreviewUrls}
-              previewBasePending={previewBasePending}
-              previewBaseError={previewBase?.error}
+              previewBasePending={pagePreviewBasePending}
+              previewBaseError={pagePreviewBaseError}
               livePreview={livePreview}
               readOnly={historyDetail !== null}
               onClose={() => historyDetail !== null ? setHistoryDetail(null) : setSelectedId(null)}

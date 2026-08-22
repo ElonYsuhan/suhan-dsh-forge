@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { createBoard } from '../shared/types.ts'
-import { createItemFromBody, validateAiAnalysisBody, validateItemPatch, validateSettings } from '../validation.ts'
+import { createItemFromBody, normalizePreviewUrls, validateAiAnalysisBody, validateItemPatch, validateSettings } from '../validation.ts'
 
 function itemBody (title = '任务') {
   return { title, type: 'task', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto' }
@@ -71,5 +71,15 @@ describe('taskboard request validation', () => {
     expect(() => validateAiAnalysisBody({ ...valid, implementationPlan: 'not-array' })).toThrow('字符串数组')
     expect(() => validateAiAnalysisBody({ ...valid, acceptanceCriteria: [{ bad: true }] })).toThrow('必须是字符串')
     expect(() => validateAiAnalysisBody(undefined)).toThrow('analysis 必须是对象')
+  })
+
+  it('normalizePreviewUrls 把 localhost 完整地址归一化为相对路径（预览基地址由看板统一管理）', () => {
+    expect(normalizePreviewUrls(['http://localhost:5174/about/', '/blog/'])).toEqual(['/about/', '/blog/'])
+    expect(normalizePreviewUrls(['http://127.0.0.1:4300/now/'])).toEqual(['/now/'])
+    expect(normalizePreviewUrls(['http://localhost:5174'])).toEqual(['/'])
+    expect(normalizePreviewUrls(['https://example.com/docs/guide'])).toEqual(['https://example.com/docs/guide'])
+    expect(normalizePreviewUrls(['http://localhost:5174/paths?a=1&b=2'])).toEqual(['/paths?a=1&b=2'])
+    expect(normalizePreviewUrls([])).toBeUndefined()
+    expect(() => normalizePreviewUrls(['not-a-url'])).toThrow('无效地址')
   })
 })

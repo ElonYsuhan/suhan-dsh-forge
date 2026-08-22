@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.7] - 2026-08-22
+
+### Fixed
+- 页面预览与实时预览地址统一：执行中任务的「🌐 页面预览」链接不再落到执行 Agent 自起的 ad-hoc dev server（如 5174），一律解析到看板端口租约的同一 worktree dev server（新任务级 `preview-base` 端点，与 live-preview 同源、心跳续租）；历史/集成后任务仍按主项目解析。
+- 交付时报告的 localhost 完整预览地址归一化为相对路径存储（外部 URL 原样保留）；已存数据中的 localhost 地址由客户端 re-base 到统一基地址兜底。
+- 执行提示词更新：delivery_ready 只报告相对路径，验证用的 dev server 结束后自行关闭，不再残留第二个端口。
+
 ## [0.1.6] - 2026-08-22
 
 ### Added

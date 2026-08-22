@@ -374,7 +374,8 @@ function executionPrompt (board: Board, item: WorkItem): string {
     '- 遇到阻塞调用 taskboard_progress(outcome="blocked", summary="阻塞原因")。',
     '- 全程严禁 git commit、切换分支或操作项目主工作区；看板会在人工确认交付后自动生成任务提交并串行集成。',
     '- 完成全部环节和质量检查后调用 taskboard_progress(outcome="delivery_ready", summary="交付物与验证摘要")，然后等待人工确认。',
-    '- 若改动涉及可预览的可见页面（web 界面效果），delivery_ready 时附带 previewUrls：报告改动页面的预览地址（相对路径如 /taskboard/boards，或完整 http(s) URL，最多 10 个），方便人工验收直接打开页面查看效果；不要编造不存在的地址，纯后端/工具改动无需提供。'
+    '- 若改动涉及可预览的可见页面（web 界面效果），delivery_ready 时附带 previewUrls：一律报告相对路径（/ 开头，如 /about/，最多 10 个），不要报告任何 http(s) 完整地址——预览基地址由看板统一管理（任务 worktree dev server），人工验收会按统一地址打开；不要编造不存在的路径，纯后端/工具改动无需提供。',
+    '- 验证页面效果时如需启动 dev server，请用临时端口或验证后自行关闭自己启动的 dev server；看板会为预览统一管理 dev server，不要保留验证用进程常驻（会与统一预览端口不一致并浪费资源）。'
   ].filter(line => line !== '').join('\n')
 }
 
@@ -1260,6 +1261,26 @@ export function apply (ctx: Context): void {
             const html = await renderItemPreview(board, item)
             res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
             res.end(html)
+            return
+          }
+          // ── 页面预览基地址（任务级）：执行中任务与实时预览共用同一个租约 dev server，
+          // 避免「页面预览」落在执行 Agent 自起的 ad-hoc dev server 上造成多端口不统一。
+          // 执行中/阻塞且有 worktree → 端口租约（与 live-preview 同一 server，心跳续租）；
+          // 其余（历史/归档/集成后）回退 board 级解析（主项目 dev server 或宿主 3080）。
+          if (parts.length === 6 && parts[5] === 'preview-base' && method === 'GET') {
+            const item = findItem(board, parts[4] ?? '')
+            const workspace = item.taskWorkspace
+            const state = executionStateOf(item)
+            const previewable = workspace !== undefined && !item.archived &&
+              (executionActive(state) || state === 'blocked')
+            if (!previewable) {
+              const result = await resolvePreviewBase(board.projectPath)
+              send(res, 200, result)
+              return
+            }
+            portLeases.touch(item.id)
+            const result = await portLeases.ensureTaskPreview(item.id, workspace.path)
+            send(res, 200, { baseUrl: result.url, error: result.pending ? undefined : result.reason })
             return
           }
           // ── 实时预览：任务执行期间的工作区 dev server（端口租约懒启动 + 心跳）──

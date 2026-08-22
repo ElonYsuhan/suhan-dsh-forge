@@ -381,12 +381,13 @@ describe('方案生成流程（先生成方案、后执行）', () => {
     await progressTool.execute({
       outcome: 'delivery_ready',
       summary: '交付完成',
-      previewUrls: ['/taskboard/boards', 'http://localhost:3080/settings']
+      previewUrls: ['/taskboard/boards', 'http://localhost:3080/settings', 'https://example.com/docs']
     }, { agent: liveAgent })
     updated = await findItem(draft.id)
     expect(updated.status).toBe('accept')
     expect(updated.executionState).toBe('awaiting-delivery')
-    expect(updated.previewUrls).toEqual(['/taskboard/boards', 'http://localhost:3080/settings'])
+    // localhost 完整地址归一化为相对路径（预览基地址由看板统一管理）；外部 URL 原样保留
+    expect(updated.previewUrls).toEqual(['/taskboard/boards', '/settings', 'https://example.com/docs'])
     const deliverResponse = response()
     await route(request('POST', `/taskboard/boards/workspace-1/items/${draft.id}/confirm-delivery`), deliverResponse)
     expect(deliverResponse.status).toBe(200)
