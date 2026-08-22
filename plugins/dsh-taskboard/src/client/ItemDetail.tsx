@@ -278,9 +278,10 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan }: {
     return <PlanConfirmEditor item={item} busy={busy} onAnalyze={onAnalyze} onConfirmPlan={onConfirmPlan} />
   }
   // confirmed / executing / completed：冻结方案直接内嵌全文展示（无需弹窗）。
+  // 方案区占满中间大块，待确认项卡片固定在方案区最底部。
   const pendingQuestions = item.aiAnalysis?.pendingQuestions ?? []
   return (
-    <section className={css.planPanel} data-testid='taskboard-plan-frozen'>
+    <section className={`${css.planPanel} ${css.planPanelFill}`} data-testid='taskboard-plan-frozen'>
       <h4 className={css.planTitle}>冻结方案（执行唯一依据）</h4>
       <div className={css.planFrozenInline}>
         {item.frozenPlan !== undefined
