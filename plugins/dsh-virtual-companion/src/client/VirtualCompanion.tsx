@@ -157,6 +157,7 @@ interface SpeechRecognitionConstructorLike {
 
 const POSITION_KEY = 'suhan-dsh-virtual-companion-position'
 const SETTINGS_KEY = 'suhan-dsh-virtual-companion-settings'
+const ZOOM_KEY = 'suhan-dsh-virtual-companion-zoom'
 const DRAG_THRESHOLD = 5
 const SINGLE_CLICK_DELAY_MS = 260
 /** 画布基准尺寸；滚轮缩放即放大画布 DOM，模型随之同步放大。 */
@@ -192,6 +193,19 @@ const DEFAULT_POSITION = (): { x: number; y: number } => ({
   x: typeof window === 'undefined' ? 24 : Math.max(24, window.innerWidth - 360),
   y: 96
 })
+
+/** 滚轮缩放倍率：与位置一样持久化，刷新后恢复（0.3~10 兜底，实际还受视口高度钳制）。 */
+function readZoom (): number {
+  try {
+    const raw = window.localStorage.getItem(ZOOM_KEY)
+    if (raw === null) return 1
+    const parsed = Number(JSON.parse(raw) as unknown)
+    if (Number.isFinite(parsed) && parsed >= 0.3 && parsed <= 10) return parsed
+    return 1
+  } catch {
+    return 1
+  }
+}
 
 function readPosition (): { x: number; y: number } {
   try {
@@ -389,8 +403,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     return () => window.removeEventListener('pointermove', onPointerMove)
   }, [])
 
-  // 滚轮缩放：画布 DOM 与模型同步放大，最大高度=整个网页高度
-  const [zoomLevel, setZoomLevel] = useState(1)
+  // 滚轮缩放：画布 DOM 与模型同步放大，最大高度=整个网页高度；
+  // 倍率持久化到 localStorage，刷新后恢复
+  const [zoomLevel, setZoomLevel] = useState(readZoom)
   const maxStageHeight = typeof window === 'undefined' ? BASE_STAGE_HEIGHT : window.innerHeight - 16
   const stageHeight = Math.min(Math.round(BASE_STAGE_HEIGHT * zoomLevel), maxStageHeight)
   const stageWidth = Math.round(BASE_STAGE_WIDTH * (stageHeight / BASE_STAGE_HEIGHT))
@@ -591,6 +606,14 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       // storage may be unavailable; settings still apply for this session
     }
   }, [settings])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(ZOOM_KEY, JSON.stringify(zoomLevel))
+    } catch {
+      // storage may be unavailable; zoom still works for this session
+    }
+  }, [zoomLevel])
 
   const stopCurrentAudio = useCallback((): void => {
     setSpeaking(false)

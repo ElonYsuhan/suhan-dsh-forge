@@ -261,7 +261,7 @@ export interface CompanionSettings {
   realtime: boolean
 }
 
-export const DEFAULT_MODEL_ID = 'ganyu'
+export const DEFAULT_MODEL_ID = 'hongqiangwei-short'
 export const DEFAULT_BRIGHTNESS = 0.85
 export const BRIGHTNESS_MIN = 0.4
 export const BRIGHTNESS_MAX = 2.5
