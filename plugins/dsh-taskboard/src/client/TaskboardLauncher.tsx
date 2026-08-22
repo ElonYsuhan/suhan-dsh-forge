@@ -55,6 +55,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [historyItems, setHistoryItems] = useState<WorkItem[]>([])
   const [historyTotal, setHistoryTotal] = useState(0)
   const [historyLoading, setHistoryLoading] = useState(false)
+  /** 历史任务详情（只读弹窗）；与看板 selected 共用同一详情弹窗 */
+  const [historyDetail, setHistoryDetail] = useState<WorkItem | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<WorkItem | null>(null)
   const [forceCloseTarget, setForceCloseTarget] = useState<WorkItem | null>(null)
   const [deliveryTarget, setDeliveryTarget] = useState<WorkItem | null>(null)
@@ -69,6 +71,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const closeAll = useCallback((): void => {
     setOpen(false)
     setSelectedId(null)
+    setHistoryDetail(null)
     setEditor(null)
     setSettingsOpen(false)
     setHistoryOpen(false)
@@ -178,15 +181,18 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     return board.items.find(i => i.id === selectedId && !i.archived) ?? null
   }, [selectedId, board])
 
+  /** 详情弹窗对象：历史任务详情优先（只读），否则看板当前选中任务。 */
+  const detailItem: WorkItem | null = historyDetail ?? selected
+
   /** 改动预览页地址：任务 worktree 存在（执行中/待交付）或已有集成提交（已完成/旧流程已提交）时提供。 */
-  const previewUrl: string | undefined = selected !== null && board !== null &&
-    (selected.taskWorkspace !== undefined || selected.commitRef !== undefined)
-    ? `/taskboard/boards/${encodeURIComponent(board.projectKey)}/items/${encodeURIComponent(selected.id)}/preview`
+  const previewUrl: string | undefined = detailItem !== null && board !== null &&
+    (detailItem.taskWorkspace !== undefined || detailItem.commitRef !== undefined)
+    ? `/taskboard/boards/${encodeURIComponent(board.projectKey)}/items/${encodeURIComponent(detailItem.id)}/preview`
     : undefined
 
-  /** 选中任务时解析页面预览基地址（项目 dev server），相对路径拼成完整可打开地址。 */
+  /** 选中任务/历史详情时解析页面预览基地址（项目 dev server），相对路径拼成完整可打开地址。 */
   useEffect(() => {
-    if (currentKey === null || selected === null || (selected.previewUrls ?? []).length === 0) {
+    if (currentKey === null || detailItem === null || (detailItem.previewUrls ?? []).length === 0) {
       setPreviewBase(null)
       setPreviewBasePending(false)
       return
@@ -202,14 +208,14 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
       }
     })
     return () => { cancelled = true }
-  }, [currentKey, selected])
+  }, [currentKey, detailItem])
 
   /**
    * 解析后的页面预览完整地址：相对路径 → dev server 基地址 + 路径；已是 http(s) 原样保留。
    * 基地址尚未解析出来（启动中）或解析失败时不产出相对路径链接——
    * 否则 href 按当前宿主 origin（3080）解析，落到宿主页面而非改动项目。
    */
-  const resolvedPreviewUrls: string[] = (selected?.previewUrls ?? [])
+  const resolvedPreviewUrls: string[] = (detailItem?.previewUrls ?? [])
     .filter(url => /^https?:\/\//.test(url) || (previewBase !== null && previewBase.baseUrl !== null))
     .map(url => /^https?:\/\//.test(url) ? url : `${previewBase?.baseUrl ?? ''}${url}`)
 
@@ -552,6 +558,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                     total={historyTotal}
                     loading={historyLoading}
                     onLoadMore={() => { void loadHistory(true) }}
+                    onOpenDetail={item => setHistoryDetail(item)}
                     onOpenSession={sessionId => {
                       closeAll()
                       openSession(sessionId)
@@ -567,36 +574,39 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
                     onMove={(id, status) => handleMove(id, status)}
                     onSelect={item => setSelectedId(item.id)}
                   />
-                  {selected !== null && (
-                    <ItemDetail
-                      item={selected}
-                      board={board}
-                      typeDef={board.itemTypes.find(t => t.key === selected.type)}
-                      parentTitle={selected.parentId === undefined ? undefined : board.items.find(i => i.id === selected.parentId)?.title}
-                      busy={running}
-                      previewUrl={previewUrl}
-                      pagePreviewUrls={resolvedPreviewUrls}
-                      previewBasePending={previewBasePending}
-                      previewBaseError={previewBase?.error}
-                      onClose={() => setSelectedId(null)}
-                      onEdit={() => setEditor({ item: selected })}
-                      onDelete={() => setDeleteTarget(selected)}
-                      onRun={() => handleRun()}
-                      onApprove={() => handleExecutionAction('approve')}
-                      onReject={() => handleExecutionAction('reject')}
-                      onConfirmDelivery={() => setDeliveryTarget(selected)}
-                      onForceClose={() => setForceCloseTarget(selected)}
-                      onOpenSession={sessionId => {
-                        closeAll()
-                        openSession(sessionId)
-                      }}
-                      onAnalyze={supplement => { void handleAnalyze(supplement) }}
-                      onConfirmPlan={input => { void handleConfirmPlan(input) }}
-                    />
-                  )}
                 </div>
                 )}
           </div>
+          {detailItem !== null && board !== null && (
+            <ItemDetail
+              item={detailItem}
+              board={board}
+              typeDef={board.itemTypes.find(t => t.key === detailItem.type)}
+              parentTitle={detailItem.parentId === undefined
+                ? undefined
+                : board.items.find(i => i.id === detailItem.parentId)?.title ?? historyItems.find(i => i.id === detailItem.parentId)?.title}
+              busy={running}
+              previewUrl={previewUrl}
+              pagePreviewUrls={resolvedPreviewUrls}
+              previewBasePending={previewBasePending}
+              previewBaseError={previewBase?.error}
+              readOnly={historyDetail !== null}
+              onClose={() => historyDetail !== null ? setHistoryDetail(null) : setSelectedId(null)}
+              onEdit={() => setEditor({ item: detailItem })}
+              onDelete={() => setDeleteTarget(detailItem)}
+              onRun={() => handleRun()}
+              onApprove={() => handleExecutionAction('approve')}
+              onReject={() => handleExecutionAction('reject')}
+              onConfirmDelivery={() => setDeliveryTarget(detailItem)}
+              onForceClose={() => setForceCloseTarget(detailItem)}
+              onOpenSession={sessionId => {
+                closeAll()
+                openSession(sessionId)
+              }}
+              onAnalyze={supplement => { void handleAnalyze(supplement) }}
+              onConfirmPlan={input => { void handleConfirmPlan(input) }}
+            />
+          )}
         </main>
       )}
 

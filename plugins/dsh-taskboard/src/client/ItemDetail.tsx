@@ -26,6 +26,8 @@ export interface ItemDetailProps {
   previewBasePending?: boolean
   /** 页面预览不可用原因（未启动 dev server 等） */
   previewBaseError?: string | undefined
+  /** 只读查看（历史任务详情）：隐藏全部操作按钮，方案区强制只读全文 */
+  readOnly?: boolean
   onClose: () => void
   onEdit: () => void
   onDelete: () => void
@@ -75,7 +77,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, readOnly, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const detailRef = useDialogFocus<HTMLElement>(onClose)
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
@@ -132,6 +134,7 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                 item={item}
                 creationState={creationState ?? 'draft'}
                 busy={busy}
+                readOnly={readOnly === true}
                 onAnalyze={onAnalyze}
                 onConfirmPlan={onConfirmPlan}
               />
@@ -181,36 +184,40 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
               )}
 
               <div className={css.actions}>
-                {!active && !preConfirm && creationState !== 'completed' && (
-                  <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
-                    {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
-                  </button>
-                )}
                 {previewUrl !== undefined && (
                   <a className={css.ghostBtn} href={previewUrl} target='_blank' rel='noreferrer'>
                     🔍 预览改动
                   </a>
-                )}
-                {executionState === 'awaiting-review' && (
-                  <>
-                    <button type='button' className={css.approveBtn} onClick={onApprove} disabled={busy}>✓ 批准并继续</button>
-                    <button type='button' className={css.rejectBtn} onClick={onReject} disabled={busy}>↩ 退回修订</button>
-                  </>
-                )}
-                {executionState === 'awaiting-delivery' && (
-                  <button type='button' className={css.approveBtn} onClick={onConfirmDelivery} disabled={busy}>✓ 确认交付并提交</button>
                 )}
                 {item.sessionId !== undefined && (
                   <button type='button' className={css.sessionBtn} onClick={() => onOpenSession(item.sessionId as string)}>
                     打开会话
                   </button>
                 )}
-                {!preConfirm && (
-                  <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
-                )}
-                <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
-                {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
-                  <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
+                {!readOnly && (
+                  <>
+                    {!active && !preConfirm && creationState !== 'completed' && (
+                      <button type='button' className={css.runBtn} onClick={onRun} disabled={busy} data-testid='taskboard-run-btn'>
+                        {busy ? '处理中…' : (item.sessionId === undefined ? '▶ 执行' : '▶ 继续执行')}
+                      </button>
+                    )}
+                    {executionState === 'awaiting-review' && (
+                      <>
+                        <button type='button' className={css.approveBtn} onClick={onApprove} disabled={busy}>✓ 批准并继续</button>
+                        <button type='button' className={css.rejectBtn} onClick={onReject} disabled={busy}>↩ 退回修订</button>
+                      </>
+                    )}
+                    {executionState === 'awaiting-delivery' && (
+                      <button type='button' className={css.approveBtn} onClick={onConfirmDelivery} disabled={busy}>✓ 确认交付并提交</button>
+                    )}
+                    {!preConfirm && (
+                      <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
+                    )}
+                    <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
+                    {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (
+                      <button type='button' className={css.forceCloseBtn} onClick={onForceClose} disabled={busy} data-testid='taskboard-force-close-btn'>强制关闭</button>
+                    )}
+                  </>
                 )}
               </div>
             </div>
@@ -249,15 +256,16 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
   )
 }
 
-/** AI 创建流程方案面板：按创建状态切换内容。 */
-function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan }: {
+/** AI 创建流程方案面板：按创建状态切换内容；readOnly（历史任务）强制只读全文。 */
+function PlanPanel ({ item, creationState, busy, readOnly, onAnalyze, onConfirmPlan }: {
   item: WorkItem
   creationState: CreationState
   busy: boolean
+  readOnly?: boolean
   onAnalyze: (supplement?: string) => void
   onConfirmPlan: (input: { title?: string; analysis: AiAnalysis }) => void
 }) {
-  if (creationState === 'draft') {
+  if (!readOnly && creationState === 'draft') {
     return (
       <section className={css.planPanel}>
         <h4 className={css.planTitle}>AI 方案</h4>
@@ -270,7 +278,7 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan }: {
       </section>
     )
   }
-  if (creationState === 'analyzing') {
+  if (!readOnly && creationState === 'analyzing') {
     return (
       <section className={css.planPanel}>
         <h4 className={css.planTitle}>AI 方案</h4>
@@ -281,19 +289,26 @@ function PlanPanel ({ item, creationState, busy, onAnalyze, onConfirmPlan }: {
       </section>
     )
   }
-  if (creationState === 'pending_confirm') {
+  if (!readOnly && creationState === 'pending_confirm') {
     return <PlanConfirmEditor item={item} busy={busy} onAnalyze={onAnalyze} onConfirmPlan={onConfirmPlan} />
   }
-  // confirmed / executing / completed：冻结方案直接内嵌全文展示（无需弹窗）。
+  // confirmed / executing / completed（及历史任务只读）：冻结方案直接内嵌全文展示（无需弹窗）。
   // 方案区占满中间大块，待确认项卡片固定在方案区最底部。
   const pendingQuestions = item.aiAnalysis?.pendingQuestions ?? []
   return (
     <section className={`${css.planPanel} ${css.planPanelFill}`} data-testid='taskboard-plan-frozen'>
-      <h4 className={css.planTitle}>冻结方案（执行唯一依据）</h4>
+      <h4 className={css.planTitle}>{readOnly ? '任务方案' : '冻结方案（执行唯一依据）'}</h4>
       <div className={css.planFrozenInline}>
         {item.frozenPlan !== undefined
           ? <MarkdownView text={item.frozenPlan} className={css.markdown} />
-          : <p className={css.planHint}>方案已确认，冻结内容暂不可用。</p>}
+          : item.aiAnalysis !== undefined
+            ? (
+              <MarkdownView
+                text={`# ${item.aiAnalysis.suggestedTitle ?? item.title}\n\n## 需求理解\n${item.aiAnalysis.requirementUnderstanding}\n\n## 项目现状分析\n${item.aiAnalysis.projectAnalysis}\n\n## 实施方案\n${item.aiAnalysis.implementationPlan.map(step => `- ${step}`).join('\n')}\n\n## 影响范围\n${item.aiAnalysis.affectedModules.map(module => `- ${module}`).join('\n')}\n\n## 验收标准\n${item.aiAnalysis.acceptanceCriteria.map(criteria => `- ${criteria}`).join('\n')}`}
+                className={css.markdown}
+              />
+            )
+            : <p className={css.planHint}>该任务没有方案记录。</p>}
       </div>
       {pendingQuestions.length > 0 && (
         <div className={css.pendingCard}>

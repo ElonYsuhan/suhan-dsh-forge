@@ -57,6 +57,7 @@
 .loadMore:disabled { opacity: .55; cursor: wait; }
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .openSession,
+.viewDetail,
 .cleanup {
   padding: 6px 11px;
   border: 1px solid var(--dsw-alias-border-l2);
@@ -65,4 +66,5 @@
   color: var(--dsw-alias-brand-primary);
   cursor: pointer;
 }
+.viewDetail { color: var(--dsw-alias-label-primary); }
 .cleanup { color: var(--dsw-alias-label-secondary); }
