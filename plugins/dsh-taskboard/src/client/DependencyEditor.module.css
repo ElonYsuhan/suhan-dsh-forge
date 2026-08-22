@@ -1,0 +1,106 @@
+/* 任务依赖编辑器弹窗（Radix Dialog；z 层级在详情弹窗 45 之上，覆盖详情打开场景） */
+.mask {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  background: rgba(0, 0, 0, .45);
+  backdrop-filter: blur(2px);
+}
+.layer {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+.layer > * {
+  pointer-events: auto;
+}
+.panel {
+  width: min(480px, 92vw);
+  max-height: min(640px, 90vh);
+  overflow-y: auto;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 14px;
+  background: var(--dsw-alias-bg-layer-2);
+  box-shadow: var(--dsw-shadow-lv3);
+  padding: 16px 18px;
+  animation: taskboard-dep-in .16s ease;
+}
+@keyframes taskboard-dep-in {
+  from { opacity: 0; transform: translateY(6px) scale(.98); }
+}
+.head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary);
+}
+.target {
+  margin: 0 0 12px;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+  word-break: break-word;
+}
+.closeBtn {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+  cursor: pointer;
+}
+.closeBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+.cancelBtn,
+.saveBtn {
+  padding: 7px 16px;
+  border-radius: 8px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.cancelBtn {
+  border: 1px solid var(--dsw-alias-border-l2);
+  background: var(--dsw-alias-bg-layer-3);
+  color: var(--dsw-alias-label-secondary);
+}
+.cancelBtn:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+.saveBtn {
+  border: 1px solid transparent;
+  background: var(--dsw-alias-button-primary-fill);
+  color: var(--dsw-alias-button-primary-dimmed);
+}
+.saveBtn:hover {
+  background: var(--dsw-alias-button-primary-hover);
+}
+.saveBtn:disabled {
+  opacity: .5;
+  cursor: not-allowed;
+}
+.panel :is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: 2px;
+}

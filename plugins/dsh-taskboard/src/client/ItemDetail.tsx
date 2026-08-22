@@ -4,7 +4,7 @@
  * 草稿 → 任务方案生成按钮；分析中 → 进行中提示 + 重试；方案待确认 → 分字段编辑 +
  * 补充需求重新分析 / 确认并执行；已确认及之后 → 只读冻结方案。
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as ToggleGroup from '@radix-ui/react-toggle-group'
 import { DEPENDENCY_LABELS, creationStateOf, executionModeOf, executionStateOf, isAiFlowItem, type AiAnalysis, type Board, type CreationState, type DependencyType, type ItemTypeDef, type WorkItem } from '../shared/types.ts'
@@ -34,6 +34,8 @@ export interface ItemDetailProps {
   readOnly?: boolean
   onClose: () => void
   onEdit: () => void
+  /** 配置任务依赖（执行开始前随时可配，含方案未确认的 AI 项） */
+  onEditDependencies: () => void
   onDelete: () => void
   onRun: () => void
   onApprove: () => void
@@ -88,7 +90,7 @@ function splitLines (value: string): string[] {
  * Render the work-item detail dialog.
  * @param props - the item, its board, and action callbacks.
  */
-export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, livePreview, readOnly, onClose, onEdit, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
+export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUrl, pagePreviewUrls, previewBasePending, previewBaseError, livePreview, readOnly, onClose, onEdit, onEditDependencies, onDelete, onRun, onApprove, onReject, onConfirmDelivery, onForceClose, onOpenSession, onAnalyze, onConfirmPlan }: ItemDetailProps) {
   const statusLabel = board.columns.find(c => c.id === item.status)?.label ?? item.status
   const parentItem = item.parentId === undefined ? undefined : board.items.find(i => i.id === item.parentId)
   const executionMode = executionModeOf(item)
@@ -97,6 +99,14 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
   // AI 创建流程：方案确认前不能执行、不能改业务字段（PlanPanel 接管编辑）。
   const preConfirm = creationState === 'draft' || creationState === 'analyzing' || creationState === 'pending_confirm'
   const active = executionState === 'running' || executionState === 'awaiting-review' || executionState === 'awaiting-delivery' || executionState === 'committing'
+  // 描述默认三行截断 + 底部虚化，点击展开/收起全文（只有真正溢出时才显示虚化）。
+  const [descExpanded, setDescExpanded] = useState(false)
+  const descRef = useRef<HTMLParagraphElement>(null)
+  const [descClamped, setDescClamped] = useState(false)
+  useEffect(() => {
+    const el = descRef.current
+    setDescClamped(el !== null && el.scrollHeight > el.clientHeight + 2)
+  }, [item.desc, item.title])
 
   return (
     <Dialog.Root open onOpenChange={open => { if (!open) onClose() }}>
@@ -150,7 +160,18 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
 
         <div className={css.split}>
           <section className={css.left} aria-label='任务详情'>
-            {/* AI 流程项：方案（核心）优先于原始需求，避免长描述把方案挤出首屏 */}
+            {/* 原始需求在方案之上：默认三行截断 + 底部虚化，点击展开全文（长描述不再挤掉方案） */}
+            {item.desc !== '' && (
+              <p
+                ref={descRef}
+                className={`${css.desc} ${descExpanded ? css.descExpanded : (descClamped ? css.descClamp : '')}`}
+                onClick={() => setDescExpanded(expanded => !expanded)}
+                title={descExpanded ? '点击收起描述' : '点击展开完整描述'}
+                data-testid='taskboard-detail-desc'
+              >
+                {item.desc}
+              </p>
+            )}
             {isAiFlowItem(item) && (
               <PlanPanel
                 item={item}
@@ -161,7 +182,6 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                 onConfirmPlan={onConfirmPlan}
               />
             )}
-            {item.desc !== '' && <p className={css.desc}>{item.desc}</p>}
           </section>
 
           <section className={css.right} aria-label='操作与追溯'>
@@ -251,6 +271,12 @@ export function ItemDetail ({ item, board, typeDef, parentTitle, busy, previewUr
                     )}
                     {!preConfirm && (
                       <button type='button' className={css.ghostBtn} onClick={onEdit} disabled={active || busy}>编辑</button>
+                    )}
+                    {/* 执行开始前（含方案未确认的 AI 项）随时可配置依赖；前置满足保存后自动开始执行 */}
+                    {!active && (
+                      <button type='button' className={css.ghostBtn} onClick={onEditDependencies} disabled={busy} data-testid='taskboard-dep-edit-btn'>
+                        配置依赖
+                      </button>
                     )}
                     <button type='button' className={css.dangerBtn} onClick={onDelete} disabled={busy} data-testid='taskboard-delete-btn'>删除</button>
                     {(item.taskWorkspace !== undefined || item.gitCheckpoint !== undefined) && (

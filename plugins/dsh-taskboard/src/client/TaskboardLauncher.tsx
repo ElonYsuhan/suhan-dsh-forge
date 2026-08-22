@@ -7,12 +7,13 @@ import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import { analyzeItem, approveItem, cleanupHistoryWorkspace, confirmDelivery, confirmPlanItem, createItem, deleteItem, fetchBoards, fetchHistory, fetchLivePreview, fetchPreviewBase, forceCloseItem, rejectItem, runItem, saveSettings, updateItem, type BoardsResponse, type ItemInput, type LivePreviewResponse } from './api.ts'
 import { Board } from './Board.tsx'
 import { ConfirmDialog } from './ConfirmDialog.tsx'
+import { DependencyEditor } from './DependencyEditor.tsx'
 import { ItemDetail } from './ItemDetail.tsx'
 import { ItemEditor } from './ItemEditor.tsx'
 import { SettingsEditor } from './SettingsEditor.tsx'
 import { HistoryPanel } from './HistoryPanel.tsx'
 import { UiSelect } from './ui/Select.tsx'
-import type { Board as BoardModel, WorkItem } from '../shared/types.ts'
+import type { Board as BoardModel, TaskDependency, WorkItem } from '../shared/types.ts'
 import { executionStateOf, type AiAnalysis } from '../shared/types.ts'
 import css from './TaskboardLauncher.module.css'
 
@@ -51,6 +52,8 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
   const [currentKey, setCurrentKey] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [editor, setEditor] = useState<EditorSeat | null>(null)
+  /** 依赖编辑器目标（详情页「配置依赖」打开，执行开始前随时可配） */
+  const [depEditorItem, setDepEditorItem] = useState<WorkItem | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const [historyItems, setHistoryItems] = useState<WorkItem[]>([])
@@ -76,6 +79,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     setSelectedId(null)
     setHistoryDetail(null)
     setEditor(null)
+    setDepEditorItem(null)
     setSettingsOpen(false)
     setHistoryOpen(false)
     setDeleteTarget(null)
@@ -385,6 +389,23 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
     }
   }
 
+  /** 保存任务依赖（null = 清空）：服务端重新评估执行闸门，前置满足自动开始执行。 */
+  const handleSaveDependencies = async (dependencies: TaskDependency[] | null): Promise<void> => {
+    if (board === null || currentKey === null || depEditorItem === null) return
+    setRunning(true)
+    try {
+      const updated = await updateItem(currentKey, depEditorItem.id, { dependencies })
+      patchBoardItem(currentKey, updated)
+      setDepEditorItem(null)
+      setError(null)
+      setNotice('任务依赖已保存：前置任务完成后自动开始执行，也可随时手动执行')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRunning(false)
+    }
+  }
+
   const handleHistoryCleanup = async (): Promise<void> => {
     if (currentKey === null || cleanupTarget === null || running) return
     setRunning(true)
@@ -641,6 +662,7 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
               readOnly={historyDetail !== null}
               onClose={() => historyDetail !== null ? setHistoryDetail(null) : setSelectedId(null)}
               onEdit={() => setEditor({ item: detailItem })}
+              onEditDependencies={() => setDepEditorItem(detailItem)}
               onDelete={() => setDeleteTarget(detailItem)}
               onRun={() => handleRun()}
               onApprove={() => handleExecutionAction('approve')}
@@ -665,6 +687,16 @@ export function TaskboardLauncher ({ openSession, currentSessionId, subscribeSes
           defaultStatus={editor.defaultStatus}
           onCancel={() => setEditor(null)}
           onSave={(input, generatePlan) => handleSaveItem(input, generatePlan)}
+        />
+      )}
+
+      {depEditorItem !== null && board !== null && (
+        <DependencyEditor
+          item={depEditorItem}
+          board={board}
+          busy={running}
+          onCancel={() => setDepEditorItem(null)}
+          onSave={dependencies => { void handleSaveDependencies(dependencies) }}
         />
       )}
 

@@ -159,9 +159,29 @@
   color: var(--dsw-alias-label-secondary);
   white-space: pre-wrap;
   word-break: break-word;
-  /* 长描述限高滚动：不把下方内容（方案/时间线）挤出可视区 */
+  /* 默认三行截断（1.55em × 3），下方方案不被长描述挤出首屏 */
+  position: relative;
+  max-height: 4.65em;
+  overflow: hidden;
+  cursor: pointer;
+}
+/* 有溢出时：底部一行渐变虚化，暗示点击可展开 */
+.descClamp::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0 0;
+  height: 1.55em;
+  background: linear-gradient(to bottom, transparent, var(--dsw-alias-bg-layer-3));
+  pointer-events: none;
+}
+/* 展开：显示全部，超高限高滚动 */
+.descExpanded {
   max-height: 220px;
   overflow-y: auto;
+  cursor: auto;
+}
+.descExpanded::after {
+  display: none;
 }
 
 .reviewBox,

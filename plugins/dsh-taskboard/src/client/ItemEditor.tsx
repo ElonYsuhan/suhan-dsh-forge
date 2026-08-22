@@ -7,8 +7,9 @@
  */
 import { useState, type FormEvent } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { DEPENDENCY_LABELS, PRIORITIES, executionModeOf, type Board, type DependencyType, type ExecutionMode, type Priority, type TaskDependency, type WorkItem } from '../shared/types.ts'
+import { PRIORITIES, executionModeOf, type Board, type ExecutionMode, type Priority, type TaskDependency, type WorkItem } from '../shared/types.ts'
 import type { ItemInput } from './api.ts'
+import { DependencyConfig } from './ui/DependencyConfig.tsx'
 import { UiSelect } from './ui/Select.tsx'
 import css from './ItemEditor.module.css'
 
@@ -23,9 +24,6 @@ export interface ItemEditorProps {
   /** 新建：generatePlan=false 仅保存草稿（稍后再生成方案）；true 创建后立即启动任务方案生成。编辑：更新工作项。 */
   onSave: (input: ItemInput, generatePlan?: boolean) => void
 }
-
-const DEPENDENCY_TYPE_OPTIONS = (Object.keys(DEPENDENCY_LABELS) as DependencyType[])
-  .map(type => ({ value: type, label: DEPENDENCY_LABELS[type] }))
 
 /**
  * Render the editor dialog.
@@ -45,11 +43,6 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
   const [dependencies, setDependencies] = useState<TaskDependency[]>(() => (item?.dependencies ?? []).map(dep => ({ ...dep })))
 
   const candidates = board.items.filter(i => i.id !== item?.id && !i.archived)
-  // 已归档但仍在引用中的依赖任务保留在选项里（标记已归档），避免打开编辑器就丢配置。
-  const referencedIds = new Set((item?.dependencies ?? []).map(dep => dep.taskId))
-  const dependencyOptions = board.items
-    .filter(i => i.id !== item?.id && (!i.archived || referencedIds.has(i.id)))
-    .map(i => ({ value: i.id, label: `${i.title}${i.archived ? '（已归档）' : ''}` }))
   const parentOptions = candidates.map(i => ({ value: i.id, label: i.title }))
   const depsChanged = JSON.stringify(dependencies) !== JSON.stringify(item?.dependencies ?? [])
 
@@ -106,62 +99,6 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
     }, false)
   }
 
-  // ── 任务依赖配置（新建与编辑共用；可选，最多 10 项） ──────
-  const depSection = (
-    <section className={css.depSection}>
-      <div className={css.depHead}>
-        <span className={css.fieldLabel}>任务依赖（可选）</span>
-        <button
-          type='button'
-          className={css.depAddBtn}
-          onClick={() => setDependencies(prev => [...prev, { taskId: dependencyOptions[0]?.value ?? '', type: 'before' }])}
-          disabled={dependencies.length >= 10 || dependencyOptions.length === 0}
-          data-testid='taskboard-editor-dep-add'
-        >
-          + 添加依赖
-        </button>
-      </div>
-      <p className={css.depHint}>
-        在此之前 = 本任务先执行，完成后自动开始该任务；之后 = 本任务等待该任务，其完成后自动开始本任务；并行 = 无顺序约束。关联任务成功后自动串联执行。
-      </p>
-      {dependencies.length === 0
-        ? <p className={css.depEmpty}>未配置任务依赖</p>
-        : (
-          <ul className={css.depList}>
-            {dependencies.map((dep, index) => (
-              <li key={`${dep.taskId}-${index}`} className={css.depRow}>
-                <UiSelect
-                  className={css.select}
-                  value={dep.taskId}
-                  onValueChange={taskId => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, taskId } : d))}
-                  options={dependencyOptions}
-                  placeholder='选择任务'
-                  ariaLabel={`依赖 ${index + 1} 目标任务`}
-                  dataTestId={`taskboard-editor-dep-target-${index}`}
-                />
-                <UiSelect
-                  className={css.select}
-                  value={dep.type}
-                  onValueChange={typeValue => setDependencies(prev => prev.map((d, i) => i === index ? { ...d, type: typeValue as DependencyType } : d))}
-                  options={DEPENDENCY_TYPE_OPTIONS}
-                  ariaLabel={`依赖 ${index + 1} 类型`}
-                  dataTestId={`taskboard-editor-dep-type-${index}`}
-                />
-                <button
-                  type='button'
-                  className={css.depRemoveBtn}
-                  onClick={() => setDependencies(prev => prev.filter((_, i) => i !== index))}
-                  aria-label={`移除依赖 ${index + 1}`}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-    </section>
-  )
-
   // ── 新建：AI 创建流程极简表单 ─────────────────────────────
   if (item === null) {
     const submitDisabled = requirement.trim() === '' && title.trim() === ''
@@ -203,7 +140,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
                   />
                 </label>
 
-                {depSection}
+                <DependencyConfig board={board} itemId={null} dependencies={dependencies} onChange={setDependencies} />
 
                 <footer className={css.foot}>
                   <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>
@@ -330,7 +267,7 @@ export function ItemEditor ({ item, board, defaultStatus, onCancel, onSave }: It
                 <input className={css.input} value={labels} onChange={ev => setLabels(ev.target.value)} placeholder='如 工程、迁移' />
               </label>
 
-              {depSection}
+              <DependencyConfig board={board} itemId={item.id} dependencies={dependencies} onChange={setDependencies} />
 
               <footer className={css.foot}>
                 <button type='button' className={css.cancelBtn} onClick={onCancel}>取消</button>

@@ -790,6 +790,38 @@ async function triggerSuccessors (ctx: Context, file: BoardsFile, board: Board, 
   }
 }
 
+/**
+ * PATCH 更新依赖后按新依赖重新评估执行闸门并尝试自动开始执行：
+ * - 前置未完成 → 挂起并说明，前置完成后由 triggerSuccessors 自动启动；
+ * - AI 流程项方案未确认 → 说明等待确认（确认方案时也会自动开始）；
+ * - 前置满足且方案已确认/旧数据 → 自动开始执行（手动 run 始终可用）。
+ * 调用方必须持有 item lock；本函数内部自行落盘（startExecution 启动失败时回滚为执行前状态，可手动重试）。
+ */
+async function maybeAutoStartItem (ctx: Context, file: BoardsFile, board: Board, item: WorkItem): Promise<void> {
+  if (item.archived || executionActive(executionStateOf(item))) return
+  const unmet = dependencyGateUnmet(board, item)
+  if (unmet.length > 0) {
+    pushTimeline(item, { action: 'note', note: `任务依赖已更新；前置任务未完成（${unmet.map(task => task.title).join('、')}），将在其完成后自动开始执行` })
+    touch(board, item)
+    await saveBoards(file)
+    return
+  }
+  if (isAiFlowItem(item) && creationStateOf(item) !== 'confirmed') {
+    pushTimeline(item, { action: 'note', note: '任务依赖已更新且前置满足；方案未确认，确认方案后自动开始执行' })
+    touch(board, item)
+    await saveBoards(file)
+    return
+  }
+  pushTimeline(item, { action: 'note', note: '任务依赖已更新，前置满足，自动开始执行' })
+  touch(board, item)
+  await saveBoards(file)
+  await startExecution(ctx, file, board, item, {
+    advanceStatus: true,
+    statusMoveNote: '任务依赖前置满足，自动开始执行',
+    timelineNote: '任务依赖前置满足，自动开始执行'
+  })
+}
+
 interface StartExecutionOptions {
   /** 执行开始后推进到下一列；run 首次执行与 confirm-plan 为 true。 */
   advanceStatus: boolean
@@ -1287,9 +1319,18 @@ export function apply (ctx: Context): void {
             }
             if (patch.executionMode !== undefined) item.executionMode = patch.executionMode
             if (patch.dependencies !== undefined) {
+              // 归一化比较：null 与 [] 等价（清空无变化时不重复评估）。
+              const depsChanged = JSON.stringify(patch.dependencies === null ? [] : patch.dependencies) !==
+                JSON.stringify(item.dependencies ?? [])
               if (patch.dependencies === null) delete item.dependencies
               else item.dependencies = patch.dependencies
               pushTimeline(item, { action: 'note', note: '更新了任务依赖' })
+              // 依赖变更后重新评估执行闸门：前置满足且方案已确认 → 自动开始执行；未满足则挂起。
+              if (depsChanged) {
+                await withLock(`item:${board.projectKey}:${item.id}`, async () => {
+                  await maybeAutoStartItem(ctx, file, board, findItem(board, item.id))
+                })
+              }
             }
             if (patch.status !== undefined && patch.status !== item.status) {
               pushTimeline(item, { action: 'moved', from: item.status, to: patch.status })

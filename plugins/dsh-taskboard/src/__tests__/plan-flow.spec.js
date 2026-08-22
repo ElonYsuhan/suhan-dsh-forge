@@ -714,4 +714,201 @@ describe('方案生成流程（先生成方案、后执行）', () => {
     expect(bRunDuringAuto.status).toBe(409)
     expect(bRunDuringAuto.body.error).toContain('已有进行中的执行')
   })
+
+  it('PATCH 设置依赖：旧任务前置满足立即自动开始执行，未满足挂起，AI 草稿等待确认', async () => {
+    let route
+    const toolsByName = {}
+    let liveAgent
+    const followup = vi.fn()
+    const idleResolvers = []
+    const attachSession = vi.fn(async () => {})
+    const detachSession = vi.fn(async () => {})
+    const registeredByPath = new Map()
+    const registeredById = new Map()
+    let workspaceCounter = 0
+    const createWorkspace = vi.fn(async (path, title) => {
+      const workspace = {
+        id: `task-workspace-${++workspaceCounter}`,
+        path,
+        title,
+        sessionIds: [],
+        attachSession,
+        detachSession
+      }
+      registeredByPath.set(path, workspace)
+      registeredById.set(workspace.id, workspace)
+      return workspace
+    })
+    const deleteWorkspace = vi.fn(async id => {
+      const workspace = registeredById.get(id)
+      if (workspace === undefined) return false
+      registeredById.delete(id)
+      registeredByPath.delete(workspace.path)
+      return true
+    })
+    const archiveSession = vi.fn(async () => {})
+    const mountPreset = vi.fn(async () => {})
+    const logError = vi.fn()
+    const agentsById = new Map()
+    const create = vi.fn(async options => {
+      await options.setup({})
+      let resolveAgentIdle
+      const agentIdle = new Promise(resolve => {
+        resolveAgentIdle = resolve
+      })
+      idleResolvers.push(resolveAgentIdle)
+      const agent = {
+        id: options.sessionId,
+        session: { header: { agentPreset: options.meta.agentPreset } },
+        followup,
+        whenIdle: vi.fn(() => agentIdle),
+        cancel: vi.fn(() => resolveAgentIdle())
+      }
+      agentsById.set(options.sessionId, agent)
+      liveAgent = agent
+      return { agent, dispose: vi.fn(async () => {}) }
+    })
+    const ctx = {
+      logger: vi.fn(() => ({ error: logError })),
+      effect (factory) {
+        factory()
+      },
+      get (name) {
+        if (name === 'agentDefaultModel') return { currentSelection: () => ({ provider: 'test', model: 'test-model' }) }
+        if (name === 'agentPresets') return { resolve: async () => ({ id: 'standard' }), mount: mountPreset }
+        return undefined
+      },
+      tools: {
+        register (tool) {
+          toolsByName[tool.name] = tool
+          return () => {}
+        }
+      },
+      webServer: {
+        register (registration) {
+          route = registration.handler
+          return () => {}
+        }
+      },
+      workspaceRegistry: {
+        list: () => [{ id: 'workspace-1', path: dataDir, title: '测试项目', sessionIds: [] }],
+        resolveByPath: async path => registeredByPath.get(path),
+        create: createWorkspace,
+        get: id => registeredById.get(id),
+        delete: deleteWorkspace,
+        archiveSession
+      },
+      agents: { create, get: id => agentsById.get(String(id)) ?? liveAgent },
+      sessions: { flush: vi.fn(async () => {}) }
+    }
+    apply(ctx)
+
+    const findItem = async id => {
+      const boards = response()
+      await route(request('GET', '/taskboard/boards'), boards)
+      return boards.body.boards['workspace-1'].items.find(item => item.id === id)
+    }
+    const createLegacy = async title => {
+      const res = response()
+      await route(request('POST', '/taskboard/boards/workspace-1/items', {
+        type: 'task', title, desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto'
+      }), res)
+      expect(res.status).toBe(200)
+      expect(res.body.item.originalRequirement).toBeUndefined() // 旧数据：无 AI 创建流程
+      return res.body.item
+    }
+    const createDraft = async requirement => {
+      const res = response()
+      await route(request('POST', '/taskboard/boards/workspace-1/items', {
+        type: 'task', title: '', desc: '', priority: 'medium', labels: [], status: 'todo', executionMode: 'auto',
+        originalRequirement: requirement
+      }), res)
+      expect(res.status).toBe(200)
+      return res.body.item
+    }
+    const patchDeps = async (id, dependencies) => {
+      const res = response()
+      await route(request('PATCH', `/taskboard/boards/workspace-1/items/${id}`, { dependencies }), res)
+      return res
+    }
+    const deliver = async item => {
+      const progress = await toolsByName.taskboard_progress.execute({
+        outcome: 'delivery_ready',
+        summary: '交付完成',
+        previewUrls: ['/taskboard/boards']
+      }, { agent: agentsById.get(item.sessionId) })
+      expect(progress).toContain('验收')
+      const confirm = response()
+      await route(request('POST', `/taskboard/boards/workspace-1/items/${item.id}/confirm-delivery`), confirm)
+      expect(confirm.status).toBe(200)
+      expect(confirm.body.item.archived).toBe(true)
+      return confirm.body.item
+    }
+    const timelineHas = (item, text) => item.timeline.some(entry => entry.note?.includes(text))
+
+    // ── 前置任务 A（旧数据）先执行并交付归档；B 为旧数据卡片 ──
+    const a = await createLegacy('旧任务 A：已完成')
+    const runA = response()
+    await route(request('POST', `/taskboard/boards/workspace-1/items/${a.id}/run`), runA)
+    expect(runA.status).toBe(200)
+    expect(runA.body.item.executionState).toBe('running')
+    idleResolvers[0]() // A 会话停稳
+    await deliver(runA.body.item)
+
+    // ── B 此时才设置依赖：前置 A 已满足 → PATCH 后立即自动开始执行（无需手动 run） ──
+    const b = await createLegacy('旧任务 B：后配依赖')
+    const depB = await patchDeps(b.id, [{ taskId: a.id, type: 'after' }])
+    expect(depB.status).toBe(200)
+    expect(depB.body.item.dependencies).toEqual([{ taskId: a.id, type: 'after' }])
+    expect(depB.body.item.status).toBe('in-dev')
+    expect(depB.body.item.executionState).toBe('running')
+    expect(depB.body.item.sessionId).toBeDefined()
+    expect(timelineHas(depB.body.item, '任务依赖已更新，前置满足，自动开始执行')).toBe(true)
+    expect(timelineHas(depB.body.item, '任务依赖前置满足，自动开始执行')).toBe(true)
+    expect(followup).toHaveBeenCalledTimes(2) // A run + B PATCH 自动开始
+
+    // ── C：设置依赖时前置（B）正在执行未完成 → 仅挂起说明，不启动 ──
+    const c = await createLegacy('旧任务 C：前置未完成')
+    const depC = await patchDeps(c.id, [{ taskId: b.id, type: 'after' }])
+    expect(depC.status).toBe(200)
+    expect(depC.body.item.status).toBe('todo')
+    expect(depC.body.item.executionState).toBe('idle')
+    expect(depC.body.item.sessionId).toBeUndefined()
+    expect(timelineHas(depC.body.item, '任务依赖已更新；前置任务未完成')).toBe(true)
+    expect(followup).toHaveBeenCalledTimes(2)
+
+    // ── D：无变化保存（空依赖 → 清空）不触发自动执行评估 ──
+    const d = await createLegacy('旧任务 D：无变化保存')
+    const depD = await patchDeps(d.id, null)
+    expect(depD.status).toBe(200)
+    expect(depD.body.item.dependencies).toBeUndefined()
+    expect(depD.body.item.status).toBe('todo')
+    expect(depD.body.item.executionState).toBe('idle')
+    expect(timelineHas(depD.body.item, '更新了任务依赖')).toBe(true)
+    expect(followup).toHaveBeenCalledTimes(2)
+
+    // ── E：AI 草稿（方案未确认）前置满足 → 不启动，留「方案未确认」说明 ──
+    const e = await createDraft('AI 草稿 E：方案未确认')
+    const depE = await patchDeps(e.id, [{ taskId: a.id, type: 'after' }])
+    expect(depE.status).toBe(200)
+    expect(depE.body.item.creationState).toBe('draft')
+    expect(depE.body.item.status).toBe('todo')
+    expect(depE.body.item.executionState).toBe('idle')
+    expect(timelineHas(depE.body.item, '任务依赖已更新且前置满足；方案未确认')).toBe(true)
+    expect(followup).toHaveBeenCalledTimes(2)
+
+    // ── 执行中任务不能 PATCH 依赖（执行开始后不可再配置，409） ──
+    const blocked = await patchDeps(b.id, [])
+    expect(blocked.status).toBe(409)
+    expect(blocked.body.error).toContain('执行中')
+
+    // ── C 的前置 B 完成 → C 自动开始执行（既有串联路径，旧数据同样生效） ──
+    idleResolvers[1]() // B 会话停稳
+    await deliver(depB.body.item)
+    const autoC = await findItem(c.id)
+    expect(autoC.status).toBe('in-dev')
+    expect(autoC.executionState).toBe('running')
+    expect(timelineHas(autoC, `前置任务「${depB.body.item.title}」已完成并集成，依赖满足，自动开始执行`)).toBe(true)
+    expect(followup).toHaveBeenCalledTimes(3)
+  })
 })
