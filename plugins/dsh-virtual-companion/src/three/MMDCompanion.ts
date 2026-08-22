@@ -36,7 +36,12 @@ import { VmdMotionPlayer } from './VmdMotionPlayer'
 export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
 
 const TARGET_MODEL_HEIGHT = 20
-const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お']
+/**
+ * 口型 morph 候选（按优先级）：标准 あいうえお 之外，兼容中文/自制模型的
+ * 常见口型名（如雷律以「□」代替「う」、幽兰黛尔有「ワ」「ん」）。
+ * 说话时程序按 0.1s 周期轮换可用形状，权重跟随音量包络。
+ */
+const MOUTH_CANDIDATES = ['あ', 'い', 'う', 'え', 'お', 'あ２', '□', '口', 'ワ', 'ん', 'ω', '言', 'ウ']
 const BLINK_CANDIDATES = ['まばたき', 'ウィンク', '笑い']
 const SMILE_CANDIDATES = ['笑い', 'にこり', '微笑', '笑顔']
 const BODY_BONE_CANDIDATES = ['頭', '首', '上半身', '腰', '左腕', '右腕', '左ひじ', '右ひじ', '左手首', '右手首']
@@ -146,6 +151,8 @@ export class MMDCompanion {
   private shadowGen: ShadowGenerator | null = null
   private speaking = false
   private thinking = false
+  /** 音量包络原始值（分析器 RMS），每帧向 speechLevel 平滑逼近。 */
+  private speechLevelTarget = 0
   private speechLevel = 0
   private fitDistance = 30
   private baseY = 0
@@ -493,7 +500,7 @@ export class MMDCompanion {
   }
 
   setSpeechLevel (level: number): void {
-    this.speechLevel = Math.min(1, Math.max(0, level))
+    this.speechLevelTarget = Math.min(1, Math.max(0, level))
   }
 
   playGesture (name: GestureName): void {
@@ -716,7 +723,7 @@ export class MMDCompanion {
     // 每次修改骨骼后统一由 Skeleton 刷新（prepare 重算 _finalMatrix；
     // Babylon 9 的 bone.computeWorldMatrix 是空操作，不能逐骨骼刷新）：
     // 不刷新就继续读的消费者会拿到修改前的陈旧矩阵。
-    this.updateBodyPose(time, now)
+    this.updateBodyPose(_delta, time, now)
     this.mesh.skeleton?.prepare(true)
 
     this.applyGesture(now)
@@ -738,7 +745,7 @@ export class MMDCompanion {
     }
   }
 
-  private updateBodyPose (time: number, now: number): void {
+  private updateBodyPose (delta: number, time: number, now: number): void {
     if (this.bodyBones.size === 0) return
     const intensity = this.speaking ? 1.5 : 1
     const breathe = Math.sin(time * 1.6) * 0.012 * intensity
@@ -787,23 +794,38 @@ export class MMDCompanion {
       this.setMorph(this.blinkMorph, now < this.blinkUntil ? 1 : 0)
     }
 
-    // 口型（音量包络）
+    // 音量包络平滑：快攻慢放，口型在语句停顿处随音量闭嘴
+    this.speechLevel += (this.speechLevelTarget - this.speechLevel) * Math.min(1, delta * 14)
+
+    // 口型（音量包络）：轮换可用嘴型，权重跟随平滑音量；
+    // 安静时降到 0.12 轻微张合、放慢轮换节奏，响亮时接近全开
     if (this.speaking && this.mouthMorphs.length > 0 && now >= this.nextMouthAt) {
       const current = this.mouthMorphs[this.mouthIndex]
       if (current !== undefined) this.setMorph(current, 0)
       this.mouthIndex = (this.mouthIndex + 1) % this.mouthMorphs.length
       const next = this.mouthMorphs[this.mouthIndex]
-      if (next !== undefined) this.setMorph(next, 0.3 + this.speechLevel * 0.7)
-      this.nextMouthAt = now + 130
+      if (next !== undefined) this.setMorph(next, 0.12 + Math.min(0.88, this.speechLevel * 1.9))
+      this.nextMouthAt = now + (this.speechLevel > 0.06 ? 110 : 150)
     }
 
-    // 表情 VMD morph 插值
+    // 表情 VMD morph 插值。说话时口型/眨眼由程序驱动，跳过对应轨道，
+    // 否则 表情.vmd 的循环口型轨道会每帧覆盖说话口型（嘴不听音量）；
+    // smile 手势期间也跳过 笑い 轨道，手势才可见。
+    const vmdSkippedMorphs = new Set<string>()
+    if (this.speaking) {
+      for (const name of this.mouthMorphs) vmdSkippedMorphs.add(name)
+      if (this.blinkMorph !== undefined) vmdSkippedMorphs.add(this.blinkMorph)
+    }
+    if (this.gesture?.name === 'smile' && this.smileMorph !== undefined) {
+      vmdSkippedMorphs.add(this.smileMorph)
+    }
     const firstTrack = this.vmdMorphs[0]
     if (firstTrack !== undefined && firstTrack.keys.length > 0) {
       const lastKey = firstTrack.keys[firstTrack.keys.length - 1]
       if (lastKey !== undefined && lastKey.frame > 0) {
         const frame = (time * 30) % lastKey.frame
         for (const track of this.vmdMorphs) {
+          if (vmdSkippedMorphs.has(track.name)) continue
           const keys = track.keys
           const firstKey = keys[0]
           if (firstKey === undefined) continue

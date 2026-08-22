@@ -6,6 +6,11 @@
  *   说话时以浮动缩放表达「在说话」；设置面板支持角色、背景、音色与流式回复
  */
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+// Reka UI 系组件（Radix 同源）：Select 原生支持上下键/首字母选择，
+// 每次选择立即触发 onValueChange，模型下拉实现逐项实时切换。
+import * as Select from '@radix-ui/react-select'
+import * as Slider from '@radix-ui/react-slider'
+import * as Switch from '@radix-ui/react-switch'
 import type { ComposedProps } from '@deepseek-ai/dsh-client-ui-slots'
 import {
   BACKGROUND_TEXT_MAX_LENGTH,
@@ -63,6 +68,43 @@ function extractEmotion (text: string): { emotion: GestureName | undefined; clea
   if (match === null || label === undefined) return { emotion: undefined, clean: text }
   const emotion = EMOTION_GESTURES[label]
   return { emotion, clean: text.slice(match[0].length).trimStart() }
+}
+
+interface PanelSelectProps {
+  value: string
+  onValueChange: (value: string) => void
+  ariaLabel: string
+  items: Array<{ value: string; label: string }>
+  disabled?: boolean
+  testId?: string
+}
+
+/**
+ * 设置面板统一下拉（Reka UI / Radix Select）：
+ * 触发器聚焦后 ↑/↓ 键即可逐项切换，每次变化立即回调 onValueChange
+ * （模型下拉借此实现上下键逐项实时换模）。
+ */
+function PanelSelect ({ value, onValueChange, ariaLabel, items, disabled, testId }: PanelSelectProps) {
+  return (
+    <Select.Root value={value} onValueChange={onValueChange} {...(disabled === true ? { disabled: true } : {})}>
+      <Select.Trigger className={css.selectTrigger} aria-label={ariaLabel} data-testid={testId}>
+        <Select.Value />
+        <Select.Icon className={css.selectIcon}>▾</Select.Icon>
+      </Select.Trigger>
+      <Select.Portal>
+        <Select.Content className={css.selectContent} position='popper' sideOffset={4}>
+          <Select.Viewport className={css.selectViewport}>
+            {items.map(item => (
+              <Select.Item key={item.value} value={item.value} className={css.selectItem}>
+                <Select.ItemText>{item.label}</Select.ItemText>
+                <Select.ItemIndicator className={css.selectItemIndicator}>✓</Select.ItemIndicator>
+              </Select.Item>
+            ))}
+          </Select.Viewport>
+        </Select.Content>
+      </Select.Portal>
+    </Select.Root>
+  )
 }
 
 export type VirtualCompanionProps = ComposedProps<'shell.overlay', 'virtual-companion', never, undefined, object>
@@ -1210,33 +1252,31 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           </div>
           <label className={css.field}>
             <span>人物角色：{activeRole.label}</span>
-            <select
+            <PanelSelect
+              ariaLabel='人物角色'
               value={settings.roleId}
-              onChange={(event) => setSettings({ ...settings, roleId: event.target.value as RoleId })}
-            >
-              {ROLE_PRESETS.map(role => (
-                <option key={role.id} value={role.id}>{role.label} - {role.description}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setSettings({ ...settings, roleId: value as RoleId })}
+              items={ROLE_PRESETS.map(role => ({ value: role.id, label: `${role.label} - ${role.description}` }))}
+            />
           </label>
           <label className={css.field}>
             <span>人物模型</span>
-            <select
+            <PanelSelect
+              ariaLabel='人物模型'
+              testId='vc-model-select'
               value={settings.modelId}
-              onChange={(event) => setSettings({ ...settings, modelId: event.target.value })}
-            >
-              {(modelOptions.length > 0 ? modelOptions : [{ id: settings.modelId, label: settings.modelId }]).map(model => (
-                <option key={model.id} value={model.id}>{model.label}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setSettings({ ...settings, modelId: value })}
+              items={(modelOptions.length > 0 ? modelOptions : [{ id: settings.modelId, label: settings.modelId }])
+                .map(model => ({ value: model.id, label: model.label }))}
+            />
           </label>
           <div className={css.field}>
             <span>动作列表（{motionReady ? (motionStatus === 'playing' ? '播放中' : motionStatus === 'paused' ? '保持姿势/已暂停' : '已就绪') : '未加载'}）</span>
-            <select
+            <PanelSelect
+              ariaLabel='动作列表'
               value={selectedMotion}
               disabled={!modelReady}
-              onChange={(event) => {
-                const id = event.target.value
+              onValueChange={(id) => {
                 setSelectedMotion(id)
                 setMotionReady(false)
                 setMotionStatus('stopped')
@@ -1258,12 +1298,11 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
                   }
                 })()
               }}
-            >
-              <option value='stand'>默认站姿</option>
-              {motionOptions.map(motion => (
-                <option key={motion.id} value={motion.id}>{motion.label}</option>
-              ))}
-            </select>
+              items={[
+                { value: 'stand', label: '默认站姿' },
+                ...motionOptions.map(motion => ({ value: motion.id, label: motion.label }))
+              ]}
+            />
             <div style={{ display: 'flex', gap: '0.45em' }}>
               <button
                 type='button'
@@ -1302,40 +1341,52 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           </div>
           <label className={css.field}>
             <span>亮度：{settings.brightness.toFixed(2)}</span>
-            <input
-              type='range'
+            <Slider.Root
+              className={css.sliderRoot}
               min={BRIGHTNESS_MIN}
               max={BRIGHTNESS_MAX}
               step={0.05}
-              value={settings.brightness}
-              onChange={(event) => setSettings({ ...settings, brightness: Number(event.target.value) })}
-            />
+              value={[settings.brightness]}
+              onValueChange={([value]) => setSettings({ ...settings, brightness: value ?? settings.brightness })}
+              aria-label='亮度'
+            >
+              <Slider.Track className={css.sliderTrack}><Slider.Range className={css.sliderRange} /></Slider.Track>
+              <Slider.Thumb className={css.sliderThumb} />
+            </Slider.Root>
           </label>
           <label className={css.field}>
             <span>面部光：{settings.faceLight.toFixed(2)}</span>
-            <input
-              type='range'
+            <Slider.Root
+              className={css.sliderRoot}
               min={FACE_LIGHT_MIN}
               max={FACE_LIGHT_MAX}
               step={0.05}
-              value={settings.faceLight}
-              onChange={(event) => setSettings({ ...settings, faceLight: Number(event.target.value) })}
-            />
+              value={[settings.faceLight]}
+              onValueChange={([value]) => setSettings({ ...settings, faceLight: value ?? settings.faceLight })}
+              aria-label='面部光'
+            >
+              <Slider.Track className={css.sliderTrack}><Slider.Range className={css.sliderRange} /></Slider.Track>
+              <Slider.Thumb className={css.sliderThumb} />
+            </Slider.Root>
           </label>
           <label className={css.field}>
             <span>人物朝向：{yawDeg}°（0° 正面，180° 背面）</span>
-            <input
-              type='range'
+            <Slider.Root
+              className={css.sliderRoot}
               min={0}
               max={360}
               step={1}
-              value={yawDeg}
-              onChange={(event) => {
-                const degrees = Number(event.target.value)
+              value={[yawDeg]}
+              onValueChange={([value]) => {
+                const degrees = value ?? yawDeg
                 setYawDeg(degrees)
                 mmdRef.current?.setYawDegrees(degrees)
               }}
-            />
+              aria-label='人物朝向'
+            >
+              <Slider.Track className={css.sliderTrack}><Slider.Range className={css.sliderRange} /></Slider.Track>
+              <Slider.Thumb className={css.sliderThumb} />
+            </Slider.Root>
           </label>
           {ikDiag !== '' && (
             <div style={{ fontSize: '0.72em', opacity: 0.85, lineHeight: 1.5, wordBreak: 'break-all', padding: '0 0.2em' }}>
@@ -1344,14 +1395,12 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           )}
           <label className={css.field}>
             <span>音色</span>
-            <select
+            <PanelSelect
+              ariaLabel='音色'
               value={settings.voiceId}
-              onChange={(event) => setSettings({ ...settings, voiceId: event.target.value as VoiceStyleId })}
-            >
-              {VOICE_STYLES.map(voice => (
-                <option key={voice.id} value={voice.id}>{voice.label} - {voice.description}</option>
-              ))}
-            </select>
+              onValueChange={(value) => setSettings({ ...settings, voiceId: value as VoiceStyleId })}
+              items={VOICE_STYLES.map(voice => ({ value: voice.id, label: `${voice.label} - ${voice.description}` }))}
+            />
           </label>
           <label className={css.field}>
             <span>背景信息（自己设置）</span>
@@ -1365,11 +1414,14 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
           </label>
           <label className={css.field}>
             <span>流式实时回复</span>
-            <input
-              type='checkbox'
+            <Switch.Root
+              className={css.switchRoot}
               checked={settings.realtime}
-              onChange={(event) => setSettings({ ...settings, realtime: event.target.checked })}
-            />
+              onCheckedChange={(checked) => setSettings({ ...settings, realtime: checked })}
+              aria-label='流式实时回复'
+            >
+              <Switch.Thumb className={css.switchThumb} />
+            </Switch.Root>
           </label>
           <div className={css.panelHint}>双击人物打开此面板，单击开始/停止语音聊天；右键拖拽人物可旋转</div>
         </div>

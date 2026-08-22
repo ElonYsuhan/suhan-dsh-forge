@@ -57,7 +57,13 @@ const MODEL_LABELS: Record<string, string> = {
   'zankou-original': 'Zankou·原皮',
   'zankou-skin2-black': 'Zankou·皮肤2黑',
   vivianne: '薇薇安',
-  jinwu: '金乌·毛绒派对'
+  jinwu: '金乌·毛绒派对',
+  youlan: '幽兰黛尔·完美假日',
+  longyan: '胧嫣·瑞狐 珠光曳影',
+  fanni: '芬妮·辉耀 疾速耀星',
+  leilv: '雷之律者（芽衣）',
+  hongqiangwei: '红蔷薇·舞者（长裙）',
+  'hongqiangwei-short': '红蔷薇·舞者（短裙）'
 }
 
 const MOTION_LABELS: Record<string, string> = {

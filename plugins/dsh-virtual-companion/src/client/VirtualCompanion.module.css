@@ -151,7 +151,12 @@
   font-size: 12px;
 }
 
-.field select {
+/* Reka UI（Radix Select）触发器：外观与原生 select 一致 */
+.selectTrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   width: 100%;
   padding: 6px 8px;
   border-radius: 8px;
@@ -159,6 +164,143 @@
   background: rgba(255, 255, 255, .9);
   color: #1a1a1a;
   font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.selectTrigger:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.selectTrigger:focus-visible {
+  outline: 2px solid #3d7eff;
+  outline-offset: 1px;
+}
+
+.selectIcon {
+  flex: none;
+  opacity: .7;
+  font-size: 10px;
+}
+
+/* 下拉浮层：portal 到 body，必须盖过一切（伴随层 z-index 就是最大值） */
+.selectContent {
+  z-index: 2147483647;
+  min-width: var(--radix-select-trigger-width);
+  max-height: 280px;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid rgba(127, 127, 127, .35);
+  background: rgba(255, 255, 255, .98);
+  color: #1a1a1a;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+
+.selectViewport {
+  padding: 4px;
+  overflow-y: auto;
+}
+
+.selectItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+
+.selectItem[data-highlighted] {
+  background: rgba(61, 126, 255, .14);
+}
+
+.selectItemIndicator {
+  flex: none;
+  color: #3d7eff;
+  font-size: 11px;
+}
+
+/* Reka UI（Radix Slider） */
+.sliderRoot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 18px;
+  touch-action: none;
+}
+
+.sliderTrack {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(127, 127, 127, .35);
+}
+
+.sliderRange {
+  position: absolute;
+  height: 100%;
+  border-radius: 2px;
+  background: #3d7eff;
+}
+
+.sliderThumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid #3d7eff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .2);
+}
+
+.sliderThumb:focus-visible {
+  outline: 2px solid #3d7eff;
+  outline-offset: 2px;
+}
+
+/* Reka UI（Radix Switch） */
+.switchRoot {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  padding: 0;
+  border: none;
+  border-radius: 9px;
+  background: rgba(127, 127, 127, .45);
+  cursor: pointer;
+}
+
+.switchRoot[data-state='checked'] {
+  background: #3d7eff;
+}
+
+.switchRoot:focus-visible {
+  outline: 2px solid #3d7eff;
+  outline-offset: 2px;
+}
+
+.switchThumb {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25);
+  transition: transform .15s ease;
+  transform: translateX(2px);
+}
+
+.switchRoot[data-state='checked'] .switchThumb {
+  transform: translateX(18px);
 }
 
 .field textarea {
@@ -171,12 +313,6 @@
   color: #1a1a1a;
   font: inherit;
   resize: vertical;
-}
-
-.field input[type='checkbox'] {
-  width: 16px;
-  height: 16px;
-  accent-color: #3d7eff;
 }
 
 .backgrounds {
