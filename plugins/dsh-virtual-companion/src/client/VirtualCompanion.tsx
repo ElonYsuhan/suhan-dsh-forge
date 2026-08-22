@@ -219,6 +219,9 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
   const [thinking, setThinking] = useState(false)
   const [speaking, setSpeaking] = useState(false)
   const [modelReady, setModelReady] = useState(false)
+  const [motionReady, setMotionReady] = useState(false)
+  const [motionStatus, setMotionStatus] = useState<'stopped' | 'playing' | 'paused'>('stopped')
+  const [selectedMotion, setSelectedMotion] = useState('stand')
   const [speechError, setSpeechError] = useState<string | null>(null)
   const [ikDiag, setIkDiag] = useState<string>('')
   const [bubbleText, setBubbleText] = useState<string | null>(null)
@@ -250,19 +253,38 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
     const mmd = mmdRef.current
     if (mmd === null) return
     setModelReady(false)
-    void mmd.loadModel(
-      `/virtual-companion/model/${encodeURIComponent(settings.modelId)}/model.pmx`,
-      `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
-    ).catch((error) => {
-      // 模型缺失/损坏时退回立绘展示；控制台保留诊断
-      console.warn('[virtual-companion] 模型加载失败，保持立绘占位：', error)
-    })
+    setMotionReady(false)
+    setMotionStatus('stopped')
+    void (async () => {
+      try {
+        await mmd.loadModel(
+          `/virtual-companion/model/${encodeURIComponent(settings.modelId)}/model.pmx`,
+          `/virtual-companion/model/${encodeURIComponent('motions')}/${encodeURIComponent('表情.vmd')}`
+        )
+        // 默认站姿由模型加载阶段写入稳定骨骼偏移；动作只在用户选择后加载。
+        setSelectedMotion('stand')
+        setMotionStatus('stopped')
+        setMotionReady(true)
+      } catch (error) {
+        // 模型缺失/损坏时退回立绘展示；动作缺失时模型仍可使用默认待机。
+        console.warn('[virtual-companion] 模型或本地动作加载失败：', error)
+      }
+    })()
   }, [settings.modelId])
 
   // 说话状态同步给模型（口型）
   useEffect(() => {
     mmdRef.current?.setSpeaking(speaking)
   }, [speaking])
+
+  // 单次动作播完后播放器会自行停止；同步按钮与状态文案。
+  useEffect(() => {
+    if (!motionReady) return
+    const id = window.setInterval(() => {
+      setMotionStatus(mmdRef.current?.getMotionStatus() ?? 'stopped')
+    }, 200)
+    return () => window.clearInterval(id)
+  }, [motionReady])
 
   // 姿态诊断读数：手/肘世界位置 + 近 90 帧最大帧位移（排查抖动用）
   useEffect(() => {
@@ -402,6 +424,7 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
 
   // 可用模型列表（设置面板选择器）
   const [modelOptions, setModelOptions] = useState<Array<{ id: string; label: string }>>([])
+  const [motionOptions, setMotionOptions] = useState<Array<{ id: string; label: string; url: string }>>([])
   useEffect(() => {
     void fetch('/virtual-companion/models')
       .then(async response => response.json())
@@ -410,6 +433,17 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
       })
       .catch(() => {
         // 列表获取失败时选择器退回显示当前模型 id
+      })
+  }, [])
+
+  useEffect(() => {
+    void fetch('/virtual-companion/motions')
+      .then(async response => response.json())
+      .then((data: { motions?: Array<{ id: string; label: string; url: string }> }) => {
+        setMotionOptions(data.motions ?? [])
+      })
+      .catch(() => {
+        // 本地动作目录缺失时保留默认站姿
       })
   }, [])
 
@@ -1196,6 +1230,76 @@ export function VirtualCompanion (_props: VirtualCompanionProps) {
               ))}
             </select>
           </label>
+          <div className={css.field}>
+            <span>动作列表（{motionReady ? (motionStatus === 'playing' ? '播放中' : motionStatus === 'paused' ? '保持姿势/已暂停' : '已就绪') : '未加载'}）</span>
+            <select
+              value={selectedMotion}
+              disabled={!modelReady}
+              onChange={(event) => {
+                const id = event.target.value
+                setSelectedMotion(id)
+                setMotionReady(false)
+                setMotionStatus('stopped')
+                void (async () => {
+                  const mmd = mmdRef.current
+                  if (mmd === null) return
+                  try {
+                    if (id === 'stand') {
+                      mmd.stopMotion()
+                      setMotionStatus('stopped')
+                    } else {
+                      const motion = motionOptions.find(item => item.id === id)
+                      if (motion === undefined) return
+                      await mmd.loadMotion(motion.url)
+                    }
+                    setMotionReady(true)
+                  } catch (error) {
+                    console.warn('[virtual-companion] 动作切换失败：', error)
+                  }
+                })()
+              }}
+            >
+              <option value='stand'>默认站姿</option>
+              {motionOptions.map(motion => (
+                <option key={motion.id} value={motion.id}>{motion.label}</option>
+              ))}
+            </select>
+            <div style={{ display: 'flex', gap: '0.45em' }}>
+              <button
+                type='button'
+                disabled={!motionReady || selectedMotion === 'stand'}
+                onClick={() => {
+                  if (mmdRef.current?.playMotion(false) === true) setMotionStatus('playing')
+                }}
+              >播放一次</button>
+              <button
+                type='button'
+                disabled={!motionReady || selectedMotion === 'stand'}
+                onClick={() => {
+                  if (mmdRef.current?.playMotion(true) === true) setMotionStatus('playing')
+                }}
+              >循环播放</button>
+              <button
+                type='button'
+                disabled={!motionReady || selectedMotion === 'stand' || motionStatus !== 'playing'}
+                onClick={() => {
+                  mmdRef.current?.pauseMotion()
+                  setMotionStatus('paused')
+                }}
+              >暂停</button>
+              <button
+                type='button'
+                disabled={!motionReady || motionStatus === 'stopped'}
+                onClick={() => {
+                  const mmd = mmdRef.current
+                  mmd?.stopMotion()
+                  if (selectedMotion === 'stand') {
+                    setMotionStatus('stopped')
+                  } else setMotionStatus('stopped')
+                }}
+              >停止</button>
+            </div>
+          </div>
           <label className={css.field}>
             <span>亮度：{settings.brightness.toFixed(2)}</span>
             <input

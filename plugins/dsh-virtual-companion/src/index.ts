@@ -60,6 +60,11 @@ const MODEL_LABELS: Record<string, string> = {
   jinwu: '金乌·毛绒派对'
 }
 
+const MOTION_LABELS: Record<string, string> = {
+  'i-love-you': '我爱你',
+  'vietnam-drum': '越南鼓甜舞'
+}
+
 /** 模型静态资产内容类型（按扩展名）。 */
 function modelContentType (path: string): string {
   const lower = path.toLowerCase()
@@ -157,6 +162,34 @@ export function apply (ctx: Context, options: VirtualCompanionHostOptions = {}):
             sendJson(res, 200, { models })
           } catch {
             sendJson(res, 200, { models: [] })
+          }
+          return
+        }
+
+        // 本地动作目录：motions/<id>/motion.vmd。素材只在用户本机，包内不携带。
+        if (parts[0] === 'virtual-companion' && parts[1] === 'motions' && parts.length === 2 && method === 'GET') {
+          try {
+            const root = resolve(modelRoot(), 'motions')
+            const entries = await readdir(root, { withFileTypes: true })
+            const motions: Array<{ id: string; label: string; url: string }> = []
+            for (const entry of entries) {
+              if (!entry.isDirectory()) continue
+              try {
+                const info = await stat(resolve(root, entry.name, 'motion.vmd'))
+                if (!info.isFile()) continue
+                motions.push({
+                  id: entry.name,
+                  label: MOTION_LABELS[entry.name] ?? entry.name,
+                  url: `/virtual-companion/model/motions/${encodeURIComponent(entry.name)}/motion.vmd`
+                })
+              } catch {
+                // 不完整的动作目录不进入列表
+              }
+            }
+            motions.sort((left, right) => left.id.localeCompare(right.id))
+            sendJson(res, 200, { motions })
+          } catch {
+            sendJson(res, 200, { motions: [] })
           }
           return
         }

@@ -31,6 +31,7 @@ import {
 import { ShadowOnlyMaterial } from '@babylonjs/materials'
 import { PBRMaterialBuilder, RegisterMmdModelLoaders } from 'babylon-mmd'
 import { ElegantIdle } from './ElegantIdle'
+import { VmdMotionPlayer } from './VmdMotionPlayer'
 
 export type GestureName = 'wave' | 'nod' | 'shake' | 'tilt' | 'bow' | 'smile'
 
@@ -165,6 +166,8 @@ export class MMDCompanion {
   private cameraPitch = 0
   /** 优雅站姿状态（TwoBoneIK 驱动双手，角色聊天默认动作）。 */
   private readonly elegantIdle = new ElegantIdle()
+  /** 离线制作的 VMD 动作播放器；播放时程序化姿态与 IK 暂停。 */
+  private motionPlayer: VmdMotionPlayer | null = null
   private ikActive = false
   /** IK 每帧快照（近 90 帧：左右手/肘世界位置），用于诊断面板显示实际帧位移。 */
   private readonly ikHistory: number[][] = []
@@ -222,9 +225,46 @@ export class MMDCompanion {
       /** 调参：肘极点偏移（模型空间，相对肩部：x=外侧幅度，y=向下，z=向前）。 */
       setIkPoles (x: number, y: number, z: number): void {
         self.elegantIdle.poleOffset.set(x, y, z)
+      },
+      loadMotion (url: string): Promise<void> { return self.loadMotion(url) },
+      playMotion (loop = true): boolean { return self.playMotion(loop) },
+      pauseMotion (): void { self.pauseMotion() },
+      stopMotion (): void { self.stopMotion() },
+      seekMotion (seconds: number): boolean { return self.seekMotion(seconds) },
+      get motion () {
+        const player = self.motionPlayer
+        return player === null ? null : {
+          loaded: player.loaded,
+          active: player.active,
+          status: player.status,
+          currentTime: player.currentTime,
+          duration: player.duration
+        }
       }
     }
   }
+
+  /** 加载本地 VMD 动作，但不自动播放。 */
+  async loadMotion (url: string): Promise<void> {
+    const player = this.motionPlayer
+    const skeleton = this.mesh?.skeleton
+    if (player === null || skeleton === null || skeleton === undefined) throw new Error('模型尚未加载完成')
+    await player.load(url, skeleton, this.morphManager)
+  }
+
+  /** 播放已加载动作；播放期间不再运行 ElegantIdle/程序化手势。 */
+  playMotion (loop = true): boolean {
+    const played = this.motionPlayer?.play(loop) ?? false
+    if (played) this.applyUserTransform()
+    return played
+  }
+  pauseMotion (): void { this.motionPlayer?.pause() }
+  stopMotion (): void {
+    this.motionPlayer?.stop()
+    this.applyUserTransform()
+  }
+  seekMotion (seconds: number): boolean { return this.motionPlayer?.seek(seconds) ?? false }
+  getMotionStatus (): 'stopped' | 'playing' | 'paused' { return this.motionPlayer?.status ?? 'stopped' }
 
   /** 加载 PMX 模型与可选表情 VMD；重复调用即切换模型。 */
   async loadModel (modelUrl: string, expressionUrl?: string): Promise<void> {
@@ -320,27 +360,18 @@ export class MMDCompanion {
     this.bodyBones.clear()
     const skeleton = root.skeleton
     if (skeleton !== null) {
-      // TwoBoneIK 骨骼链（腕→ひじ→手首）；链完整则手/臂交给 ElegantIdle 接管
-      const find = (name: string): Bone | undefined => skeleton.bones.find(b => b.name === name)
-      const upperL = find('左腕')
-      const lowerL = find('左ひじ')
-      const wristL = find('左手首')
-      const upperR = find('右腕')
-      const lowerR = find('右ひじ')
-      const wristR = find('右手首')
-      this.ikActive = upperL !== undefined && lowerL !== undefined && wristL !== undefined &&
-        upperR !== undefined && lowerR !== undefined && wristR !== undefined
+      // 默认站姿使用稳定的本地骨骼偏移，不再启用实时腕肘 IK。不同身材的
+      // IK 多解会造成手指交叠、穿胸和逐模型不一致；离线 VMD 播放时则由
+      // VmdMotionPlayer 完整接管这些骨骼。
+      this.ikActive = false
       this.elegantIdle.detach()
-      if (this.ikActive) {
-        this.elegantIdle.attach(root, upperL!, lowerL!, wristL!, upperR!, lowerR!, wristR!)
-      }
 
       for (const name of BODY_BONE_CANDIDATES) {
         const bone = skeleton.bones.find(b => b.name === name)
         if (bone === undefined) continue
         const base = bone.getRotation()
         // 偏移优先级：手腕自然姿态 / 重心偏侧（始终生效）；
-        // 手臂兜底仅在 IK 不可用时生效（IK 生效时 腕/肘 由 IK 每帧覆盖）。
+        // 默认站姿手臂偏移始终生效；播放 VMD 时播放器会临时独占骨骼。
         const offset = WRIST_POSE[name] ?? GRAVITY_SHIFT[name]
         const fallback = this.ikActive ? undefined : ARM_FALLBACK_OFFSETS[name]
         if (fallback !== undefined) {
@@ -425,7 +456,10 @@ export class MMDCompanion {
     const camera = this.scene?.activeCamera
     if (camera instanceof UniversalCamera) {
       const pitch = this.cameraPitch
-      camera.position.set(0, this.centerY + Math.sin(pitch) * this.fitDistance, Math.cos(pitch) * this.fitDistance)
+      // 动作会出现侧倾、抬臂等宽轮廓，播放/暂停时预留 18% 安全边距；
+      // 默认站姿仍保持原来的满高构图。
+      const distance = this.fitDistance * (this.motionPlayer?.active === true ? 1.18 : 1)
+      camera.position.set(0, this.centerY + Math.sin(pitch) * distance, Math.cos(pitch) * distance)
       camera.setTarget(new Vector3(0, this.centerY, 0))
     }
   }
@@ -566,6 +600,7 @@ export class MMDCompanion {
     const scene = new Scene(engine)
     scene.clearColor = new Color4(0, 0, 0, 0)
     this.scene = scene
+    this.motionPlayer = new VmdMotionPlayer(scene)
 
     // 相机：UniversalCamera 位置与朝向完全显式（无任何隐式重算），
     // 置于模型正面 +Z、看向模型中心
@@ -626,6 +661,7 @@ export class MMDCompanion {
   }
 
   private clearModel (): void {
+    this.motionPlayer?.dispose()
     this.vmdMorphs = []
     this.elegantIdle.detach()
     this.ikActive = false
@@ -668,6 +704,11 @@ export class MMDCompanion {
 
   private update (_delta: number, now: number): void {
     if (this.mesh === null) return
+    // 离线 VMD 是姿态/动作的唯一来源；播放时绝不叠加程序化腕肘 IK，
+    // 否则两套控制器会争抢同一骨骼并重新产生穿模与抖动。
+    const motionWasActive = this.motionPlayer?.active === true
+    if (this.motionPlayer?.update(_delta) === true) return
+    if (motionWasActive) this.applyUserTransform()
     const time = now / 1_000
 
     // 站稳：不做 mesh 级漂浮摇摆（CPU 蒙皮忽略 mesh 变换），

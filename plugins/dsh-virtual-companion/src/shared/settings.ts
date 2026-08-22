@@ -249,7 +249,7 @@ export interface CompanionSettings {
   skinId: SkinId
   /** 本地模型目录里的模型 id（对应 /virtual-companion/models 列表）。 */
   modelId: string
-  /** 模型亮度（色调映射曝光，0.4-1.6）。 */
+  /** 模型亮度（色调映射曝光，0.4-2.5）。 */
   brightness: number
   /** 面部直射光强度（0-2）。 */
   faceLight: number
@@ -264,7 +264,7 @@ export interface CompanionSettings {
 export const DEFAULT_MODEL_ID = 'ganyu'
 export const DEFAULT_BRIGHTNESS = 0.85
 export const BRIGHTNESS_MIN = 0.4
-export const BRIGHTNESS_MAX = 1.6
+export const BRIGHTNESS_MAX = 2.5
 export const DEFAULT_FACE_LIGHT = 0.85
 export const FACE_LIGHT_MIN = 0
 export const FACE_LIGHT_MAX = 2
