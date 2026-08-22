@@ -137,16 +137,17 @@
 
 .headBtn {
   padding: 6px 12px;
-  border: 1px solid var(--dsw-alias-border-l2);
+  border: 1px solid transparent;
   border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-3);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-state-success-primary);
+  color: var(--dsw-alias-button-primary-dimmed);
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
 .headBtn:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-primary);
+  background: color-mix(in srgb, var(--dsw-alias-state-success-primary) 86%, black);
+  color: var(--dsw-alias-button-primary-dimmed);
 }
 
 .closeBtn {
