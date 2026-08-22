@@ -63,7 +63,8 @@ const MODEL_LABELS: Record<string, string> = {
   fanni: '芬妮·辉耀 疾速耀星',
   leilv: '雷之律者（芽衣）',
   hongqiangwei: '红蔷薇·舞者（长裙）',
-  'hongqiangwei-short': '红蔷薇·舞者（短裙）'
+  'hongqiangwei-short': '红蔷薇·舞者（短裙）',
+  'keleda-swimsuit': '克莱妲·泳装皮'
 }
 
 const MOTION_LABELS: Record<string, string> = {
